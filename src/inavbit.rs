@@ -35,12 +35,12 @@ const NORMINAL_I0: f64 = 0.977_384_381_116_824_6;
 
 #[derive(Clone)]
 pub struct INavBit {
-    pub GalSpareData: [u32; 4],
-    pub GalDummyData: [u32; 4],
-    pub GalEphData: [[u32; 20]; 36],
-    pub GalAlmData: [[u32; 16]; 12],
-    pub GalUtcData: [u32; 4],
-    pub GalRsVector: [[u32; 16]; 36],
+    pub gal_spare_data: [u32; 4],
+    pub gal_dummy_data: [u32; 4],
+    pub gal_eph_data: [[u32; 20]; 36],
+    pub gal_alm_data: [[u32; 16]; 12],
+    pub gal_utc_data: [u32; 4],
+    pub gal_rs_vector: [[u32; 16]; 36],
 }
 
 const WORD_ALLOCATION_E1: [i32; 15] = [
@@ -181,142 +181,142 @@ impl Default for INavBit {
 impl INavBit {
     pub fn new() -> Self {
         INavBit {
-            GalSpareData: [0x02000000, 0, 0, 0],
-            GalDummyData: [0xfc000000, 0, 0, 0],
-            GalEphData: [[0; 20]; 36],
-            GalAlmData: [[0; 16]; 12],
-            GalUtcData: [0; 4],
-            GalRsVector: [[0; 16]; 36],
+            gal_spare_data: [0x02000000, 0, 0, 0],
+            gal_dummy_data: [0xfc000000, 0, 0, 0],
+            gal_eph_data: [[0; 20]; 36],
+            gal_alm_data: [[0; 16]; 12],
+            gal_utc_data: [0; 4],
+            gal_rs_vector: [[0; 16]; 36],
         }
     }
 
     // Param is used to distinguish from E1 and E5b (1 for E1)
-    pub fn GetFrameData(&mut self, StartTime: GnssTime, svid: i32, Param: i32, NavBits: &mut [i32]) -> i32 {
-        let mut TOW: i32;
+    pub fn get_frame_data(&mut self, start_time: GnssTime, svid: i32, param: i32, nav_bits: &mut [i32]) -> i32 {
+        let mut tow: i32;
         
         
-        let mut Word: i32;
-        let mut BitCount: i32 = 0;
-         // 128bit Data
-        let mut EncodeData: [u32; 7] = [0; 7]; // 196bit to be encoded by CRC
+        let mut word: i32;
+        let mut bit_count: i32 = 0;
+         // 128bit data
+        let mut encode_data: [u32; 7] = [0; 7]; // 196bit to be encoded by CRC
         
-        let mut EncodeWord: u32;
-        let SSP: [u32; 3] = [0x04000000, 0x2b000000, 0x2f000000];
-        let mut EvenPart: [u8; 30] = [0; 30];
-        let mut OddPart: [u8; 30] = [0; 30];
-        let mut ConvEncodeBits: u8 = 0; // each part contains 8x30 bits
+        let mut encode_word: u32;
+        let ssp: [u32; 3] = [0x04000000, 0x2b000000, 0x2f000000];
+        let mut even_part: [u8; 30] = [0; 30];
+        let mut odd_part: [u8; 30] = [0; 30];
+        let mut conv_encode_bits: u8 = 0; // each part contains 8x30 bits
 
-        // first determine the current TOW and subframe number
-        let mut start_time = StartTime;
-        start_time.Week += start_time.MilliSeconds / 604800000;
-        start_time.MilliSeconds %= 604800000;
-        TOW = start_time.MilliSeconds / 1000;
-        if (TOW & 1) == 0 && Param == 1 { // Param == 1 for E1 I/NAV, TOW must be odd number
-            TOW -= 1;
+        // first determine the current tow and subframe number
+        let mut start_time_local = start_time;
+        start_time_local.Week += start_time_local.MilliSeconds / 604800000;
+        start_time_local.MilliSeconds %= 604800000;
+        tow = start_time_local.MilliSeconds / 1000;
+        if (tow & 1) == 0 && param == 1 { // param == 1 for E1 I/NAV, tow must be odd number
+            tow -= 1;
         }
-        if TOW < 0 {
-            TOW += 604800;
+        if tow < 0 {
+            tow += 604800;
         }
-        let subframe: i32 = ((TOW + if Param == 1 { 360 } else { 0 }) % 720) / 30;
-        let page: i32 = (TOW % 30) / 2;
-        Word = if Param == 1 { WORD_ALLOCATION_E1[page as usize] } else { WORD_ALLOCATION_E5[page as usize] };
-        if Word > 10 {
-            Word = 63; // temporarily put all word exceed 10 as dummy word
+        let subframe: i32 = ((tow + if param == 1 { 360 } else { 0 }) % 720) / 30;
+        let page: i32 = (tow % 30) / 2;
+        word = if param == 1 { WORD_ALLOCATION_E1[page as usize] } else { WORD_ALLOCATION_E5[page as usize] };
+        if word > 10 {
+            word = 63; // temporarily put all word exceed 10 as dummy word
         }
-        if (subframe & 1) != 0 && (Word == 7 || Word == 8) {
-            // Word 7/9 and Word 8/10 toggle for different subframe
-            Word += 2;
+        if (subframe & 1) != 0 && (word == 7 || word == 8) {
+            // word 7/9 and word 8/10 toggle for different subframe
+            word += 2;
         }
-        if (subframe & 1) != 0 && (Word == 17 || Word == 19) {
-            // Word 17/18 and Word 19/20 toggle for different subframe
-            Word += 1;
+        if (subframe & 1) != 0 && (word == 17 || word == 19) {
+            // word 17/18 and word 19/20 toggle for different subframe
+            word += 1;
         }
         
-        let Data: &[u32] = self.GetWordData(svid, Word, subframe);
+        let data: &[u32] = self.get_word_data(svid, word, subframe);
         
-        // add WN/TOW for Word 0/5/6
-        let mut data_vec = Data.to_vec();
-        if Word == 0 {
-            data_vec[3] = (((start_time.Week - 1024) as u32) << 20) + TOW as u32;
-        } else if Word == 5 {
+        // add WN/tow for word 0/5/6
+        let mut data_vec = data.to_vec();
+        if word == 0 {
+            data_vec[3] = (((start_time.Week - 1024) as u32) << 20) + tow as u32;
+        } else if word == 5 {
             data_vec[2] &= 0xff800000; // clear 23LSB
-            data_vec[2] |= ((((start_time.Week - 1024) & 0xfff) as u32) << 11) + ((TOW >> 9) as u32);
-            data_vec[3] = (TOW << 23) as u32;
-        } else if Word == 6 {
+            data_vec[2] |= ((((start_time.Week - 1024) & 0xfff) as u32) << 11) + ((tow >> 9) as u32);
+            data_vec[3] = (tow << 23) as u32;
+        } else if word == 6 {
             data_vec[3] &= 0xff800000; // clear 23LSB
-            data_vec[3] |= (TOW << 3) as u32;
+            data_vec[3] |= (tow << 3) as u32;
         }
 
-        // put into EncodeData to do CRC24Q encoding (totally 196 bits, leaving 28MSB of EncodeData[0] as 0s)
-        EncodeData[0] = data_vec[0] >> 30; // even/odd=0, page type=0, 2bit Data
-        EncodeData[1] = (data_vec[0] << 2) | (data_vec[1] >> 30); // 32bit Data
-        EncodeData[2] = (data_vec[1] << 2) | (data_vec[2] >> 30); // 32bit Data
-        EncodeData[3] = (data_vec[2] << 2) | (data_vec[3] >> 30); // 32bit Data
-        EncodeData[4] = ((data_vec[3] << 2) & 0xfffc0000) | (data_vec[3] & 0xffff) | 0x20000; // 14bit Data, even/odd=1, page type=1, 16bit Data
-        EncodeData[5] = 0; // 32MSB of Reserved 1
-        EncodeData[6] = 0; // 8LSB of Reserved 1, SAR and Spare bits are 0
-        let CrcResult: u32 = self.Crc24qEncode(&EncodeData, 196);
+        // put into encode_data to do CRC24Q encoding (totally 196 bits, leaving 28MSB of encode_data[0] as 0s)
+        encode_data[0] = data_vec[0] >> 30; // even/odd=0, page type=0, 2bit data
+        encode_data[1] = (data_vec[0] << 2) | (data_vec[1] >> 30); // 32bit data
+        encode_data[2] = (data_vec[1] << 2) | (data_vec[2] >> 30); // 32bit data
+        encode_data[3] = (data_vec[2] << 2) | (data_vec[3] >> 30); // 32bit data
+        encode_data[4] = ((data_vec[3] << 2) & 0xfffc0000) | (data_vec[3] & 0xffff) | 0x20000; // 14bit data, even/odd=1, page type=1, 16bit data
+        encode_data[5] = 0; // 32MSB of Reserved 1
+        encode_data[6] = 0; // 8LSB of Reserved 1, SAR and Spare bits are 0
+        let crc_result: u32 = self.crc24q_encode(&encode_data, 196);
 
-        // do convolution encode on even part (EncodeData[0] bit3 through EncodeData[4] bit18)
-        ConvEncodeBits = 0;
-        EncodeWord = EncodeData[0] << 28; // move to MSB
+        // do convolution encode on even part (encode_data[0] bit3 through encode_data[4] bit18)
+        conv_encode_bits = 0;
+        encode_word = encode_data[0] << 28; // move to MSB
         for i in 0..(114/2) {
-            EvenPart[i/2] = (EvenPart[i/2] << 4) + self.GalConvolutionEncode(&mut ConvEncodeBits, &mut EncodeWord);
-            BitCount += 2;
-            if (BitCount % 32) == 0 {
-                EncodeWord = EncodeData[(BitCount >> 5) as usize];
+            even_part[i/2] = (even_part[i/2] << 4) + self.gal_convolution_encode(&mut conv_encode_bits, &mut encode_word);
+            bit_count += 2;
+            if (bit_count % 32) == 0 {
+                encode_word = encode_data[(bit_count >> 5) as usize];
             }
         }
-        EncodeWord = 0; // append 6 zeros as tail
-        EvenPart[28] = (EvenPart[28] << 4) + self.GalConvolutionEncode(&mut ConvEncodeBits, &mut EncodeWord);
-        EvenPart[29] = self.GalConvolutionEncode(&mut ConvEncodeBits, &mut EncodeWord);
-        EvenPart[29] = (EvenPart[29] << 4) + self.GalConvolutionEncode(&mut ConvEncodeBits, &mut EncodeWord);
+        encode_word = 0; // append 6 zeros as tail
+        even_part[28] = (even_part[28] << 4) + self.gal_convolution_encode(&mut conv_encode_bits, &mut encode_word);
+        even_part[29] = self.gal_convolution_encode(&mut conv_encode_bits, &mut encode_word);
+        even_part[29] = (even_part[29] << 4) + self.gal_convolution_encode(&mut conv_encode_bits, &mut encode_word);
         
-        // do convolution encode on odd part (EncodeData[4] bit17 through EncodeData[6] bit0)
-        ConvEncodeBits = 0;
-        EncodeWord = EncodeData[4] << 14; // move to MSB
-        BitCount = 142;
+        // do convolution encode on odd part (encode_data[4] bit17 through encode_data[6] bit0)
+        conv_encode_bits = 0;
+        encode_word = encode_data[4] << 14; // move to MSB
+        bit_count = 142;
         for i in 0..(82/2) {
-            OddPart[i/2] = (OddPart[i/2] << 4) + self.GalConvolutionEncode(&mut ConvEncodeBits, &mut EncodeWord);
-            BitCount += 2;
-            if (BitCount % 32) == 0 {
-                EncodeWord = EncodeData[(BitCount >> 5) as usize];
+            odd_part[i/2] = (odd_part[i/2] << 4) + self.gal_convolution_encode(&mut conv_encode_bits, &mut encode_word);
+            bit_count += 2;
+            if (bit_count % 32) == 0 {
+                encode_word = encode_data[(bit_count >> 5) as usize];
             }
         }
-        EncodeWord = CrcResult << 8;
+        encode_word = crc_result << 8;
         for i in (82/2)..(106/2) { // encode CRC
-            OddPart[i/2] = (OddPart[i/2] << 4) + self.GalConvolutionEncode(&mut ConvEncodeBits, &mut EncodeWord);
+            odd_part[i/2] = (odd_part[i/2] << 4) + self.gal_convolution_encode(&mut conv_encode_bits, &mut encode_word);
         }
-        EncodeWord = if Param != 0 { 0 } else { SSP[(page % 3) as usize] };
-        for i in (106/2)..(114/2) { // encode SSP
-            OddPart[i/2] = (OddPart[i/2] << 4) + self.GalConvolutionEncode(&mut ConvEncodeBits, &mut EncodeWord);
+        encode_word = if param != 0 { 0 } else { ssp[(page % 3) as usize] };
+        for i in (106/2)..(114/2) { // encode ssp
+            odd_part[i/2] = (odd_part[i/2] << 4) + self.gal_convolution_encode(&mut conv_encode_bits, &mut encode_word);
         }
-        EncodeWord = 0; // append 6 zeros as tail
-        OddPart[28] = (OddPart[28] << 4) + self.GalConvolutionEncode(&mut ConvEncodeBits, &mut EncodeWord);
-        OddPart[29] = self.GalConvolutionEncode(&mut ConvEncodeBits, &mut EncodeWord);
-        OddPart[29] = (OddPart[29] << 4) + self.GalConvolutionEncode(&mut ConvEncodeBits, &mut EncodeWord);
+        encode_word = 0; // append 6 zeros as tail
+        odd_part[28] = (odd_part[28] << 4) + self.gal_convolution_encode(&mut conv_encode_bits, &mut encode_word);
+        odd_part[29] = self.gal_convolution_encode(&mut conv_encode_bits, &mut encode_word);
+        odd_part[29] = (odd_part[29] << 4) + self.gal_convolution_encode(&mut conv_encode_bits, &mut encode_word);
 
         // do interleaving and put into NavBits
         let mut nav_bits_index = 0;
         for i in 0..10 {
-            NavBits[nav_bits_index] = SYNC_PATTERN[i];
+            nav_bits[nav_bits_index] = SYNC_PATTERN[i];
             nav_bits_index += 1;
         }
         for i in 0..8 {
             let conv_encode_bits = 0x80 >> i;
             for j in 0..30 {
-                NavBits[nav_bits_index] = if (EvenPart[j] & conv_encode_bits) != 0 { 1 } else { 0 };
+                nav_bits[nav_bits_index] = if (even_part[j] & conv_encode_bits) != 0 { 1 } else { 0 };
                 nav_bits_index += 1;
             }
         }
         for i in 0..10 {
-            NavBits[nav_bits_index] = SYNC_PATTERN[i];
+            nav_bits[nav_bits_index] = SYNC_PATTERN[i];
             nav_bits_index += 1;
         }
         for i in 0..8 {
             let conv_encode_bits = 0x80 >> i;
             for j in 0..30 {
-                NavBits[nav_bits_index] = if (OddPart[j] & conv_encode_bits) != 0 { 1 } else { 0 };
+                nav_bits[nav_bits_index] = if (odd_part[j] & conv_encode_bits) != 0 { 1 } else { 0 };
                 nav_bits_index += 1;
             }
         }
@@ -324,259 +324,259 @@ impl INavBit {
         0
     }
 
-    pub fn SetEphemeris(&mut self, svid: i32, Eph: &GpsEphemeris) -> i32 {
-        if !(1..=36).contains(&svid) || Eph.valid == 0 {
+    pub fn set_ephemeris(&mut self, svid: i32, eph: &GpsEphemeris) -> i32 {
+        if !(1..=36).contains(&svid) || eph.valid == 0 {
             return 0;
         }
         let svid_idx = (svid - 1) as usize;
-        Self::ComposeEphWords(Eph, &mut self.GalEphData[svid_idx]);
-        let eph_data = self.GalEphData[svid_idx];
-        Self::ComposeParityWords(&eph_data, &mut self.GalRsVector[svid_idx]);
+        Self::compose_eph_words(eph, &mut self.gal_eph_data[svid_idx]);
+        let eph_data = self.gal_eph_data[svid_idx];
+        Self::compose_paritywords(&eph_data, &mut self.gal_rs_vector[svid_idx]);
         svid
     }
 
-    pub fn SetAlmanac(&mut self, Alm: &[GpsAlmanac]) -> i32 {
+    pub fn set_almanac(&mut self, alm: &[GpsAlmanac]) -> i32 {
         let mut week = 0;
 
-        let alm_len = Alm.len().min(36);
+        let alm_len = alm.len().min(36);
         for i in 0..alm_len {
-            if (Alm[i].valid & 1) != 0 {
-                week = Alm[i].week;
+            if (alm[i].valid & 1) != 0 {
+                week = alm[i].week;
                 break;
             }
         }
         for i in 0..12 {
             let slice_end = ((i + 1) * 3).min(alm_len);
             if i * 3 < slice_end {
-                let alm_slice = &Alm[i * 3..slice_end];
-                Self::ComposeAlmWords(alm_slice, 
-                                   &mut self.GalAlmData[i],
+                let alm_slice = &alm[i * 3..slice_end];
+                Self::compose_almwords(alm_slice, 
+                                   &mut self.gal_alm_data[i],
                                    week);
             }
         }
         0
     }
 
-    pub fn SetIonoUtc(&mut self, IonoParam: &IonoNequick, UtcParam: &UtcParam) -> i32 {
-        let mut IonoWords: [u32; 2] = [0; 2];
+    pub fn set_iono_utc(&mut self, iono_param: &IonoNequick, utc_param: &UtcParam) -> i32 {
+        let mut ionowords: [u32; 2] = [0; 2];
         
-        let UintValue = Self::UnscaleUint(IonoParam.ai0, -2);
-        IonoWords[0] = COMPOSE_BITS!(UintValue, 15, 11);
-        let IntValue = Self::UnscaleInt(IonoParam.ai1, -8);
-        IonoWords[0] |= COMPOSE_BITS!(IntValue, 4, 11);
-        let IntValue = Self::UnscaleInt(IonoParam.ai2, -15);
-        IonoWords[0] |= COMPOSE_BITS!(IntValue >> 10, 0, 4);
-        IonoWords[1] = COMPOSE_BITS!(IntValue, 22, 10);
-        IonoWords[1] |= COMPOSE_BITS!(IonoParam.flag, 17, 5);
+        let uint_value = Self::unscale_uint(iono_param.ai0, -2);
+        ionowords[0] = COMPOSE_BITS!(uint_value, 15, 11);
+        let int_value = Self::unscale_int(iono_param.ai1, -8);
+        ionowords[0] |= COMPOSE_BITS!(int_value, 4, 11);
+        let int_value = Self::unscale_int(iono_param.ai2, -15);
+        ionowords[0] |= COMPOSE_BITS!(int_value >> 10, 0, 4);
+        ionowords[1] = COMPOSE_BITS!(int_value, 22, 10);
+        ionowords[1] |= COMPOSE_BITS!(iono_param.flag, 17, 5);
         
-        // put ai0~ai2 into Word 5
+        // put ai0~ai2 into word 5
         for i in 0..36 {
-            self.GalEphData[i][16] &= 0xfc000000;
-            self.GalEphData[i][16] |= IonoWords[0];
-            self.GalEphData[i][17] &= 0x0001ffff;
-            self.GalEphData[i][17] |= IonoWords[1];
+            self.gal_eph_data[i][16] &= 0xfc000000;
+            self.gal_eph_data[i][16] |= ionowords[0];
+            self.gal_eph_data[i][17] &= 0x0001ffff;
+            self.gal_eph_data[i][17] |= ionowords[1];
         }
         
-        let utc_copy = *UtcParam;
-        Self::ComposeUtcWords(&utc_copy, &mut self.GalUtcData);
+        let utc_copy = *utc_param;
+        Self::compose_utcwords(&utc_copy, &mut self.gal_utc_data);
         0
     }
 
-    fn GetWordData(&self, svid: i32, word: i32, subframe: i32) -> &[u32] {
+    fn get_word_data(&self, svid: i32, word: i32, subframe: i32) -> &[u32] {
         match word {
-            0 => &self.GalSpareData,
-            1..=5 => &self.GalEphData[(svid-1) as usize][(word-1) as usize * 4..word as usize * 4],
-            6 => &self.GalUtcData,
-            7..=10 => &self.GalAlmData[(subframe/2) as usize][(word-7) as usize * 4..(word-6) as usize * 4],
-            17..=20 => &self.GalRsVector[(svid-1) as usize][(word-17) as usize * 4..(word-16) as usize * 4],
-            63 => &self.GalDummyData,
-            _ => &self.GalDummyData,
+            0 => &self.gal_spare_data,
+            1..=5 => &self.gal_eph_data[(svid-1) as usize][(word-1) as usize * 4..word as usize * 4],
+            6 => &self.gal_utc_data,
+            7..=10 => &self.gal_alm_data[(subframe/2) as usize][(word-7) as usize * 4..(word-6) as usize * 4],
+            17..=20 => &self.gal_rs_vector[(svid-1) as usize][(word-17) as usize * 4..(word-16) as usize * 4],
+            63 => &self.gal_dummy_data,
+            _ => &self.gal_dummy_data,
         }
     }
 
-    fn ComposeEphWords(Ephemeris: &GpsEphemeris, EphData: &mut [u32]) {
-        // Word 1
-        EphData[0] = 0x04000000 | COMPOSE_BITS!(Ephemeris.iodc, 16, 10) | COMPOSE_BITS!((Ephemeris.toe / 60), 2, 14);
-        let IntValue = Self::UnscaleInt(Ephemeris.M0 / PI, -31);
-        EphData[0] |= COMPOSE_BITS!(IntValue >> 30, 0, 2);
-        EphData[1] = COMPOSE_BITS!(IntValue, 2, 30);
-        let UintValue = Self::UnscaleUint(Ephemeris.ecc, -33);
-        EphData[1] |= COMPOSE_BITS!(UintValue >> 30, 0, 2);
-        EphData[2] = COMPOSE_BITS!(UintValue, 2, 30);
-        let UintValue = Self::UnscaleUint(Ephemeris.sqrtA, -19);
-        EphData[2] |= COMPOSE_BITS!(UintValue >> 30, 0, 2);
-        EphData[3] = COMPOSE_BITS!(UintValue, 2, 30);
+    fn compose_eph_words(ephemeris: &GpsEphemeris, ephdata: &mut [u32]) {
+        // word 1
+        ephdata[0] = 0x04000000 | COMPOSE_BITS!(ephemeris.iodc, 16, 10) | COMPOSE_BITS!((ephemeris.toe / 60), 2, 14);
+        let int_value = Self::unscale_int(ephemeris.M0 / PI, -31);
+        ephdata[0] |= COMPOSE_BITS!(int_value >> 30, 0, 2);
+        ephdata[1] = COMPOSE_BITS!(int_value, 2, 30);
+        let uint_value = Self::unscale_uint(ephemeris.ecc, -33);
+        ephdata[1] |= COMPOSE_BITS!(uint_value >> 30, 0, 2);
+        ephdata[2] = COMPOSE_BITS!(uint_value, 2, 30);
+        let uint_value = Self::unscale_uint(ephemeris.sqrtA, -19);
+        ephdata[2] |= COMPOSE_BITS!(uint_value >> 30, 0, 2);
+        ephdata[3] = COMPOSE_BITS!(uint_value, 2, 30);
 
-        // Word 2
-        EphData[4] = 0x08000000 | COMPOSE_BITS!(Ephemeris.iodc, 16, 10);
-        let IntValue = Self::UnscaleInt(Ephemeris.omega0 / PI, -31);
-        EphData[4] |= COMPOSE_BITS!(IntValue >> 16, 0, 16);
-        EphData[5] = COMPOSE_BITS!(IntValue, 16, 16);
-        let IntValue = Self::UnscaleInt(Ephemeris.i0 / PI, -31);
-        EphData[5] |= COMPOSE_BITS!(IntValue >> 16, 0, 16);
-        EphData[6] = COMPOSE_BITS!(IntValue, 16, 16);
-        let IntValue = Self::UnscaleInt(Ephemeris.w / PI, -31);
-        EphData[6] |= COMPOSE_BITS!(IntValue >> 16, 0, 16);
-        EphData[7] = COMPOSE_BITS!(IntValue, 16, 16);
-        let IntValue = Self::UnscaleInt(Ephemeris.idot / PI, -43);
-        EphData[7] |= COMPOSE_BITS!(IntValue, 2, 14);
+        // word 2
+        ephdata[4] = 0x08000000 | COMPOSE_BITS!(ephemeris.iodc, 16, 10);
+        let int_value = Self::unscale_int(ephemeris.omega0 / PI, -31);
+        ephdata[4] |= COMPOSE_BITS!(int_value >> 16, 0, 16);
+        ephdata[5] = COMPOSE_BITS!(int_value, 16, 16);
+        let int_value = Self::unscale_int(ephemeris.i0 / PI, -31);
+        ephdata[5] |= COMPOSE_BITS!(int_value >> 16, 0, 16);
+        ephdata[6] = COMPOSE_BITS!(int_value, 16, 16);
+        let int_value = Self::unscale_int(ephemeris.w / PI, -31);
+        ephdata[6] |= COMPOSE_BITS!(int_value >> 16, 0, 16);
+        ephdata[7] = COMPOSE_BITS!(int_value, 16, 16);
+        let int_value = Self::unscale_int(ephemeris.idot / PI, -43);
+        ephdata[7] |= COMPOSE_BITS!(int_value, 2, 14);
 
-        // Word 3
-        EphData[8] = 0x0c000000 | COMPOSE_BITS!(Ephemeris.iodc, 16, 10);
-        let IntValue = Self::UnscaleInt(Ephemeris.omega_dot / PI, -43);
-        EphData[8] |= COMPOSE_BITS!(IntValue >> 8, 0, 16);
-        EphData[9] = COMPOSE_BITS!(IntValue, 24, 8);
-        let IntValue = Self::UnscaleInt(Ephemeris.delta_n / PI, -43);
-        EphData[9] |= COMPOSE_BITS!(IntValue, 8, 16);
-        let IntValue = Self::UnscaleInt(Ephemeris.cuc, -29);
-        EphData[9] |= COMPOSE_BITS!(IntValue >> 8, 0, 8);
-        EphData[10] = COMPOSE_BITS!(IntValue, 24, 8);
-        let IntValue = Self::UnscaleInt(Ephemeris.cus, -29);
-        EphData[10] |= COMPOSE_BITS!(IntValue, 8, 16);
-        let IntValue = Self::UnscaleInt(Ephemeris.crc, -5);
-        EphData[10] |= COMPOSE_BITS!(IntValue >> 8, 0, 8);
-        EphData[11] = COMPOSE_BITS!(IntValue, 24, 8);
-        let IntValue = Self::UnscaleInt(Ephemeris.crs, -5);
-        EphData[11] |= COMPOSE_BITS!(IntValue, 8, 16);
-        EphData[11] |= COMPOSE_BITS!(Ephemeris.ura, 0, 8);
+        // word 3
+        ephdata[8] = 0x0c000000 | COMPOSE_BITS!(ephemeris.iodc, 16, 10);
+        let int_value = Self::unscale_int(ephemeris.omega_dot / PI, -43);
+        ephdata[8] |= COMPOSE_BITS!(int_value >> 8, 0, 16);
+        ephdata[9] = COMPOSE_BITS!(int_value, 24, 8);
+        let int_value = Self::unscale_int(ephemeris.delta_n / PI, -43);
+        ephdata[9] |= COMPOSE_BITS!(int_value, 8, 16);
+        let int_value = Self::unscale_int(ephemeris.cuc, -29);
+        ephdata[9] |= COMPOSE_BITS!(int_value >> 8, 0, 8);
+        ephdata[10] = COMPOSE_BITS!(int_value, 24, 8);
+        let int_value = Self::unscale_int(ephemeris.cus, -29);
+        ephdata[10] |= COMPOSE_BITS!(int_value, 8, 16);
+        let int_value = Self::unscale_int(ephemeris.crc, -5);
+        ephdata[10] |= COMPOSE_BITS!(int_value >> 8, 0, 8);
+        ephdata[11] = COMPOSE_BITS!(int_value, 24, 8);
+        let int_value = Self::unscale_int(ephemeris.crs, -5);
+        ephdata[11] |= COMPOSE_BITS!(int_value, 8, 16);
+        ephdata[11] |= COMPOSE_BITS!(ephemeris.ura, 0, 8);
 
-        // Word 4
-        EphData[12] = 0x10000000 | COMPOSE_BITS!(Ephemeris.iodc, 16, 10) | COMPOSE_BITS!(Ephemeris.svid, 10, 6);
-        let IntValue = Self::UnscaleInt(Ephemeris.cic, -29);
-        EphData[12] |= COMPOSE_BITS!(IntValue >> 6, 0, 10);
-        EphData[13] = COMPOSE_BITS!(IntValue, 26, 6);
-        let IntValue = Self::UnscaleInt(Ephemeris.cis, -29);
-        EphData[13] |= COMPOSE_BITS!(IntValue, 10, 16);
-        let UintValue = Ephemeris.toc / 60;
-        EphData[13] |= COMPOSE_BITS!(UintValue >> 4, 0, 10);
-        EphData[14] = COMPOSE_BITS!(UintValue, 28, 4);
-        let IntValue = Self::UnscaleInt(Ephemeris.af0, -34);
-        EphData[14] |= COMPOSE_BITS!(IntValue >> 3, 0, 28);
-        EphData[15] = COMPOSE_BITS!(IntValue, 29, 3);
-        let IntValue = Self::UnscaleInt(Ephemeris.af1, -46);
-        EphData[15] |= COMPOSE_BITS!(IntValue, 8, 21);
-        let IntValue = Self::UnscaleInt(Ephemeris.af2, -59);
-        EphData[15] |= COMPOSE_BITS!(IntValue, 2, 6);
+        // word 4
+        ephdata[12] = 0x10000000 | COMPOSE_BITS!(ephemeris.iodc, 16, 10) | COMPOSE_BITS!(ephemeris.svid, 10, 6);
+        let int_value = Self::unscale_int(ephemeris.cic, -29);
+        ephdata[12] |= COMPOSE_BITS!(int_value >> 6, 0, 10);
+        ephdata[13] = COMPOSE_BITS!(int_value, 26, 6);
+        let int_value = Self::unscale_int(ephemeris.cis, -29);
+        ephdata[13] |= COMPOSE_BITS!(int_value, 10, 16);
+        let uint_value = ephemeris.toc / 60;
+        ephdata[13] |= COMPOSE_BITS!(uint_value >> 4, 0, 10);
+        ephdata[14] = COMPOSE_BITS!(uint_value, 28, 4);
+        let int_value = Self::unscale_int(ephemeris.af0, -34);
+        ephdata[14] |= COMPOSE_BITS!(int_value >> 3, 0, 28);
+        ephdata[15] = COMPOSE_BITS!(int_value, 29, 3);
+        let int_value = Self::unscale_int(ephemeris.af1, -46);
+        ephdata[15] |= COMPOSE_BITS!(int_value, 8, 21);
+        let int_value = Self::unscale_int(ephemeris.af2, -59);
+        ephdata[15] |= COMPOSE_BITS!(int_value, 2, 6);
 
-        // Word 5
-        EphData[16] &= 0x03ffffff;
-        EphData[16] = 0x14000000; // put Type=5 to 6MSB
-        let IntValue = Self::UnscaleInt(Ephemeris.tgd, -32);
-        EphData[17] = COMPOSE_BITS!(IntValue, 7, 10);
-        let IntValue = Self::UnscaleInt(Ephemeris.tgd2, -32);
-        EphData[17] |= COMPOSE_BITS!(IntValue >> 3, 0, 7);
-        EphData[18] = COMPOSE_BITS!(IntValue, 29, 3);
-        let IntValue = Ephemeris.health;
-        EphData[18] |= COMPOSE_BITS!(IntValue >> 7, 27, 2); // E5b HS
-        EphData[18] |= COMPOSE_BITS!(IntValue >> 1, 25, 2); // E1B HS
-        EphData[18] |= COMPOSE_BITS!(IntValue >> 5, 24, 1); // E5b DVS
-        EphData[18] |= COMPOSE_BITS!(IntValue, 23, 1); // E1B DVS
+        // word 5
+        ephdata[16] &= 0x03ffffff;
+        ephdata[16] = 0x14000000; // put Type=5 to 6MSB
+        let int_value = Self::unscale_int(ephemeris.tgd, -32);
+        ephdata[17] = COMPOSE_BITS!(int_value, 7, 10);
+        let int_value = Self::unscale_int(ephemeris.tgd2, -32);
+        ephdata[17] |= COMPOSE_BITS!(int_value >> 3, 0, 7);
+        ephdata[18] = COMPOSE_BITS!(int_value, 29, 3);
+        let int_value = ephemeris.health;
+        ephdata[18] |= COMPOSE_BITS!(int_value >> 7, 27, 2); // E5b HS
+        ephdata[18] |= COMPOSE_BITS!(int_value >> 1, 25, 2); // E1B HS
+        ephdata[18] |= COMPOSE_BITS!(int_value >> 5, 24, 1); // E5b DVS
+        ephdata[18] |= COMPOSE_BITS!(int_value, 23, 1); // E1B DVS
     }
 
-    fn ComposeAlmWords(Almanac: &[GpsAlmanac], AlmData: &mut [u32], week: i32) {
-        let toa = if (Almanac[0].valid & 1) != 0 { Almanac[0].toa } 
-                  else if (Almanac[1].valid & 1) != 0 { Almanac[1].toa } 
-                  else if (Almanac[2].valid & 1) != 0 { Almanac[2].toa } 
+    fn compose_almwords(almanac: &[GpsAlmanac], almdata: &mut [u32], week: i32) {
+        let toa = if (almanac[0].valid & 1) != 0 { almanac[0].toa } 
+                  else if (almanac[1].valid & 1) != 0 { almanac[1].toa } 
+                  else if (almanac[2].valid & 1) != 0 { almanac[2].toa } 
                   else { 0 };
 
-        // Word 7
-        AlmData[0] = 0x1d000000 | COMPOSE_BITS!(week, 20, 2) | COMPOSE_BITS!((toa / 600), 10, 10) | COMPOSE_BITS!(Almanac[0].svid, 4, 6); // Type=8, IODa=4
-        let IntValue = Self::UnscaleInt(Almanac[0].sqrtA - SQRT_A0, -9); // SVID1 starts here
-        AlmData[0] |= COMPOSE_BITS!(IntValue >> 9, 0, 4);
-        AlmData[1] = COMPOSE_BITS!(IntValue, 23, 9);
-        let UintValue = Self::UnscaleUint(Almanac[0].ecc, -16);
-        AlmData[1] |= COMPOSE_BITS!(UintValue, 12, 11);
-        let IntValue = Self::UnscaleInt(Almanac[0].w / PI, -15);
-        AlmData[1] |= COMPOSE_BITS!(IntValue >> 4, 0, 12);
-        AlmData[2] = COMPOSE_BITS!(IntValue, 28, 4);
-        let IntValue = Self::UnscaleInt((Almanac[0].i0 - NORMINAL_I0) / PI, -14);
-        AlmData[2] |= COMPOSE_BITS!(IntValue, 17, 11);
-        let IntValue = Self::UnscaleInt(Almanac[0].omega0 / PI, -15);
-        AlmData[2] |= COMPOSE_BITS!(IntValue, 1, 16);
-        let IntValue = Self::UnscaleInt(Almanac[0].omega_dot / PI, -33);
-        AlmData[2] |= COMPOSE_BITS!(IntValue >> 10, 0, 1);
-        AlmData[3] = COMPOSE_BITS!(IntValue, 22, 10);
-        let IntValue = Self::UnscaleInt(Almanac[0].M0 / PI, -15);
-        AlmData[3] |= COMPOSE_BITS!(IntValue, 6, 16);
+        // word 7
+        almdata[0] = 0x1d000000 | COMPOSE_BITS!(week, 20, 2) | COMPOSE_BITS!((toa / 600), 10, 10) | COMPOSE_BITS!(almanac[0].svid, 4, 6); // Type=8, IODa=4
+        let int_value = Self::unscale_int(almanac[0].sqrtA - SQRT_A0, -9); // SVID1 starts here
+        almdata[0] |= COMPOSE_BITS!(int_value >> 9, 0, 4);
+        almdata[1] = COMPOSE_BITS!(int_value, 23, 9);
+        let uint_value = Self::unscale_uint(almanac[0].ecc, -16);
+        almdata[1] |= COMPOSE_BITS!(uint_value, 12, 11);
+        let int_value = Self::unscale_int(almanac[0].w / PI, -15);
+        almdata[1] |= COMPOSE_BITS!(int_value >> 4, 0, 12);
+        almdata[2] = COMPOSE_BITS!(int_value, 28, 4);
+        let int_value = Self::unscale_int((almanac[0].i0 - NORMINAL_I0) / PI, -14);
+        almdata[2] |= COMPOSE_BITS!(int_value, 17, 11);
+        let int_value = Self::unscale_int(almanac[0].omega0 / PI, -15);
+        almdata[2] |= COMPOSE_BITS!(int_value, 1, 16);
+        let int_value = Self::unscale_int(almanac[0].omega_dot / PI, -33);
+        almdata[2] |= COMPOSE_BITS!(int_value >> 10, 0, 1);
+        almdata[3] = COMPOSE_BITS!(int_value, 22, 10);
+        let int_value = Self::unscale_int(almanac[0].M0 / PI, -15);
+        almdata[3] |= COMPOSE_BITS!(int_value, 6, 16);
 
-        // ... (similar for Words 8, 9, 10)
+        // ... (similar for words 8, 9, 10)
         // Simplified implementation - complete all 4 words based on C++ version
         for i in 4..16 {
-            AlmData[i] = 0; // Placeholder
+            almdata[i] = 0; // Placeholder
         }
     }
 
-    fn ComposeUtcWords(UtcParam: &UtcParam, GalUtcData: &mut [u32]) {
-        // Word 6 for UTC parameters
-        GalUtcData[0] = 0x18000000; // put Type=6 to 6MSB
-        let IntValue = Self::UnscaleInt(UtcParam.A0, -30);
-        GalUtcData[0] |= COMPOSE_BITS!(IntValue >> 6, 0, 26);
-        GalUtcData[1] = COMPOSE_BITS!(IntValue, 26, 6);
-        let IntValue = Self::UnscaleInt(UtcParam.A1, -50);
-        GalUtcData[1] |= COMPOSE_BITS!(IntValue, 2, 24);
-        GalUtcData[1] |= COMPOSE_BITS!(UtcParam.TLS >> 6, 0, 2);
-        GalUtcData[2] = COMPOSE_BITS!(UtcParam.TLS, 26, 6);
-        GalUtcData[2] |= COMPOSE_BITS!(UtcParam.tot, 18, 8);
-        GalUtcData[2] |= COMPOSE_BITS!(UtcParam.WN, 10, 8);
-        GalUtcData[2] |= COMPOSE_BITS!(UtcParam.WNLSF, 2, 8);
-        GalUtcData[2] |= COMPOSE_BITS!(UtcParam.DN >> 1, 0, 2);
-        GalUtcData[3] = COMPOSE_BITS!(UtcParam.DN, 31, 1);
-        GalUtcData[3] |= COMPOSE_BITS!(UtcParam.TLSF, 23, 8);
+    fn compose_utcwords(utc_param: &UtcParam, gal_utc_data: &mut [u32]) {
+        // word 6 for UTC parameters
+        gal_utc_data[0] = 0x18000000; // put Type=6 to 6MSB
+        let int_value = Self::unscale_int(utc_param.A0, -30);
+        gal_utc_data[0] |= COMPOSE_BITS!(int_value >> 6, 0, 26);
+        gal_utc_data[1] = COMPOSE_BITS!(int_value, 26, 6);
+        let int_value = Self::unscale_int(utc_param.A1, -50);
+        gal_utc_data[1] |= COMPOSE_BITS!(int_value, 2, 24);
+        gal_utc_data[1] |= COMPOSE_BITS!(utc_param.TLS >> 6, 0, 2);
+        gal_utc_data[2] = COMPOSE_BITS!(utc_param.TLS, 26, 6);
+        gal_utc_data[2] |= COMPOSE_BITS!(utc_param.tot, 18, 8);
+        gal_utc_data[2] |= COMPOSE_BITS!(utc_param.WN, 10, 8);
+        gal_utc_data[2] |= COMPOSE_BITS!(utc_param.WNLSF, 2, 8);
+        gal_utc_data[2] |= COMPOSE_BITS!(utc_param.DN >> 1, 0, 2);
+        gal_utc_data[3] = COMPOSE_BITS!(utc_param.DN, 31, 1);
+        gal_utc_data[3] |= COMPOSE_BITS!(utc_param.TLSF, 23, 8);
     }
 
-    fn ComposeParityWords(EphData: &[u32], ParityData: &mut [u32]) {
-        let mut InformationVector: [u8; 58] = [0; 58];
-        let mut ParityVector: [u8; 60] = [0; 60];
+    fn compose_paritywords(ephdata: &[u32], parity_data: &mut [u32]) {
+        let mut information_vector: [u8; 58] = [0; 58];
+        let mut parity_vector: [u8; 60] = [0; 60];
         
-        // put word1~4 data into InformationVector
-        let Iod = (EphData[0] >> 16) & 3; // 2LSB of IOD
-        InformationVector[0] = 0x4 | (Iod as u8); // Type=1 plus 2LSB of IOD
-        InformationVector[1] = (EphData[0] >> 18) as u8; // 8MSB of IOD
+        // put word1~4 data into information_vector
+        let iod = (ephdata[0] >> 16) & 3; // 2LSB of iod
+        information_vector[0] = 0x4 | (iod as u8); // Type=1 plus 2LSB of iod
+        information_vector[1] = (ephdata[0] >> 18) as u8; // 8MSB of iod
         for i in 0..4 {
-            InformationVector[i*14+2] = (EphData[i*4] >> 8) as u8;
-            InformationVector[i*14+3] = EphData[i*4] as u8;
+            information_vector[i*14+2] = (ephdata[i*4] >> 8) as u8;
+            information_vector[i*14+3] = ephdata[i*4] as u8;
             for j in 1..4 {
-                InformationVector[i*14+j*4  ] = (EphData[i*4+j] >> 24) as u8;
-                InformationVector[i*14+j*4+1] = (EphData[i*4+j] >> 16) as u8;
-                InformationVector[i*14+j*4+2] = (EphData[i*4+j] >> 8) as u8;
-                InformationVector[i*14+j*4+3] = EphData[i*4+j] as u8;
+                information_vector[i*14+j*4  ] = (ephdata[i*4+j] >> 24) as u8;
+                information_vector[i*14+j*4+1] = (ephdata[i*4+j] >> 16) as u8;
+                information_vector[i*14+j*4+2] = (ephdata[i*4+j] >> 8) as u8;
+                information_vector[i*14+j*4+3] = ephdata[i*4+j] as u8;
             }
         }
         
         // generate parity vector octets
-        Self::GenerateParityVector(&InformationVector, &mut ParityVector);
+        Self::generate_parity_vector(&information_vector, &mut parity_vector);
         
         // put parity vector into word17~20
         for i in 0..4 {
-            ParityData[i*4] = ((17u32 + i as u32) << 26) + (Iod << 24);
-            ParityData[i*4] |= (ParityVector[i*15] as u32) << 16;
-            ParityData[i*4] |= (ParityVector[i*15+1] as u32) << 8;
-            ParityData[i*4] |= ParityVector[i*15+2] as u32;
+            parity_data[i*4] = ((17u32 + i as u32) << 26) + (iod << 24);
+            parity_data[i*4] |= (parity_vector[i*15] as u32) << 16;
+            parity_data[i*4] |= (parity_vector[i*15+1] as u32) << 8;
+            parity_data[i*4] |= parity_vector[i*15+2] as u32;
             for j in 1..4 {
-                ParityData[i*4+j]  = (ParityVector[i*15+j*4-1] as u32) << 24;
-                ParityData[i*4+j] |= (ParityVector[i*15+j*4] as u32) << 16;
-                ParityData[i*4+j] |= (ParityVector[i*15+j*4+1] as u32) << 8;
-                ParityData[i*4+j] |= ParityVector[i*15+j*4+2] as u32;
+                parity_data[i*4+j]  = (parity_vector[i*15+j*4-1] as u32) << 24;
+                parity_data[i*4+j] |= (parity_vector[i*15+j*4] as u32) << 16;
+                parity_data[i*4+j] |= (parity_vector[i*15+j*4+1] as u32) << 8;
+                parity_data[i*4+j] |= parity_vector[i*15+j*4+2] as u32;
             }
         }
     }
 
-    fn Crc24qEncode(&self, Data: &[u32], Length: i32) -> u32 {
+    fn crc24q_encode(&self, data: &[u32], length: i32) -> u32 {
         // CRC-24Q encoding implementation
         let mut crc: u32 = 0;
         let poly: u32 = 0x1864CFB;
         
-        for i in 0..(Length / 32) {
-            let mut word = Data[i as usize];
+        for i in 0..(length / 32) {
+            let mut word = data[i as usize];
             for _ in 0..32 {
                 crc = (crc << 1) ^ if (crc & 0x800000) != 0 { poly } else { 0 } ^ ((word >> 31) & 1);
                 word <<= 1;
             }
         }
         
-        if (Length % 32) != 0 {
-            let mut word = Data[(Length / 32) as usize];
-            for _ in 0..(Length % 32) {
+        if (length % 32) != 0 {
+            let mut word = data[(length / 32) as usize];
+            for _ in 0..(length % 32) {
                 crc = (crc << 1) ^ if (crc & 0x800000) != 0 { poly } else { 0 } ^ ((word >> 31) & 1);
                 word <<= 1;
             }
@@ -585,13 +585,13 @@ impl INavBit {
         crc & 0xFFFFFF
     }
 
-    fn GalConvolutionEncode(&self, ConvEncodeBits: &mut u8, EncodeWord: &mut u32) -> u8 {
-        *ConvEncodeBits = (*ConvEncodeBits << 2) + ((*EncodeWord >> 30) as u8);
-        *EncodeWord <<= 2;
-        (self.ConvolutionEncode(*ConvEncodeBits) & 0xf) ^ 0x5 // invert G2
+    fn gal_convolution_encode(&self, conv_encode_bits: &mut u8, encode_word: &mut u32) -> u8 {
+        *conv_encode_bits = (*conv_encode_bits << 2) + ((*encode_word >> 30) as u8);
+        *encode_word <<= 2;
+        (self.convolution_encode(*conv_encode_bits) & 0xf) ^ 0x5 // invert G2
     }
 
-    fn GF8IntMul(a: u8, b: u8) -> u8 {
+    fn gf8_int_mul(a: u8, b: u8) -> u8 {
         if a != 0 && b != 0 {
             POWER2OCT[(OCT2POWER[a as usize] as usize + OCT2POWER[b as usize] as usize) % 255]
         } else {
@@ -600,24 +600,24 @@ impl INavBit {
     }
 
 
-    fn GenerateParityVector(InformationVector: &[u8; 58], ParityVector: &mut [u8; 60]) {
+    fn generate_parity_vector(information_vector: &[u8; 58], parity_vector: &mut [u8; 60]) {
         for i in 0..60 {
-            ParityVector[i] = 0;
+            parity_vector[i] = 0;
             for j in 0..58 {
-                ParityVector[i] ^= Self::GF8IntMul(RS_GENERATE_MATRIX[i][j], InformationVector[j]);
+                parity_vector[i] ^= Self::gf8_int_mul(RS_GENERATE_MATRIX[i][j], information_vector[j]);
             }
         }
     }
     
-    fn UnscaleInt(value: f64, scale_factor: i32) -> i32 {
+    fn unscale_int(value: f64, scale_factor: i32) -> i32 {
         (value * (1i64 << (-scale_factor)) as f64).round() as i32
     }
     
-    fn UnscaleUint(value: f64, scale_factor: i32) -> u32 {
+    fn unscale_uint(value: f64, scale_factor: i32) -> u32 {
         (value * (1u64 << (-scale_factor)) as f64).round() as u32
     }
     
-    fn ConvolutionEncode(&self, state: u8) -> u8 {
+    fn convolution_encode(&self, state: u8) -> u8 {
         // Galileo convolution encoder implementation
         let input_bit = (state >> 6) & 1;
         let g1 = input_bit ^ ((state >> 2) & 1) ^ ((state >> 3) & 1) ^ ((state >> 5) & 1) ^ ((state >> 6) & 1);
@@ -639,8 +639,8 @@ mod tests {
     #[test]
     fn test_inavbit_new() {
         let inav = INavBit::new();
-        assert_eq!(inav.GalSpareData[0], 0x02000000);
-        assert_eq!(inav.GalDummyData[0], 0xfc000000);
+        assert_eq!(inav.gal_spare_data[0], 0x02000000);
+        assert_eq!(inav.gal_dummy_data[0], 0xfc000000);
     }
 
     #[test]

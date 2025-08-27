@@ -216,7 +216,7 @@ impl NavBitTrait for CNavBit {
     fn set_almanac(&mut self, alm: &[GpsAlmanac]) { self.0.set_almanac(alm); }
     fn set_iono_utc(&mut self, iono_param: Option<&IonoParam>, utc_param: Option<&UtcParam>) { 
         if let (Some(iono), Some(utc)) = (iono_param, utc_param) {
-            self.0.SetIonoUtc(iono, utc); 
+            self.0.set_iono_utc(iono, utc); 
         }
     }
     fn get_type(&self) -> NavDataType { NavDataType::CNav }
@@ -240,7 +240,7 @@ impl NavBitTrait for CNav2Bit {
     fn set_almanac(&mut self, alm: &[GpsAlmanac]) { self.0.set_almanac(alm); }
     fn set_iono_utc(&mut self, iono_param: Option<&IonoParam>, utc_param: Option<&UtcParam>) {
         if let (Some(iono), Some(utc)) = (iono_param, utc_param) {
-            self.0.SetIonoUtc(iono, utc);
+            self.0.set_iono_utc(iono, utc);
         }
     }
     fn get_type(&self) -> NavDataType { NavDataType::CNav2 }
@@ -260,13 +260,13 @@ impl Default for D1D2NavBit {
 impl D1D2NavBit { pub fn new() -> Self { D1D2NavBit(ActualD1D2NavBit::new()) } }
 impl NavBitTrait for D1D2NavBit {
     fn get_frame_data(&mut self, start_time: GnssTime, svid: i32, param: i32, nav_bits: &mut [i32]) -> i32 { 
-        self.0.GetFrameData(start_time, svid, param, nav_bits)
+        self.0.get_frame_data(start_time, svid, param, nav_bits)
     }
-    fn set_ephemeris(&mut self, svid: i32, eph: &GpsEphemeris) { self.0.SetEphemeris(svid, eph); }
-    fn set_almanac(&mut self, alm: &[GpsAlmanac]) { self.0.SetAlmanac(alm); }
+    fn set_ephemeris(&mut self, svid: i32, eph: &GpsEphemeris) { self.0.set_ephemeris(svid, eph); }
+    fn set_almanac(&mut self, alm: &[GpsAlmanac]) { self.0.set_almanac(alm); }
     fn set_iono_utc(&mut self, iono_param: Option<&IonoParam>, utc_param: Option<&UtcParam>) {
         if let (Some(iono), Some(utc)) = (iono_param, utc_param) {
-            self.0.SetIonoUtc(iono, utc);
+            self.0.set_iono_utc(iono, utc);
         }
     }
     fn get_type(&self) -> NavDataType { NavDataType::D1D2Nav }
@@ -284,13 +284,13 @@ impl Default for INavBit {
 impl INavBit { pub fn new() -> Self { INavBit(ActualINavBit::new()) } }
 impl NavBitTrait for INavBit {
     fn get_frame_data(&mut self, start_time: GnssTime, svid: i32, param: i32, nav_bits: &mut [i32]) -> i32 { 
-        self.0.GetFrameData(start_time, svid, param, nav_bits)
+        self.0.get_frame_data(start_time, svid, param, nav_bits)
     }
     fn set_ephemeris(&mut self, svid: i32, eph: &GpsEphemeris) { 
-        self.0.SetEphemeris(svid, eph);
+        self.0.set_ephemeris(svid, eph);
     }
     fn set_almanac(&mut self, alm: &[GpsAlmanac]) { 
-        self.0.SetAlmanac(alm);
+        self.0.set_almanac(alm);
     }
     fn set_iono_utc(&mut self, iono_param: Option<&IonoParam>, utc_param: Option<&UtcParam>) {
         if let (Some(iono), Some(utc)) = (iono_param, utc_param) {
@@ -302,7 +302,7 @@ impl NavBitTrait for INavBit {
                 flag: iono.flag,
             };
             
-            self.0.SetIonoUtc(&inav_iono, utc);
+            self.0.set_iono_utc(&inav_iono, utc);
         }
     }
     fn get_type(&self) -> NavDataType { NavDataType::INav }
@@ -320,13 +320,13 @@ impl Default for FNavBit {
 impl FNavBit { pub fn new() -> Self { FNavBit(ActualFNavBit::new()) } }
 impl NavBitTrait for FNavBit {
     fn get_frame_data(&mut self, start_time: GnssTime, svid: i32, param: i32, nav_bits: &mut [i32]) -> i32 { 
-        self.0.GetFrameData(start_time, svid, param, nav_bits)
+        self.0.get_frame_data(start_time, svid, param, nav_bits)
     }
-    fn set_ephemeris(&mut self, svid: i32, eph: &GpsEphemeris) { self.0.SetEphemeris(svid, eph); }
-    fn set_almanac(&mut self, alm: &[GpsAlmanac]) { self.0.SetAlmanac(alm); }
+    fn set_ephemeris(&mut self, svid: i32, eph: &GpsEphemeris) { self.0.set_ephemeris(svid, eph); }
+    fn set_almanac(&mut self, alm: &[GpsAlmanac]) { self.0.set_almanac(alm); }
     fn set_iono_utc(&mut self, iono_param: Option<&IonoParam>, utc_param: Option<&UtcParam>) {
         if let (Some(iono), Some(utc)) = (iono_param, utc_param) {
-            self.0.SetIonoUtc(iono, utc);
+            self.0.set_iono_utc(iono, utc);
         }
     }
     fn get_type(&self) -> NavDataType { NavDataType::FNav }
@@ -439,13 +439,13 @@ impl NavBitTrait for L5CNavBit {
 impl NavBitTrait for GNavBit {
     fn get_frame_data(&mut self, start_time: GnssTime, svid: i32, param: i32, nav_bits: &mut [i32]) -> i32 {
         let mut nav_bits_100 = [0i32; 100];
-        let result = self.GetFrameData(start_time, svid, param, &mut nav_bits_100);
+        let result = self.get_frame_data(start_time, svid, param, &mut nav_bits_100);
         nav_bits[..100].copy_from_slice(&nav_bits_100);
         result
     }
-    fn set_ephemeris(&mut self, svid: i32, eph: &GpsEphemeris) { self.SetEphemeris(svid, eph); }
-    fn set_almanac(&mut self, alm: &[GpsAlmanac]) { self.SetAlmanac(alm); }
-    fn set_iono_utc(&mut self, iono_param: Option<&IonoParam>, utc_param: Option<&UtcParam>) { self.SetIonoUtc(iono_param, utc_param); }
+    fn set_ephemeris(&mut self, svid: i32, eph: &GpsEphemeris) { self.set_ephemeris(svid, eph); }
+    fn set_almanac(&mut self, alm: &[GpsAlmanac]) { self.set_almanac(alm); }
+    fn set_iono_utc(&mut self, iono_param: Option<&IonoParam>, utc_param: Option<&UtcParam>) { self.set_iono_utc(iono_param, utc_param); }
     fn get_type(&self) -> NavDataType { NavDataType::NavDataGlonassEph }
     fn clone_box(&self) -> Box<dyn NavBitTrait> { Box::new(self.clone()) }
 }

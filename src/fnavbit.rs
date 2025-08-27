@@ -62,7 +62,7 @@ impl FNavBit {
         }
     }
 
-    pub fn GetFrameData(&self, start_time: GnssTime, svid: i32, _param: i32, nav_bits: &mut [i32]) -> i32 {
+    pub fn get_frame_data(&self, start_time: GnssTime, svid: i32, _param: i32, nav_bits: &mut [i32]) -> i32 {
         // First determine the current TOW and subframe number
         let week = start_time.Week + start_time.MilliSeconds / 604800000;
         let milliseconds = start_time.MilliSeconds % 604800000;
@@ -110,7 +110,7 @@ impl FNavBit {
         0
     }
 
-    pub fn SetEphemeris(&mut self, svid: i32, eph: &GpsEphemeris) -> i32 {
+    pub fn set_ephemeris(&mut self, svid: i32, eph: &GpsEphemeris) -> i32 {
         if !(1..=36).contains(&svid) || eph.valid == 0 {
             return 0;
         }
@@ -119,7 +119,7 @@ impl FNavBit {
         svid
     }
 
-    pub fn SetAlmanac(&mut self, alm: &[GpsAlmanac]) -> i32 {
+    pub fn set_almanac(&mut self, alm: &[GpsAlmanac]) -> i32 {
         let mut week = 0i32;
         
         for i in 0..36.min(alm.len()) {
@@ -139,7 +139,7 @@ impl FNavBit {
         0
     }
 
-    pub fn SetIonoUtc(&mut self, iono_param: &IonoParam, utc_param: &UtcParam) -> i32 {
+    pub fn set_iono_utc(&mut self, iono_param: &IonoParam, utc_param: &UtcParam) -> i32 {
         // Put ionosphere parameters (assuming NeQuick model)
         let uint_value = Self::UnscaleUint(iono_param.a0, -2);
         self.GalIonoData[0] = COMPOSE_BITS!(uint_value, 5, 11);

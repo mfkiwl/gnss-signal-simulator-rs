@@ -595,8 +595,8 @@ impl CNavBit {
         result
     }
 
-    // Missing methods required by the interface
-    pub fn GetFrameData(&self, start_time: GnssTime, svid: i32, param: i32, nav_bits: &mut [i32]) -> i32 {
+    // Alternative interface method  
+    pub fn get_frame_data_alt(&self, start_time: GnssTime, svid: i32, param: i32, nav_bits: &mut [i32]) -> i32 {
         // Validate SVID to prevent out-of-bounds access
         if !(1..=32).contains(&svid) {
             // Fill nav_bits with zeros for invalid svid
@@ -661,7 +661,7 @@ impl CNavBit {
     }
     
 
-    pub fn SetEphemeris(&mut self, svid: i32, eph: &GpsEphemeris) -> bool {
+    pub fn set_ephemeris_alt(&mut self, svid: i32, eph: &GpsEphemeris) -> bool {
         // Validate SVID
         if !(1..=32).contains(&svid) {
             return false;
@@ -681,7 +681,7 @@ impl CNavBit {
         true
     }
 
-    pub fn SetAlmanac(&mut self, alm: &[GpsAlmanac]) -> bool {
+    pub fn set_almanac_alt(&mut self, alm: &[GpsAlmanac]) -> bool {
         // Set almanac data for navigation message generation
         
         // Validate and store almanac data (simplified)
@@ -699,7 +699,7 @@ impl CNavBit {
         true
     }
 
-    pub fn SetIonoUtc(&mut self, iono: &IonoParam, utc: &UtcParam) -> bool {
+    pub fn set_iono_utc_alt(&mut self, iono: &IonoParam, utc: &UtcParam) -> bool {
         // Set ionospheric and UTC parameters for navigation message generation
         
         // Store ionospheric parameters (simplified)

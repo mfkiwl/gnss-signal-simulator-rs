@@ -32,43 +32,43 @@ use crate::COMPOSE_BITS;
 #[derive(Clone)]
 pub struct BCNavBit {
     // Ephemeris parameters part 1 (63 satellites, 9 parameters each)
-    pub Ephemeris1: [[u32; 9]; 63],
+    pub ephemeris1: [[u32; 9]; 63],
     
     // Ephemeris parameters part 2 (63 satellites, 10 parameters each)
-    pub Ephemeris2: [[u32; 10]; 63],
+    pub ephemeris2: [[u32; 10]; 63],
     
     // Clock parameters (63 satellites, 4 parameters each)
-    pub ClockParam: [[u32; 4]; 63],
+    pub clock_param: [[u32; 4]; 63],
     
     // Integrity flags (63 satellites)
-    pub IntegrityFlags: [u32; 63],
+    pub integrity_flags: [u32; 63],
     
     // TGS/ISC parameters (63 satellites, 3 parameters each)
-    pub TgsIscParam: [[u32; 3]; 63],
+    pub tgs_isc_param: [[u32; 3]; 63],
     
     // Reduced almanac (63 satellites, 2 parameters each)
-    pub ReducedAlmanac: [[u32; 2]; 63],
+    pub reduced_almanac: [[u32; 2]; 63],
     
     // Midi almanac (63 satellites, 7 parameters each)
-    pub MidiAlmanac: [[u32; 7]; 63],
+    pub midi_almanac: [[u32; 7]; 63],
     
     // Ionosphere parameters (BDGIM format)
-    pub BdGimIono: [u32; 4],
+    pub bd_gim_iono: [u32; 4],
     
     // BDT-UTC parameters
-    pub BdtUtcParam: [u32; 5],
+    pub bdt_utc_param: [u32; 5],
     
     // EOP parameters
-    pub EopParam: [u32; 6],
+    pub eop_param: [u32; 6],
     
     // BGTO parameters
-    pub BgtoParam: [[u32; 3]; 7],
+    pub bgto_param: [[u32; 3]; 7],
     
     // Almanac week
-    pub AlmanacWeek: u32,
+    pub almanac_week: u32,
     
     // Almanac time of applicability
-    pub AlmanacToa: u32,
+    pub almanac_toa: u32,
 }
 
 impl Default for BCNavBit {
@@ -136,19 +136,19 @@ impl BCNavBit {
 
     pub fn new() -> Self {
         BCNavBit {
-            Ephemeris1: [[0; 9]; 63],
-            Ephemeris2: [[0; 10]; 63],
-            ClockParam: [[0; 4]; 63],
-            IntegrityFlags: [0; 63],
-            TgsIscParam: [[0; 3]; 63],
-            ReducedAlmanac: [[0; 2]; 63],
-            MidiAlmanac: [[0; 7]; 63],
-            BdGimIono: [0; 4],
-            BdtUtcParam: [0; 5],
-            EopParam: [0; 6],
-            BgtoParam: [[0; 3]; 7],
-            AlmanacWeek: 0,
-            AlmanacToa: 0,
+            ephemeris1: [[0; 9]; 63],
+            ephemeris2: [[0; 10]; 63],
+            clock_param: [[0; 4]; 63],
+            integrity_flags: [0; 63],
+            tgs_isc_param: [[0; 3]; 63],
+            reduced_almanac: [[0; 2]; 63],
+            midi_almanac: [[0; 7]; 63],
+            bd_gim_iono: [0; 4],
+            bdt_utc_param: [0; 5],
+            eop_param: [0; 6],
+            bgto_param: [[0; 3]; 7],
+            almanac_week: 0,
+            almanac_toa: 0,
         }
     }
 
@@ -186,7 +186,7 @@ impl BCNavBit {
 
         // Теперь работаем с данными без дополнительных заимствований self
         {
-            let data: &mut [u32; 9] = &mut self.Ephemeris1[svid_idx];
+            let data: &mut [u32; 9] = &mut self.ephemeris1[svid_idx];
 
             // fill in Ephemeris1
             data[0] = COMPOSE_BITS!(eph.iode as u32, 16, 8);
@@ -259,7 +259,7 @@ impl BCNavBit {
 
         // fill in Ephemeris2
         {
-            let data: &mut [u32; 10] = &mut self.Ephemeris2[svid_idx];
+            let data: &mut [u32; 10] = &mut self.ephemeris2[svid_idx];
             let omega0_sign = if (omega0_scaled & 0x100000000i64) != 0 {
                 1
             } else {
@@ -298,7 +298,7 @@ impl BCNavBit {
 
         // fill in ClockParam
         {
-            let data: &mut [u32; 4] = &mut self.ClockParam[svid_idx];
+            let data: &mut [u32; 4] = &mut self.clock_param[svid_idx];
             data[0] = COMPOSE_BITS!(toc_value, 13, 11);
             data[0] |= COMPOSE_BITS!((af0_scaled >> 12) as u32, 0, 13);
             data[1] = COMPOSE_BITS!(af0_scaled as u32, 12, 12);
@@ -309,11 +309,11 @@ impl BCNavBit {
         }
 
         // fill in IntegrityFlags
-        self.IntegrityFlags[svid_idx] = (eph.flag >> 2) as u32;
+        self.integrity_flags[svid_idx] = (eph.flag >> 2) as u32;
 
         // fill in TGD and ISC
         {
-            let data: &mut [u32; 3] = &mut self.TgsIscParam[svid_idx];
+            let data: &mut [u32; 3] = &mut self.tgs_isc_param[svid_idx];
             data[0] = COMPOSE_BITS!(isc_b1c_scaled as u32, 12, 12);
             data[0] |= COMPOSE_BITS!(tgd_b1c_scaled as u32, 0, 12);
             data[1] = COMPOSE_BITS!(isc_b2a_scaled as u32, 12, 12);
@@ -333,13 +333,13 @@ impl BCNavBit {
             // Теперь можем вызвать статический метод без конфликта заимствований
             Self::fill_bds_almanac_page(
                 alm_item,
-                &mut self.MidiAlmanac[i],
-                &mut self.ReducedAlmanac[i],
+                &mut self.midi_almanac[i],
+                &mut self.reduced_almanac[i],
             );
 
             if (alm[i].valid & 1) != 0 {
-                self.AlmanacToa = (alm[i].toa >> 12) as u32;
-                self.AlmanacWeek = alm[i].week as u32;
+                self.almanac_toa = (alm[i].toa >> 12) as u32;
+                self.almanac_week = alm[i].week as u32;
             }
         }
 
@@ -560,7 +560,7 @@ impl BCNavBit {
     }
 
     // Interface methods required by navigation bit classes
-    pub fn SetEphemeris(&mut self, svid: i32, eph: &GpsEphemeris) -> bool {
+    pub fn set_ephemeris_legacy(&mut self, svid: i32, eph: &GpsEphemeris) -> bool {
         if !(1..=63).contains(&svid) {
             return false;
         }
@@ -589,8 +589,8 @@ impl BCNavBit {
             }
             eph2_data[9] = eph.omega_dot.to_bits() as u32; // Additional field in D2
             
-            self.Ephemeris1[index] = eph1_data;
-            self.Ephemeris2[index] = eph2_data;
+            self.ephemeris1[index] = eph1_data;
+            self.ephemeris2[index] = eph2_data;
             
             true
         } else {
@@ -598,7 +598,7 @@ impl BCNavBit {
         }
     }
 
-    pub fn SetAlmanac(&mut self, alm: &[GpsAlmanac]) -> bool {
+    pub fn set_almanac_legacy(&mut self, alm: &[GpsAlmanac]) -> bool {
         // BDS D1/D2 messages include almanac data
         // This structure doesn't have Almanac field, so acknowledge processing
         

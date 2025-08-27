@@ -211,16 +211,16 @@ impl BCNav1Bit {
         // Insert WN and HOW for Subframe2
         frame2_data[0] = self.base.compose_bits(week as u32, 11, 13);
         frame2_data[0] |= self.base.compose_bits(how as u32, 3, 8);
-        frame2_data[0] |= self.base.compose_bits(self.base.ClockParam[svid_idx][3] >> 7, 0, 3);
-        frame2_data[1] = self.base.compose_bits(self.base.ClockParam[svid_idx][3], 17, 7);
+        frame2_data[0] |= self.base.compose_bits(self.base.clock_param[svid_idx][3] >> 7, 0, 3);
+        frame2_data[1] = self.base.compose_bits(self.base.clock_param[svid_idx][3], 17, 7);
         
-        self.base.append_word(&mut frame2_data[1..], 7, &self.base.Ephemeris1[svid_idx], 211);
-        self.base.append_word(&mut frame2_data[10..], 2, &self.base.Ephemeris2[svid_idx], 222);
-        self.base.append_word(&mut frame2_data[19..], 8, &self.base.ClockParam[svid_idx], 69);
+        self.base.append_word(&mut frame2_data[1..], 7, &self.base.ephemeris1[svid_idx], 211);
+        self.base.append_word(&mut frame2_data[10..], 2, &self.base.ephemeris2[svid_idx], 222);
+        self.base.append_word(&mut frame2_data[19..], 8, &self.base.clock_param[svid_idx], 69);
         
-        frame2_data[22] |= self.base.compose_bits(self.base.TgsIscParam[svid_idx][1], 7, 12);
-        frame2_data[22] |= self.base.compose_bits(self.base.TgsIscParam[svid_idx][0] >> 17, 0, 7);
-        frame2_data[23] = self.base.compose_bits(self.base.TgsIscParam[svid_idx][0], 7, 17);
+        frame2_data[22] |= self.base.compose_bits(self.base.tgs_isc_param[svid_idx][1], 7, 12);
+        frame2_data[22] |= self.base.compose_bits(self.base.tgs_isc_param[svid_idx][0] >> 17, 0, 7);
+        frame2_data[23] = self.base.compose_bits(self.base.tgs_isc_param[svid_idx][0], 7, 17);
     }
 
     pub fn set_iono_utc(&mut self, iono_param: Option<&IonoParam>, utc_param: Option<&UtcParam>) -> i32 {
@@ -228,15 +228,15 @@ impl BCNav1Bit {
         if let Some(iono) = iono_param {
             if (iono.flag & 1) != 0 {
                 // Convert Klobuchar parameters to BDGIM format
-                self.base.BdGimIono[0] = (((iono.a0 * (1u64 << 30) as f64) as i32 & 0xFF) << 16) as u32;
-                self.base.BdGimIono[0] |= (((iono.a1 * (1u64 << 27) as f64) as i32 & 0xFF) << 8) as u32;
-                self.base.BdGimIono[0] |= ((iono.a2 * (1u64 << 24) as f64) as i32 & 0xFF) as u32;
-                self.base.BdGimIono[1] = (((iono.a3 * (1u64 << 24) as f64) as i32 & 0xFF) << 24) as u32;
+                self.base.bd_gim_iono[0] = (((iono.a0 * (1u64 << 30) as f64) as i32 & 0xFF) << 16) as u32;
+                self.base.bd_gim_iono[0] |= (((iono.a1 * (1u64 << 27) as f64) as i32 & 0xFF) << 8) as u32;
+                self.base.bd_gim_iono[0] |= ((iono.a2 * (1u64 << 24) as f64) as i32 & 0xFF) as u32;
+                self.base.bd_gim_iono[1] = (((iono.a3 * (1u64 << 24) as f64) as i32 & 0xFF) << 24) as u32;
                 
-                self.base.BdGimIono[1] |= (((iono.b0 / (1u64 << 11) as f64) as i32 & 0xFF) << 16) as u32;
-                self.base.BdGimIono[1] |= (((iono.b1 / (1u64 << 14) as f64) as i32 & 0xFF) << 8) as u32;
-                self.base.BdGimIono[1] |= ((iono.b2 / (1u64 << 16) as f64) as i32 & 0xFF) as u32;
-                self.base.BdGimIono[2] = (((iono.b3 / (1u64 << 16) as f64) as i32 & 0xFF) << 24) as u32;
+                self.base.bd_gim_iono[1] |= (((iono.b0 / (1u64 << 11) as f64) as i32 & 0xFF) << 16) as u32;
+                self.base.bd_gim_iono[1] |= (((iono.b1 / (1u64 << 14) as f64) as i32 & 0xFF) << 8) as u32;
+                self.base.bd_gim_iono[1] |= ((iono.b2 / (1u64 << 16) as f64) as i32 & 0xFF) as u32;
+                self.base.bd_gim_iono[2] = (((iono.b3 / (1u64 << 16) as f64) as i32 & 0xFF) << 24) as u32;
                 
                 self.update_subframe3_page1();
             }
@@ -245,14 +245,14 @@ impl BCNav1Bit {
         // Set UTC parameters
         if let Some(utc) = utc_param {
             if (utc.flag & 1) != 0 {
-                self.base.BdtUtcParam[0] = (utc.A0 * (1u64 << 30) as f64) as u32;
-                self.base.BdtUtcParam[1] = ((utc.A1 * (1u64 << 50) as f64) as u32 & 0xFFFFFF) << 8;
-                self.base.BdtUtcParam[1] |= utc.tot as u32;
-                self.base.BdtUtcParam[2] = (utc.WN as u32 & 0xFF) << 24;
-                self.base.BdtUtcParam[2] |= ((utc.TLS as u32) & 0xFF) << 16;
-                self.base.BdtUtcParam[2] |= ((utc.WNLSF as u32) & 0xFF) << 8;
-                self.base.BdtUtcParam[2] |= ((utc.DN & 0x7) << 5) as u32;
-                self.base.BdtUtcParam[3] = ((utc.TLSF as u32) & 0xFF) << 24;
+                self.base.bdt_utc_param[0] = (utc.A0 * (1u64 << 30) as f64) as u32;
+                self.base.bdt_utc_param[1] = ((utc.A1 * (1u64 << 50) as f64) as u32 & 0xFFFFFF) << 8;
+                self.base.bdt_utc_param[1] |= utc.tot as u32;
+                self.base.bdt_utc_param[2] = (utc.WN as u32 & 0xFF) << 24;
+                self.base.bdt_utc_param[2] |= ((utc.TLS as u32) & 0xFF) << 16;
+                self.base.bdt_utc_param[2] |= ((utc.WNLSF as u32) & 0xFF) << 8;
+                self.base.bdt_utc_param[2] |= ((utc.DN & 0x7) << 5) as u32;
+                self.base.bdt_utc_param[3] = ((utc.TLSF as u32) & 0xFF) << 24;
                 
                 self.update_subframe3_page2();
             }
@@ -268,11 +268,11 @@ impl BCNav1Bit {
         self.bds_subframe3[0][0] = 1 << 17; // Message Type ID in bits 22-17
         
         // Copy BDGIM ionosphere parameters
-        if self.base.BdGimIono[0] != 0 || self.base.BdGimIono[1] != 0 || self.base.BdGimIono[2] != 0 {
-            self.bds_subframe3[0][0] |= (self.base.BdGimIono[0] >> 8) & 0x1FFFF;
-            self.bds_subframe3[0][1] = ((self.base.BdGimIono[0] & 0xFF) << 16) | ((self.base.BdGimIono[1] >> 16) & 0xFFFF);
-            self.bds_subframe3[0][2] = ((self.base.BdGimIono[1] & 0xFFFF) << 8) | ((self.base.BdGimIono[2] >> 24) & 0xFF);
-            self.bds_subframe3[0][3] = self.base.BdGimIono[2] & 0xFFFFFF;
+        if self.base.bd_gim_iono[0] != 0 || self.base.bd_gim_iono[1] != 0 || self.base.bd_gim_iono[2] != 0 {
+            self.bds_subframe3[0][0] |= (self.base.bd_gim_iono[0] >> 8) & 0x1FFFF;
+            self.bds_subframe3[0][1] = ((self.base.bd_gim_iono[0] & 0xFF) << 16) | ((self.base.bd_gim_iono[1] >> 16) & 0xFFFF);
+            self.bds_subframe3[0][2] = ((self.base.bd_gim_iono[1] & 0xFFFF) << 8) | ((self.base.bd_gim_iono[2] >> 24) & 0xFF);
+            self.bds_subframe3[0][3] = self.base.bd_gim_iono[2] & 0xFFFFFF;
         }
         
         self.bds_subframe3[0][3] |= 0; // Placeholder for SISAI_B1C, SISAI_B2a, etc.
@@ -285,12 +285,12 @@ impl BCNav1Bit {
         self.bds_subframe3[1][0] = 2 << 17; // Message Type ID in bits 22-17
         
         // Copy BDT-UTC parameters
-        if self.base.BdtUtcParam[0] != 0 || self.base.BdtUtcParam[1] != 0 {
-            self.bds_subframe3[1][0] |= (self.base.BdtUtcParam[0] >> 15) & 0x1FFFF;
-            self.bds_subframe3[1][1] = ((self.base.BdtUtcParam[0] & 0x7FFF) << 9) | ((self.base.BdtUtcParam[1] >> 23) & 0x1FF);
-            self.bds_subframe3[1][2] = ((self.base.BdtUtcParam[1] & 0x7FFFFF) << 1) | ((self.base.BdtUtcParam[2] >> 31) & 0x1);
-            self.bds_subframe3[1][3] = (self.base.BdtUtcParam[2] & 0x7FFFFFFF) >> 7;
-            self.bds_subframe3[1][4] = ((self.base.BdtUtcParam[2] & 0x7F) << 17) | ((self.base.BdtUtcParam[3] >> 7) & 0x1FFFF);
+        if self.base.bdt_utc_param[0] != 0 || self.base.bdt_utc_param[1] != 0 {
+            self.bds_subframe3[1][0] |= (self.base.bdt_utc_param[0] >> 15) & 0x1FFFF;
+            self.bds_subframe3[1][1] = ((self.base.bdt_utc_param[0] & 0x7FFF) << 9) | ((self.base.bdt_utc_param[1] >> 23) & 0x1FF);
+            self.bds_subframe3[1][2] = ((self.base.bdt_utc_param[1] & 0x7FFFFF) << 1) | ((self.base.bdt_utc_param[2] >> 31) & 0x1);
+            self.bds_subframe3[1][3] = (self.base.bdt_utc_param[2] & 0x7FFFFFFF) >> 7;
+            self.bds_subframe3[1][4] = ((self.base.bdt_utc_param[2] & 0x7F) << 17) | ((self.base.bdt_utc_param[3] >> 7) & 0x1FFFF);
         }
     }
 

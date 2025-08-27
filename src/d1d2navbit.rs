@@ -93,7 +93,7 @@ impl D1D2NavBit {
         nav_bit
     }
 
-    pub fn GetFrameData(&self, start_time: GnssTime, svid: i32, _param: i32, nav_bits: &mut [i32]) -> i32 {
+    pub fn get_frame_data(&self, start_time: GnssTime, svid: i32, _param: i32, nav_bits: &mut [i32]) -> i32 {
         let mut stream = [0u32; 10];
         let d1_data: bool;
         let sow: i32;
@@ -180,7 +180,7 @@ impl D1D2NavBit {
         0
     }
 
-    pub fn SetEphemeris(&mut self, svid: i32, eph: &GpsEphemeris) -> i32 {
+    pub fn set_ephemeris(&mut self, svid: i32, eph: &GpsEphemeris) -> i32 {
         if eph.valid == 0 {
             return 0;
         }
@@ -209,7 +209,7 @@ impl D1D2NavBit {
         svid
     }
 
-    pub fn SetAlmanac(&mut self, alm: &[GpsAlmanac]) -> i32 {
+    pub fn set_almanac(&mut self, alm: &[GpsAlmanac]) -> i32 {
         let mut toa = 0i32;
         let mut week = 0i32;
 
@@ -271,7 +271,7 @@ impl D1D2NavBit {
         0
     }
 
-    pub fn SetIonoUtc(&mut self, iono_param: &IonoParam, utc_param: &UtcParam) -> i32 {
+    pub fn set_iono_utc(&mut self, iono_param: &IonoParam, utc_param: &UtcParam) -> i32 {
         if iono_param.flag == 0 || (utc_param.flag & 3) != 3 {
             return 0;
         }

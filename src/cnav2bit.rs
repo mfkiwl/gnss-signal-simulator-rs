@@ -264,7 +264,7 @@ impl CNav2Bit {
     }
 
     // Missing methods required by the interface
-    pub fn GetFrameData(&self, start_time: GnssTime, svid: i32, param: i32, nav_bits: &mut [i32]) -> i32 {
+    pub fn get_frame_data_alt(&self, start_time: GnssTime, svid: i32, param: i32, nav_bits: &mut [i32]) -> i32 {
         // Validate SVID
         if !(1..=32).contains(&svid) {
             for bit in nav_bits.iter_mut().take(1800) {
@@ -292,7 +292,7 @@ impl CNav2Bit {
         1800 // Return number of bits generated
     }
 
-    pub fn SetEphemeris(&mut self, svid: i32, eph: &GpsEphemeris) -> bool {
+    pub fn set_ephemeris_alt(&mut self, svid: i32, eph: &GpsEphemeris) -> bool {
         // Validate SVID
         if !(1..=32).contains(&svid) {
             return false;
@@ -310,7 +310,7 @@ impl CNav2Bit {
         true
     }
 
-    pub fn SetAlmanac(&mut self, alm: &[GpsAlmanac]) -> bool {
+    pub fn set_almanac_alt(&mut self, alm: &[GpsAlmanac]) -> bool {
         // Store almanac data for CNAV-2 message generation
         for almanac in alm.iter().take(32) {
             if almanac.svid > 0 && almanac.svid <= 32 && almanac.valid > 0 {
@@ -322,7 +322,7 @@ impl CNav2Bit {
         true
     }
 
-    pub fn SetIonoUtc(&mut self, iono: &IonoParam, utc: &UtcParam) -> bool {
+    pub fn set_iono_utc_alt(&mut self, iono: &IonoParam, utc: &UtcParam) -> bool {
         // Store ionospheric and UTC parameters for CNAV-2 message generation
         // These parameters are encoded into message type 15
         
