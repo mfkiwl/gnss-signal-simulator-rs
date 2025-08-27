@@ -607,7 +607,7 @@ fn gps_sat_pos_speed_eph(system: GnssSystem, transmit_time: f64, eph: &GpsEpheme
     let ik_dot = eph.idot + dik_dot;
     
     // Рассчитываем ускорение если требуется
-    if let Some(acc_array) = acc {
+    if let Some(ref mut acc_array) = acc {
         let ek_dot2 = -ek_dot * ek_dot * eph.ecc * ek.sin() / ek1;
         let phi_dot2 = 2.0 * ek_dot2 * eph.root_ecc / ek1;
         let alpha_acc = 2.0 * phi_dot2 / phi_dot;
