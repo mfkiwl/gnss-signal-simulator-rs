@@ -412,8 +412,8 @@ impl BCNav3Bit {
             // Example encoding of key ephemeris parameters
             eph1_data[0] = (svid as u32) << 24; // SVID in message header
             eph1_data[1] = (eph.toe as u32 - 14); // Adjust for BDT
-            eph1_data[2] = eph.sqrtA.to_bits();
-            eph1_data[3] = eph.ecc.to_bits();
+            eph1_data[2] = (eph.sqrtA.to_bits() as u32);
+            eph1_data[3] = (eph.ecc.to_bits() as u32);
             
             // Copy to backup
             eph2_data = eph1_data;
