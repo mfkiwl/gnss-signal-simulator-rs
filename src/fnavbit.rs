@@ -471,30 +471,7 @@ impl FNavBit {
     }
 
     fn Crc24qEncode(data: &[u32], bit_count: usize) -> u32 {
-        // CRC24Q implementation - simplified placeholder
-        // In real implementation, this would calculate proper CRC24Q
-        let mut crc = 0u32;
-        let mut bit_index = 0;
-        
-        for &word in data {
-            for bit_pos in (0..32).rev() {
-                if bit_index >= bit_count {
-                    break;
-                }
-                let bit = (word >> bit_pos) & 1;
-                crc = (crc << 1) ^ bit;
-                // Apply CRC24Q polynomial if needed
-                if (crc & 0x1000000) != 0 {
-                    crc ^= 0x1864CFB; // CRC24Q polynomial
-                }
-                bit_index += 1;
-            }
-            if bit_index >= bit_count {
-                break;
-            }
-        }
-        
-        crc & 0xFFFFFF
+        crate::crc24q::crc24q_encode(data, bit_count)
     }
 }
 

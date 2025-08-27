@@ -622,13 +622,8 @@ impl CNavBit {
         let mut encode_data = [0u32; 9];
         self.get_message_data(svid, message, next_tow, &mut encode_data);
         
-        // Calculate CRC24Q (simplified version)
-        let mut crc_result = 0u32;
-        for &word in &encode_data {
-            crc_result ^= word;
-            crc_result = crc_result.wrapping_mul(0x1000001);
-        }
-        crc_result &= 0xFFFFFF; // 24-bit CRC
+        // Calculate proper CRC24Q
+        let crc_result = crate::crc24q::crc24q_encode(&encode_data, 276);
         
         // Generate navigation bits
         let mut bit_index = 0;

@@ -25,6 +25,11 @@ use crate::types::GnssTime;
 const B1C_SUBFRAME2_SYMBOL_LENGTH: usize = 100;
 const B1C_SUBFRAME3_SYMBOL_LENGTH: usize = 44;
 
+// LDPC Generator matrices for B1C
+const B1C_MATRIX_GEN2: &str = "8hH6iX^5g41GGbCK<`Y?PK@dP_8=28CH0000i@VO5Oa8Tj?Sc9W]1c<m@93VfGLAAeZV=Qb^0SMk0000k6c\\LIoDbF7@3BFgF::kQP=bFSU[NMmcRe^iWJm`5DO7]FjA_j^P0000FKO7[9njS?Hd3<Y_S3WSSMIOXd@11alDAKjU0dRQ0000ib7:@HTQe94gIH9N9EEiVg82Gh33\\mDPPG`X;@D9cUS7QGVjXi`Y0000_Ol]3d5Vh4>e]7MoDO4hhb:SBPj?iCKUjOi3?Pg;0000X2][S>iV_d_a1>dnd>6Xh^;:8M?K3<7VVH:>T27]UgcKS8hS>he;0000Ec9NKQAhiD]TOoZ67OmMMo9FIVGddSdgSPH?04^W0000W:O1Y<H_EQEc9fQ3Qff>ONQ?cPI4B;Z]]F3Ga1Z<oLn_ocOKGO3Q0000dnmb47[OAM<aleVTZlYJPem1H]?DD5g6KEFI02NS0000Sil>?;=@C7Cnm87B788G]mf\\>Iej`9ckk:b[K_d=8PWV;>BXUBbm0000>hWYjYLB2H=MiQDS4iK7TQFW3koGGESPXhBe0MC[0000[\\V@o1RZ:8OTF18`8gg[GJ_KL8YgSB[ejDWEfM[3@P=1FLGCETWi0000Lcn?gAJT8`2ja1X98cf88B\\=6jm^TZ5PCcTg0jVH0000EK?R=2TGDAn;\\2ASA]]EiYD]THJJVfn==_Zo4Wn5QSa3jTijoiZ80000lF1dJc^iHI64A3kKnF>HH7OG:=ea?j?SjF_J0=YX0000X]AUGf_<lclMg6c\\c6do0000k0A0f0700000000000000a070X0YjTLQ000000000000000000000000c0:000000N0Y0000040C0X0E0000X0o0:0;0000000000=0_0W0F000000000000>020F0\\06IFZ0000000000000000000000000_0?0000F0>00000h0N0]0`000000k0;0V0[00000000k0]0m0700000000000000a0b0X0gQGLQ000000000000000000000000d0:000000N0g0000040F0;0E0000;0o0B0;0000000000a0S0?0J000000000000a0D060d0lC680000000000000000000000000S0U000060_000001090n0]000000^0=0[020000PUeEjVnnRW4OOja8`^4l6N3DdjPd8=aS0000L]<onK1PVZX`9Dhb4];VVT2QkOc37@7Nd]=n0OUY0000YE9fQX=CLKLJ[XKIKXo8\\1gQSJ7bDCTRRVk;j]TEfHKkfS\\N;\\cg0000UK_>b69\\PeEj28aXT2@cJ8_]ZRQooOo[NBV70I1^0000^M2<QCV=i6iK_W6D6WW;]mf\\>Iej`9ckk:bPK_d=8PWV;>BXUBbf0000>hWYjYLB2H=MiQDS4iK7TQFW3koGGESWXhBe0MC[0000[\\V@o1R]:8OTF18`8gg[";
+
+const B1C_MATRIX_GEN3: &str = "l600RI00QP8600003[000000006i_a3900EJ00oR0000";
+
 // BCH(21,6) encode table for SVID
 const BCH_PRN_TABLE: [u32; 64] = [
     0x000000, 0x00a4cb, 0x014996, 0x01ed5d, 0x0237e7, 0x02932c, 0x037e71, 0x03daba, 
@@ -120,8 +125,8 @@ impl BCNav1Bit {
             symbol2[i * 4 + 3] = (frame2_data[i] & 0x3f) as i32;
         }
         
-        // LDPC encode for subframe 2 - placeholder
-        // self.base.ldpc_encode(&mut symbol2, B1C_SUBFRAME2_SYMBOL_LENGTH);
+        // LDPC encode for subframe 2
+        crate::ldpc::ldpc_encode(&mut symbol2, B1C_SUBFRAME2_SYMBOL_LENGTH, B1C_MATRIX_GEN2);
         
         let mut bits2 = [0i32; 1200];
         for i in 0..200 {
@@ -141,8 +146,8 @@ impl BCNav1Bit {
             symbol3[i * 4 + 3] = (data[i] & 0x3f) as i32;
         }
         
-        // LDPC encode for subframe 3 - placeholder
-        // self.base.ldpc_encode(&mut symbol3, B1C_SUBFRAME3_SYMBOL_LENGTH);
+        // LDPC encode for subframe 3
+        crate::ldpc::ldpc_encode(&mut symbol3, B1C_SUBFRAME3_SYMBOL_LENGTH, B1C_MATRIX_GEN3);
         
         let mut bits3 = [0i32; 528];
         for i in 0..88 {

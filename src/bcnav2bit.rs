@@ -47,8 +47,7 @@ pub struct BCNav2Bit {
 }
 
 impl BCNav2Bit {
-    // B2a LDPC matrix generator
-    const B2A_MATRIX_GEN: &'static str = 
+    // B2a LDPC matrix generator (removed duplicate) 
         "h[0G@Y0<JiVK0c0^KI40hKN0DNVh]i0JKN<F[0Jo0C0UFYo9\
         K`C0QKa0ggDVR0T0S70^VV0EW1>i^R20[;aG09YT>0c0GbQN\
         8KZ0>810<<jIZ0Q0nH0<110V5L`RlZW0C1]N0i[Q^0=0\\SIW\
@@ -102,6 +101,11 @@ impl BCNav2Bit {
     const MESSAGE_ORDER: [i32; 20] = [
         10, 11, 30, 34, 10, 11, 30, 34, 10, 11, 30, 34, 10, 11, 30, 34, 10, 11, 30, 34,
     ];
+    
+    const B2A_SYMBOL_LENGTH: usize = 48;
+    
+    // LDPC Generator matrix for B2a
+    const B2A_MATRIX_GEN: &str = "h[0G@Y0<JiVK0c0^KI40hKN0DNVh]i0JKN<F[0Jo0C0UFYo9K`C0QKa0ggDVR0T0S70^VV0EW1>i^R20[;aG09YT>0c0GbQN8KZ0>810<<jIZ0Q0nH0<110V5L`RlZW0C1]N0i[Q^0=0\\SIWkg0_mX0EMEHc0e0WR9`0CRS03SHCFE0FcS1Yg0Md0<0XL`dNO`T0VOC0aaDVQ0R0h]0g;;0EW1Ii`gN0[ZCG0hMEo0=0HbV\\Z60`Yj0>PCMQ0K0jn2j0=ng0KgM=1C0Png9^j0PD0F0dijD[U8H0^UL0FF6`?0>0@N0F``0I_OlZ=?i0]LGW0RC>l0Y0Wf`5RW0d1N0OIO:T070[TMD0RTX0`X:R_O0OTX@9W0IG050>9NGYO`05Ud0A<A]40M0Ii@I0[ib0Mb][8A0<ib;oI0:e0g0Z1IeGkKZ0>810<7jI>0Z0nH0<110V5L`Rl<W0C?]N0n[Q^0:0\\SIWm:\\0lmN022VK40L09W0bKK02d8=1:be0GON50Z]^a0[05Jl_jm0Q5U0CnPR[0>0UbZU0\\bG0>9c\\EP0nb9C]m0n80R0fJU8_kKQ0>81077jI>0Z0nH0<110V5L`Rl<W0C?]N0n[VY0:0\\SIW8l0YMi0T?hG50[0^6D^0a6O0[OGa:T0?6OIP^0?90J01`^92:cI0No^01?T\\I0G0J201^^0H@l4V51f0<^FS0JgGW0_0h8\\f`>0h=@0MRMaN0S0FDkQ0PD10o1aPlM0RN1E5Q0cf0i0@VQf<en10beN0>>a2H0?0:`0>NN0FUWS]fH[0;N1K0C6?S0@0Oc28RW0d1N0OIO:T070[TFD0lhX0`X:R_O0OTX@>W0IG050N9DGY>]0WiC02jZ`U050=UKC0eUf05V`e\\Z0jU52h]0j[0`0ATC[Ro5F0No?011T\\20G0Ub0I\\\\01J4WV5Ik0<^?S0EgGi0d0S=NfRj0IoD0Q_[<h0`0bhFO0lh`0``<l;[0_h`Q>j0_J060e9DJYnS;0?nV0QQBF10Z0cI0SFF0<82bCS]l06GV`0[jZb0J0`W?KNFi0RNj0AA_gR0[0^603aa0X`7<Y?3I0DCjV0^@Xk0S0;Hg18l0YFi0_?hG50[0^6D^0a6O0[OGa:T0?6OIP^0?>0J01`^>2h260Zh70TTP<C0R0l;0T770gKG?[bC`0j76I0YDR?0S01\\<`TO0mHL04G4eg0;0iKIY0hKA0NAeTJ40JgA:FO0G10k0LMY19TO0mHL04G4eg0;0igdY0TKA0NAeTJ404gA:MO0G10k0FMY19K`C0QK;0ggDVR0T0S70g;V0EW1>i^R@0[;aG09YT>0c0HbVNJk>0`JH0GGRLF0I0e\\0GLL01oSK<8F50QbH40gTIK0M04nLc]803NK0Y259Z0I06ZiB0]ZT0hT9]m502ZTY[802`0U0b[K`jgi01:90Vo37W0f02WGS0KWL0LL7KZ30oWLVIi0o@0R0_I9@M2?j0R2A033_g[0i0\\E0?gg0X`<ZY?[>0DaAV0oJiZ0O0VHRI3YW0c3h0SSI=50K0jn0O==0Si:o`YO90N8he01G4<0a0emcdZ60`Yj0>PCFn0K0jn2j0=n40KgM=1C0PnK>^60PD0F0dijD[Pe0RKn0jlU[D0Z0nHCn01Ho0ZoO1XU0lHoj6n0lh0[045nh88l]0>870<<AIH0;0fG0ZII0Qn`^6lZh0a17N0f[QP0o0NO>WFo0^Sc0@[@AI0\\0Q_WR0U_70k7AU[@0[I7XKR0O40Y0cgR4TkO<0Ik?07]i1<0V05>07??0;cbLgK<40T?Q\\053V`080^h145h09d30g>g1k0i02CY206C40i416eg0>C4GD20>M0Q0HN2M`FZD0j?X0YMnij0P0HA0YXX09>gR_;YQ0UBmT0H8960L0E7iQkK0MmX0oFWHc030`R9`0CRS03SHCUE0FRS1Y`0Fd0@0?L`INLI30T`[0BBJET0i02C0X660AN;V9>XG0YR[702oAc0l0]?EHfO<0Ik?07]i1I0V05>07??0;cbLgK740TFQ\\053V`080^h14NF0Kn:0dTd6L0@0IYc<0DYH0@H6Dhd0TYHak<0f=030:7<=V=l70H=I0ZZA>;0]0kF0ZII0Qn`\\64;D0aI<20jB]\\0c0NO>hg40P?\\0S1SUE0]03Em90KWB0LBUgoS0SEBed401H0c0\\d9HMT[0G@Y0<JiVK0N0^KI40hKb0NNVh]i0JKN<F[0Jo0V0UMYo9@kI0L@>0HHgb`010_^0kbb0H:SO7kGc0V2>l0aE130m0lnL=";
 
     pub fn new() -> Self {
         BCNav2Bit {
@@ -133,7 +137,7 @@ impl BCNav2Bit {
             symbols[i * 4 + 3] = (frame_data[i] & 0x3f) as i32;
         }
         
-        Self::LDPCEncode(&mut symbols, B2A_SYMBOL_LENGTH, Self::B2A_MATRIX_GEN);
+        Self::LDPCEncode(&mut symbols, Self::B2A_SYMBOL_LENGTH, Self::B2A_MATRIX_GEN);
         
         // Preamble
         Self::AssignBits(0xe24de8, 24, &mut nav_bits[0..24]);
@@ -215,21 +219,18 @@ impl BCNav2Bit {
         }
     }
 
-    // Helper functions (placeholder implementations)
+    // Helper functions
     fn AppendCRC(data: &mut [u32], length: usize) {
-        // CRC calculation would be implemented here
-        // For now, this is a placeholder
-        for i in 0..length {
-            data[i] |= 0; // Placeholder CRC
-        }
+        // Calculate CRC24Q for the data (excluding the last word where CRC will be placed)
+        let data_bits = (length - 1) * 24; // Each word contains 24 bits of data
+        let crc_result = crate::crc24q::crc24q_encode(&data[0..length-1], data_bits);
+        
+        // Place the CRC24Q result in the last word
+        data[length - 1] = crc_result;
     }
 
-    fn LDPCEncode(symbols: &mut [i32], symbol_length: usize, _matrix_gen: &str) {
-        // LDPC encoding would be implemented here
-        // For now, this is a placeholder
-        for i in 0..symbol_length.min(symbols.len()) {
-            symbols[i] = symbols[i]; // No-op placeholder
-        }
+    fn LDPCEncode(symbols: &mut [i32], symbol_length: usize, matrix_gen: &str) {
+        crate::ldpc::ldpc_encode(symbols, symbol_length, matrix_gen);
     }
 
     fn AssignBits(value: i32, bits: usize, output: &mut [i32]) {
