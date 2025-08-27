@@ -543,7 +543,7 @@ fn geometry_distance(pos1: &KinematicInfo, pos2: &KinematicInfo, los_vector: &mu
 // Placeholder functions - these should be implemented in coordinate module
 /// Рассчитывает позицию и скорость спутника GPS/BeiDou/Galileo на основе эфемерид
 /// Реализация алгоритма Кеплера с поправками для разных ГНСС систем
-fn gps_sat_pos_speed_eph(system: GnssSystem, transmit_time: f64, eph: &GpsEphemeris, pos_vel: &mut KinematicInfo, acc: Option<&mut [f64; 3]>) -> bool {
+fn gps_sat_pos_speed_eph(system: GnssSystem, transmit_time: f64, eph: &GpsEphemeris, pos_vel: &mut KinematicInfo, mut acc: Option<&mut [f64; 3]>) -> bool {
     // Рассчет временной разности
     let mut delta_t = transmit_time - eph.toe as f64;
     
