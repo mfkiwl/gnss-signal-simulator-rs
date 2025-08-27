@@ -42,6 +42,13 @@ use crate::powercontrol::{CPowerControl, SignalPower};
 use crate::trajectory::CTrajectory;
 use crate::types::SatelliteParam;
 use crate::navdata::NavDataType;
+
+#[derive(Debug)]
+pub struct GenerationStats {
+    pub total_samples: u64,
+    pub clipped_samples: u64,
+    pub file_size_mb: Option<f64>,
+}
 pub struct NavData {
     // Ионосферные и UTC параметры
     gps_iono: Option<IonoParam>,
@@ -1644,6 +1651,33 @@ impl IFDataGen {
             }
         }
         Ok(total_channel_number)
+    }
+
+    // Методы для соответствия интерфейсу main.rs
+    pub fn load_config(&mut self, config_file: &str) -> Result<(), Box<dyn std::error::Error>> {
+        // Заглушка для загрузки JSON конфигурации
+        // В будущем здесь будет полная реализация парсинга JSON
+        println!("[INFO]\tJSON configuration loading not fully implemented yet");
+        println!("[INFO]\tUsing default parameters for now");
+        Ok(())
+    }
+
+    pub fn initialize(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        // Заглушка для инициализации системы
+        println!("[INFO]\tSystem initialization not fully implemented yet");
+        Ok(())
+    }
+
+    pub fn generate_data(&mut self) -> Result<GenerationStats, Box<dyn std::error::Error>> {
+        // Заглушка для генерации данных
+        println!("[INFO]\tData generation not fully implemented yet");
+        println!("[INFO]\tReturning dummy statistics");
+        
+        Ok(GenerationStats {
+            total_samples: 1000000,
+            clipped_samples: 0,
+            file_size_mb: Some(10.0),
+        })
     }
 }
 
