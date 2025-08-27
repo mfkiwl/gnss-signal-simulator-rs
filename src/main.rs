@@ -1,127 +1,216 @@
-//! # Главная функция ГНСС библиотеки
+//! # GNSS IF Data Generator
 //!
-//! Этот модуль содержит точку входа в приложение ГНСС Rust Library.
-//! Основные задачи:
-//! - Инициализация и тестирование всех модулей библиотеки
-//! - Демонстрация работы с различными типами навигационных данных
-//! - Проверка функциональности генерации сигналов и PRN кодов
-//! - Тестирование парсинга альманахов и эфемерид
-//! - Валидация работы с различными ГНСС системами (GPS, ГЛОНАСС, BeiDou, Galileo)
+//! Главная программа для генерации промежуточных частотных (IF) данных спутниковых сигналов.
+//! Портирована с C++ версии IFdataGen для обеспечения совместимости.
 //!
-//! Служит как пример использования библиотеки и инструмент для проверки
-//! корректности работы всех компонентов системы.
+//! ## Основные функции:
+//! - Чтение конфигурации из JSON файлов
+//! - Генерация IF данных для множественных ГНСС систем
+//! - Поддержка различных форматов вывода (IQ4, IQ8)
+//! - Моделирование траекторий и спутниковых параметров
+//! - Управление мощностью сигналов и уровнем шума
+//!
+//! ## Использование:
+//! ```bash
+//! cargo run [JSON_CONFIG_FILE]
+//! cargo run -- --help
+//! ```
+//!
+//! Copyright (C) 2020-2029 by Jun Mo, All rights reserved.
 
+use std::env;
+use std::time::Instant;
+use std::path::Path;
 use gnss_rust::*;
-use std::fs::File;
 
-fn main() {
-    println!("GNSS Rust Library - Unified Project");
+const DEFAULT_CONFIG: &str = "config.json";
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    println!("================================================================================");
+    println!("                          IF SIGNAL GENERATION");
+    println!("================================================================================");
     
-    // Test Almanac functionality
-    println!("\n=== Testing Almanac Module ===");
-    match File::open("test_almanac.txt") {
-        Ok(mut file) => {
-            let almanac_type = CheckAlmnanacType(&mut file);
-            println!("Detected almanac type: {:?}", almanac_type);
+    // Обработка аргументов командной строки
+    let args: Vec<String> = env::args().collect();
+    let config_file = if args.len() > 1 {
+        if args[1] == "--help" {
+            print_help(&args[0]);
+            return Ok(());
+        }
+        &args[1]
+    } else {
+        DEFAULT_CONFIG
+    };
+
+    // Проверка существования файла конфигурации
+    if !Path::new(config_file).exists() {
+        eprintln!("[ERROR]\tConfiguration file not found: {}", config_file);
+        eprintln!("[INFO]\tCreating example configuration file...");
+        create_example_config(config_file)?;
+        println!("[INFO]\tExample configuration created: {}", config_file);
+        println!("[INFO]\tPlease edit the configuration and run again.");
+        return Ok(());
+    }
+
+    println!("[INFO]\tLoading JSON configuration: {}", config_file);
+    
+    // Инициализация компонентов
+    let start_time = Instant::now();
+    
+    // Создание основных компонентов системы
+    let mut if_data_gen = IFDataGen::new();
+    
+    // Загрузка конфигурации
+    match if_data_gen.load_config(config_file) {
+        Ok(_) => {
+            println!("[INFO]\tConfiguration loaded successfully");
         }
         Err(e) => {
-            println!("Could not open test almanac file: {}", e);
+            eprintln!("[ERROR]\tFailed to load configuration: {}", e);
+            return Err(e);
         }
     }
     
-    // Test BCNav1Bit functionality
-    println!("\n=== Testing BCNav1Bit Module ===");
-    let mut bcnav = BCNav1Bit::new();
+    // Инициализация системы
+    if_data_gen.initialize()?;
+    println!("[INFO]\tSystem initialized");
     
-    let start_time = GnssTime {
-        Week: 2000,
-        MilliSeconds: 0,
-        SubMilliSeconds: 0.0,
-    };
+    // Запуск генерации данных
+    println!("[INFO]\tStarting IF data generation...");
+    let result = if_data_gen.generate_data();
     
-    let mut nav_bits = vec![0i32; 1800];
-    let result = bcnav.GetFrameData(start_time, 1, 0, &mut nav_bits);
+    let duration = start_time.elapsed();
     
-    println!("Generated frame data with {} bits", result);
-    println!("First 10 bits: {:?}", &nav_bits[0..10]);
+    // Обработка результатов
+    match result {
+        Ok(stats) => {
+            println!("================================================================================");
+            println!("                          GENERATION COMPLETED");
+            println!("================================================================================");
+            println!("[INFO]\tTotal samples: {}", stats.total_samples);
+            println!("[INFO]\tTotal time: {:.2} seconds", duration.as_secs_f64());
+            println!("[INFO]\tGeneration rate: {:.2} MS/s", 
+                stats.total_samples as f64 / duration.as_secs_f64() / 1e6);
+            
+            if let Some(file_size) = stats.file_size_mb {
+                println!("[INFO]\tOutput file size: {:.2} MB", file_size);
+                println!("[INFO]\tData rate: {:.2} MB/s", 
+                    file_size / duration.as_secs_f64());
+            }
+            
+            if stats.clipped_samples > 0 {
+                let clip_rate = stats.clipped_samples as f64 / stats.total_samples as f64 * 100.0;
+                println!("[INFO]\tClipped samples: {} ({:.4}%)", 
+                    stats.clipped_samples, clip_rate);
+                
+                if clip_rate > 5.0 {
+                    println!("[WARNING]\tHigh clipping rate! Consider reducing initPower in config.");
+                }
+            }
+            
+            println!("================================================================================");
+        }
+        Err(e) => {
+            eprintln!("[ERROR]\tGeneration failed: {}", e);
+            eprintln!("[INFO]\tTime before failure: {:.2} seconds", duration.as_secs_f64());
+            return Err(e);
+        }
+    }
     
-    // Test ionosphere and UTC parameter setting
-    let iono_param = IonoParam {
-        a0: 1.0e-8,
-        a1: 1.0e-8,
-        a2: -1.0e-7,
-        a3: -1.0e-7,
-        b0: 1.0e5,
-        b1: 1.0e5,
-        b2: -1.0e5,
-        b3: -1.0e5,
-        flag: 1,
-    };
+    Ok(())
+}
+
+fn print_help(program_name: &str) {
+    println!("GNSS IF Data Generator - Rust Implementation");
+    println!();
+    println!("Usage: {} [OPTIONS] [CONFIG_FILE]", program_name);
+    println!();
+    println!("Arguments:");
+    println!("  CONFIG_FILE    JSON configuration file path (default: config.json)");
+    println!();
+    println!("Options:");
+    println!("  --help         Show this help message");
+    println!();
+    println!("Examples:");
+    println!("  {}                          # Use default config.json", program_name);
+    println!("  {} my_config.json          # Use custom configuration", program_name);
+    println!("  {} presets/GPS_L1_only.json # Use preset configuration", program_name);
+    println!();
+    println!("Configuration file format:");
+    println!("  The JSON configuration should specify time, trajectory, ephemeris,");
+    println!("  output settings, and power parameters. See example configurations");
+    println!("  in the presets/ directory.");
+}
+
+fn create_example_config(filename: &str) -> Result<(), Box<dyn std::error::Error>> {
+    use std::fs::File;
+    use std::io::Write;
     
-    let utc_param = UtcParam {
-        A0: 1.0e-9,
-        A1: 1.0e-15,
-        A2: 0.0,
-        WN: 2000,
-        WNLSF: 2000,
-        tot: (147456 >> 12) as u8,
-        TLS: 18,
-        TLSF: 18,
-        DN: 7,
-        flag: 1,
-    };
+    let example_config = r#"{
+    "version": 1.0,
+    "description": "Example GNSS IF Data Generation Configuration",
+    "time": {
+        "type": "UTC",
+        "year": 2025,
+        "month": 1,
+        "day": 1,
+        "hour": 12,
+        "minute": 0,
+        "second": 0
+    },
+    "trajectory": {
+        "name": "Static position test",
+        "initPosition": {
+            "type": "LLA",
+            "format": "d",
+            "longitude": 0.0,
+            "latitude": 0.0,
+            "altitude": 100.0
+        },
+        "initVelocity": {
+            "type": "SCU",
+            "speed": 0.0,
+            "course": 0.0
+        },
+        "trajectoryList": [
+            {
+                "type": "Const",
+                "time": 10.0
+            }
+        ]
+    },
+    "ephemeris": {
+        "type": "RINEX",
+        "name": "ephemeris.rnx"
+    },
+    "output": {
+        "type": "IFdata",
+        "format": "IQ8",
+        "sampleFreq": 5.0,
+        "centerFreq": 1575.42,
+        "name": "output.dat",
+        "config": {
+            "elevationMask": 5
+        },
+        "systemSelect": [
+            {
+                "system": "GPS",
+                "signal": "L1CA",
+                "enable": true
+            }
+        ]
+    },
+    "power": {
+        "noiseFloor": -174,
+        "initPower": {
+            "unit": "dBHz",
+            "value": 45
+        },
+        "elevationAdjust": true
+    }
+}"#;
     
-    let result = bcnav.SetIonoUtc(Some(&iono_param), Some(&utc_param));
-    println!("Set ionosphere and UTC parameters, result: {}", result);
-    
-    // Test almanac conversion
-    println!("\n=== Testing Almanac Conversion ===");
-    let eph = GpsEphemeris {
-        ura: 0,
-        iodc: 0,
-        iode: 0,
-        svid: 1,
-        source: 0,
-        valid: 1,
-        flag: 0,
-        health: 0,
-        toe: 0,
-        toc: 0,
-        top: 0,
-        week: 2000,
-        M0: 0.0,
-        delta_n: 0.0,
-        delta_n_dot: 0.0,
-        ecc: 0.01,
-        sqrtA: 5153.0,
-        axis_dot: 0.0,
-        omega0: 0.0,
-        i0: 0.97,
-        w: 0.0,
-        omega_dot: -2.6e-9,
-        idot: 0.0,
-        cuc: 0.0,
-        cus: 0.0,
-        crc: 0.0,
-        crs: 0.0,
-        cic: 0.0,
-        cis: 0.0,
-        af0: 0.0,
-        af1: 0.0,
-        af2: 0.0,
-        tgd: 0.0,
-        tgd2: 0.0,
-        tgd_ext: [0.0; 5],
-        axis: 0.0,
-        n: 1.46e-4,
-        root_ecc: 0.0,
-        omega_t: 0.0,
-        omega_delta: 0.0,
-        Ek: 0.0,
-        Ek_dot: 0.0,
-    };
-    
-    let alm = GetAlmanacFromEphemeris(&eph, 2000, 0);
-    println!("Converted ephemeris to almanac for SVID {}", alm.svid);
-    println!("Almanac valid: {}, health: {}", alm.valid, alm.health);
+    let mut file = File::create(filename)?;
+    file.write_all(example_config.as_bytes())?;
+    Ok(())
 }
