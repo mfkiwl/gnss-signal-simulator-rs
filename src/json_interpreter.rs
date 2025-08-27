@@ -24,6 +24,13 @@ use crate::trajectory::CTrajectory;
 use crate::types::*;
 use crate::powercontrol::SignalPower;
 use crate::{lla_to_ecef, gps_time_to_utc, bds_time_to_utc, glonass_time_to_utc, speed_ecef_to_local, ecef_to_lla};
+use crate::types::{GpsEphemeris, GlonassEphemeris, GpsAlmanac, GlonassAlmanac, UtcParam};
+
+// Временные алиасы для недостающих типов - в будущем нужно реализовать отдельные структуры
+type BdsEphemeris = GpsEphemeris;  // BeiDou использует схожую структуру с GPS
+type GalileoEphemeris = GpsEphemeris;  // Galileo также схож с GPS
+type BdsAlmanac = GpsAlmanac;
+type GalileoAlmanac = GpsAlmanac;
 
 // Constants for dictionary lookups
 static KEY_DICTIONARY_LIST_PARAM: &[&str] = &[
@@ -167,8 +174,145 @@ pub enum ElevationAdjust {
 
 // Forward declarations for external types
 pub struct JsonObject;
-pub struct CNavData;
+// Структура для хранения навигационных данных
+pub struct CNavData {
+    // Ионосферные параметры GPS
+    pub gps_iono_alpha: Option<[f64; 4]>,
+    pub gps_iono_beta: Option<[f64; 4]>,
+    
+    // Эфемериды различных ГНСС систем
+    pub gps_ephemeris: Vec<GpsEphemeris>,
+    pub glonass_ephemeris: Vec<GlonassEphemeris>, 
+    pub beidou_ephemeris: Vec<BdsEphemeris>,
+    pub galileo_ephemeris: Vec<GalileoEphemeris>,
+    
+    // Альманахи
+    pub gps_almanac: Vec<GpsAlmanac>,
+    pub glonass_almanac: Vec<GlonassAlmanac>,
+    pub beidou_almanac: Vec<BdsAlmanac>,
+    pub galileo_almanac: Vec<GalileoAlmanac>,
+    
+    // UTC параметры и корректировки времени
+    pub utc_param: Option<UtcParam>,
+    pub leap_seconds: Option<i32>,
+}
+
+impl CNavData {
+    pub fn new() -> Self {
+        CNavData {
+            gps_iono_alpha: None,
+            gps_iono_beta: None,
+            gps_ephemeris: Vec::new(),
+            glonass_ephemeris: Vec::new(),
+            beidou_ephemeris: Vec::new(),
+            galileo_ephemeris: Vec::new(),
+            gps_almanac: Vec::new(),
+            glonass_almanac: Vec::new(),
+            beidou_almanac: Vec::new(),
+            galileo_almanac: Vec::new(),
+            utc_param: None,
+            leap_seconds: None,
+        }
+    }
+
+    // Методы для ионосферных параметров
+    pub fn set_gps_iono_alpha(&mut self, alpha: [f64; 4]) {
+        self.gps_iono_alpha = Some(alpha);
+        println!("[INFO] GPS iono alpha parameters set: {:?}", alpha);
+    }
+
+    pub fn set_gps_iono_beta(&mut self, beta: [f64; 4]) {
+        self.gps_iono_beta = Some(beta);
+        println!("[INFO] GPS iono beta parameters set: {:?}", beta);
+    }
+
+    pub fn get_gps_iono_alpha(&self) -> Option<[f64; 4]> {
+        self.gps_iono_alpha
+    }
+
+    pub fn get_gps_iono_beta(&self) -> Option<[f64; 4]> {
+        self.gps_iono_beta
+    }
+    
+    // Методы для добавления эфемерид
+    pub fn add_gps_ephemeris(&mut self, eph: GpsEphemeris) {
+        self.gps_ephemeris.push(eph);
+        println!("[INFO] Added GPS ephemeris, total: {}", self.gps_ephemeris.len());
+    }
+    
+    pub fn add_glonass_ephemeris(&mut self, eph: GlonassEphemeris) {
+        self.glonass_ephemeris.push(eph);
+        println!("[INFO] Added GLONASS ephemeris, total: {}", self.glonass_ephemeris.len());
+    }
+    
+    pub fn add_beidou_ephemeris(&mut self, eph: BdsEphemeris) {
+        self.beidou_ephemeris.push(eph);
+        println!("[INFO] Added BeiDou ephemeris, total: {}", self.beidou_ephemeris.len());
+    }
+    
+    pub fn add_galileo_ephemeris(&mut self, eph: GalileoEphemeris) {
+        self.galileo_ephemeris.push(eph);
+        println!("[INFO] Added Galileo ephemeris, total: {}", self.galileo_ephemeris.len());
+    }
+    
+    // Методы для добавления альманахов
+    pub fn add_gps_almanac(&mut self, alm: GpsAlmanac) {
+        self.gps_almanac.push(alm);
+        println!("[INFO] Added GPS almanac, total: {}", self.gps_almanac.len());
+    }
+    
+    pub fn add_glonass_almanac(&mut self, alm: GlonassAlmanac) {
+        self.glonass_almanac.push(alm);
+        println!("[INFO] Added GLONASS almanac, total: {}", self.glonass_almanac.len());
+    }
+    
+    pub fn add_beidou_almanac(&mut self, alm: BdsAlmanac) {
+        self.beidou_almanac.push(alm);
+        println!("[INFO] Added BeiDou almanac, total: {}", self.beidou_almanac.len());
+    }
+    
+    pub fn add_galileo_almanac(&mut self, alm: GalileoAlmanac) {
+        self.galileo_almanac.push(alm);
+        println!("[INFO] Added Galileo almanac, total: {}", self.galileo_almanac.len());
+    }
+    
+    // Методы получения данных
+    pub fn get_gps_ephemeris(&self) -> &[GpsEphemeris] {
+        &self.gps_ephemeris
+    }
+    
+    pub fn get_glonass_ephemeris(&self) -> &[GlonassEphemeris] {
+        &self.glonass_ephemeris
+    }
+    
+    pub fn get_beidou_ephemeris(&self) -> &[BdsEphemeris] {
+        &self.beidou_ephemeris
+    }
+    
+    pub fn get_galileo_ephemeris(&self) -> &[GalileoEphemeris] {
+        &self.galileo_ephemeris
+    }
+    
+    pub fn clear_all(&mut self) {
+        self.gps_ephemeris.clear();
+        self.glonass_ephemeris.clear();
+        self.beidou_ephemeris.clear();
+        self.galileo_ephemeris.clear();
+        self.gps_almanac.clear();
+        self.glonass_almanac.clear();
+        self.beidou_almanac.clear();
+        self.galileo_almanac.clear();
+        println!("[INFO] All navigation data cleared");
+    }
+}
+
 pub struct CPowerControl;
+
+impl CPowerControl {
+    pub fn new() -> Self {
+        CPowerControl {}
+    }
+}
 
 // Helper functions
 fn search_dictionary(word: &str, dictionary_list: &[&str]) -> i32 {

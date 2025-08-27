@@ -557,7 +557,7 @@ fn gps_sat_pos_speed_eph(system: GnssSystem, transmit_time: f64, eph: &GpsEpheme
     
     // Получение Ek из Mk с помощью итеративного алгоритма
     let alpha = eph.delta_n_dot * delta_t;
-    let mk = eph.m0 + (eph.n + alpha / 2.0) * delta_t;
+    let mk = eph.M0 + (eph.n + alpha / 2.0) * delta_t;
     let mut ek = mk;
     let mut ek1 = mk;
     
