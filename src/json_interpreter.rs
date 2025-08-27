@@ -305,6 +305,45 @@ impl CNavData {
         self.galileo_almanac.clear();
         println!("[INFO] All navigation data cleared");
     }
+
+    // Методы для тестирования RINEX парсера
+    pub fn get_gps_ephemeris_count(&self) -> usize {
+        self.gps_ephemeris.len()
+    }
+
+    pub fn get_glonass_ephemeris_count(&self) -> usize {
+        self.glonass_ephemeris.len()
+    }
+
+    pub fn get_beidou_ephemeris_count(&self) -> usize {
+        self.beidou_ephemeris.len()
+    }
+
+    pub fn get_galileo_ephemeris_count(&self) -> usize {
+        self.galileo_ephemeris.len()
+    }
+
+    pub fn has_gps_iono(&self) -> bool {
+        self.gps_iono_alpha.is_some() && self.gps_iono_beta.is_some()
+    }
+
+    pub fn has_bds_iono(&self) -> bool {
+        // В текущей структуре нет BDS ионосферных параметров
+        false
+    }
+
+    pub fn has_gal_iono(&self) -> bool {
+        // В текущей структуре нет Galileo ионосферных параметров
+        false
+    }
+
+    pub fn has_gps_utc(&self) -> bool {
+        self.utc_param.is_some()
+    }
+
+    pub fn get_first_gps_ephemeris(&self) -> Option<&GpsEphemeris> {
+        self.gps_ephemeris.first()
+    }
 }
 
 pub struct CPowerControl;
@@ -527,7 +566,7 @@ fn set_init_pos_vel(trajectory: &mut CTrajectory, pos: &LlaPosition, vel: &Local
 
 /// Читает навигационные данные из RINEX файла
 /// Поддерживает RINEX 2.x и 3.x форматы для GPS, ГЛОНАСС, BeiDou, Galileo
-fn read_nav_file(nav_data: &mut CNavData, filename: &str) {
+pub fn read_nav_file(nav_data: &mut CNavData, filename: &str) {
     use std::fs::File;
     use std::io::{BufRead, BufReader};
     
@@ -551,14 +590,27 @@ fn read_nav_file(nav_data: &mut CNavData, filename: &str) {
             if line.contains("END OF HEADER") {
                 header_complete = true;
             } else if line.contains("ION ALPHA") {
-                // Парсинг ионосферных параметров альфа
+                // Парсинг ионосферных параметров альфа (RINEX 2.x)
                 if let Some(iono_alpha) = parse_iono_alpha(&line) {
                     nav_data.set_gps_iono_alpha(iono_alpha);
                 }
             } else if line.contains("ION BETA") {
-                // Парсинг ионосферных параметров бета
+                // Парсинг ионосферных параметров бета (RINEX 2.x)
                 if let Some(iono_beta) = parse_iono_beta(&line) {
                     nav_data.set_gps_iono_beta(iono_beta);
+                }
+            } else if line.contains("IONOSPHERIC CORR") {
+                // Парсинг ионосферных параметров (RINEX 3.x)
+                if line.starts_with("GPSA") {
+                    if let Some(iono_alpha) = parse_rinex3_iono_alpha(&line) {
+                        nav_data.set_gps_iono_alpha(iono_alpha);
+                        println!("[INFO] GPS iono alpha parameters parsed: {:?}", iono_alpha);
+                    }
+                } else if line.starts_with("GPSB") {
+                    if let Some(iono_beta) = parse_rinex3_iono_beta(&line) {
+                        nav_data.set_gps_iono_beta(iono_beta);
+                        println!("[INFO] GPS iono beta parameters parsed: {:?}", iono_beta);
+                    }
                 }
             }
             continue;
@@ -573,26 +625,41 @@ fn read_nav_file(nav_data: &mut CNavData, filename: &str) {
         match system_char {
             'G' | ' ' => {
                 // GPS эфемериды
+                println!("[DEBUG] Trying to parse GPS ephemeris: {}", &line[..std::cmp::min(20, line.len())]);
                 if let Some(eph) = parse_gps_ephemeris(&line, &mut lines) {
                     nav_data.add_gps_ephemeris(eph);
+                } else {
+                    println!("[DEBUG] Failed to parse GPS ephemeris");
                 }
             },
             'R' => {
                 // ГЛОНАСС эфемериды
-                if let Some(eph) = parse_glonass_ephemeris(&line, &mut lines) {
+                println!("[DEBUG] Trying to parse GLONASS ephemeris: {}", &line[..std::cmp::min(20, line.len())]);
+                if let Some(eph) = parse_glonass_ephemeris_correct(&line, &mut lines) {
                     nav_data.add_glonass_ephemeris(eph);
+                } else {
+                    println!("[DEBUG] Failed to parse GLONASS ephemeris");
                 }
             },
             'C' => {
-                // BeiDou эфемериды
-                if let Some(eph) = parse_beidou_ephemeris(&line, &mut lines) {
+                // BeiDou эфемериды (используем GPS формат)
+                println!("[DEBUG] Trying to parse BeiDou ephemeris: {}", &line[..std::cmp::min(20, line.len())]);
+                if let Some(mut eph) = parse_gps_ephemeris(&line, &mut lines) {
+                    // Конвертируем в BeiDou формат
+                    eph.toe = (eph.toe as i32 - 14) as i32; // BDT отстает от GPS времени на 14 секунд
                     nav_data.add_beidou_ephemeris(eph);
+                } else {
+                    println!("[DEBUG] Failed to parse BeiDou ephemeris");
                 }
             },
             'E' => {
-                // Galileo эфемериды
-                if let Some(eph) = parse_galileo_ephemeris(&line, &mut lines) {
+                // Galileo эфемериды (используем GPS формат)
+                println!("[DEBUG] Trying to parse Galileo ephemeris: {}", &line[..std::cmp::min(20, line.len())]);
+                if let Some(mut eph) = parse_gps_ephemeris(&line, &mut lines) {
+                    // Конвертируем в Galileo формат (GST синхронизован с GPS)
                     nav_data.add_galileo_ephemeris(eph);
+                } else {
+                    println!("[DEBUG] Failed to parse Galileo ephemeris");
                 }
             },
             _ => {
@@ -1394,87 +1461,109 @@ fn parse_iono_beta(line: &str) -> Option<[f64; 4]> {
     }
 }
 
+/// Парсит ионосферные параметры alpha из RINEX 3.x формата (GPSA строка)
+fn parse_rinex3_iono_alpha(line: &str) -> Option<[f64; 4]> {
+    // Формат: GPSA   1.5832e-08  2.2352e-08 -1.1921e-07 -1.1921e-07       IONOSPHERIC CORR
+    let data_part = &line[4..60]; // Пропускаем "GPSA" и берем данные
+    let parts: Vec<&str> = data_part.split_whitespace().collect();
+    if parts.len() >= 4 {
+        let mut alpha = [0.0; 4];
+        for (i, part) in parts.iter().take(4).enumerate() {
+            if let Ok(value) = part.replace("D", "E").parse::<f64>() {
+                alpha[i] = value;
+            } else {
+                return None;
+            }
+        }
+        Some(alpha)
+    } else {
+        None
+    }
+}
+
+/// Парсит ионосферные параметры beta из RINEX 3.x формата (GPSB строка)
+fn parse_rinex3_iono_beta(line: &str) -> Option<[f64; 4]> {
+    // Формат: GPSB   1.1264e+05  1.4746e+05 -1.3107e+05 -3.9322e+05       IONOSPHERIC CORR
+    let data_part = &line[4..60]; // Пропускаем "GPSB" и берем данные
+    let parts: Vec<&str> = data_part.split_whitespace().collect();
+    if parts.len() >= 4 {
+        let mut beta = [0.0; 4];
+        for (i, part) in parts.iter().take(4).enumerate() {
+            if let Ok(value) = part.replace("D", "E").parse::<f64>() {
+                beta[i] = value;
+            } else {
+                return None;
+            }
+        }
+        Some(beta)
+    } else {
+        None
+    }
+}
+
 /// Парсит GPS эфемериды из RINEX формата
 fn parse_gps_ephemeris<I>(line: &str, lines: &mut I) -> Option<GpsEphemeris>
 where
     I: Iterator<Item = Result<String, std::io::Error>>
 {
     let mut eph = GpsEphemeris::default();
+    let mut data = [0.0f64; 32]; // Массив для всех данных эфемерид
     
-    // Парсим первую строку - SVID, время, часовые поправки
-    let parts: Vec<&str> = line.split_whitespace().collect();
-    if parts.len() < 4 {
-        return None;
-    }
+    // Парсим первую строку используя точную логику C++
+    let svid = read_contents_time(line, &mut data[0..3])?;
+    eph.svid = svid;
+    eph.af0 = data[0];
+    eph.af1 = data[1]; 
+    eph.af2 = data[2];
     
-    // Извлекаем SVID из первого символа (G01, C01, E01)
-    let svid_str = &parts[0][1..];
-    eph.svid = svid_str.parse::<u8>().ok()?;
-    
-    // Парсим часовые поправки
-    if parts.len() >= 8 {
-        eph.af0 = parts[5].replace("D", "E").parse().unwrap_or(0.0);
-        eph.af1 = parts[6].replace("D", "E").parse().unwrap_or(0.0);
-        eph.af2 = parts[7].replace("D", "E").parse().unwrap_or(0.0);
-    }
-    
-    // Читаем остальные 7 строк данных эфемерид
-    let mut all_data = Vec::new();
-    for _ in 0..7 {
+    // Читаем 7 строк данных (каждая содержит 4 значения)
+    for i in 0..7 {
         if let Some(Ok(data_line)) = lines.next() {
-            let data_parts: Vec<&str> = data_line.trim().split_whitespace().collect();
-            for part in data_parts {
-                if let Ok(value) = part.replace("D", "E").parse::<f64>() {
-                    all_data.push(value);
-                }
+            if i*4+3 + 4 <= data.len() {
+                read_contents_data(&data_line, &mut data[i*4+3..i*4+7]);
             }
         } else {
+            println!("[DEBUG] Failed to read data line {}", i+1);
             return None;
         }
     }
     
-    // Проверяем количество данных (должно быть около 26-28 значений)
-    if all_data.len() < 26 {
-        return None;
+    // Заполняем структуру эфемерид точно как в C++ (NavDataGpsLnav case)
+    eph.toc = 0; // Будет заполнено позже
+    eph.sqrtA = data[10];
+    eph.ecc = data[8];
+    eph.i0 = data[15];
+    eph.omega0 = data[13];
+    eph.w = data[17];
+    eph.M0 = data[6];
+    eph.delta_n = data[5];
+    eph.omega_dot = data[18];
+    eph.idot = data[19];
+    eph.crc = data[16];
+    eph.crs = data[4];
+    eph.cuc = data[7];
+    eph.cus = data[9];
+    eph.cic = data[12];
+    eph.cis = data[14];
+    eph.toe = (data[11] + 0.5) as i32;
+    
+    // Специфичные для GPS LNAV параметры
+    if data.len() > 26 {
+        eph.iodc = data[26] as u16;
     }
-    
-    // Заполняем структуру эфемерид согласно стандарту RINEX
-    // Строка 1: IODE, Crs, Delta n, M0
-    eph.iode = all_data[0] as u8;
-    eph.crs = all_data[1];
-    eph.delta_n = all_data[2];
-    eph.M0 = all_data[3];
-    
-    // Строка 2: Cuc, e, Cus, sqrt(A)
-    eph.cuc = all_data[4];
-    eph.ecc = all_data[5];
-    eph.cus = all_data[6];
-    eph.sqrtA = all_data[7];
-    
-    // Строка 3: toe, Cic, OMEGA0, Cis
-    eph.toe = all_data[8] as i32;
-    eph.cic = all_data[9];
-    eph.omega0 = all_data[10];
-    eph.cis = all_data[11];
-    
-    // Строка 4: i0, Crc, omega, OMEGA DOT
-    eph.i0 = all_data[12];
-    eph.crc = all_data[13];
-    eph.w = all_data[14];
-    eph.omega_dot = all_data[15];
-    
-    // Строка 5: IDOT, Codes, GPS Week, L2 P flag
-    eph.idot = all_data[16];
-    eph.week = all_data[18] as i32;
-    
-    // Строка 6: URA, SV health, TGD, IODC
-    eph.ura = all_data[20] as i16;
-    eph.health = all_data[21] as u16;
-    eph.tgd = all_data[22];
-    eph.iodc = all_data[23] as u16;
-    
-    // Строка 7: Transmission time, fit interval
-    eph.top = all_data[24] as i32;
+    eph.iode = data[3] as u8;
+    if data.len() > 21 {
+        eph.week = data[21] as i32;
+    }
+    if data.len() > 24 {
+        eph.health = data[24] as u16;
+    }
+    if data.len() > 23 {
+        eph.ura = get_ura_index(data[23]) as i16;
+    }
+    if data.len() > 25 {
+        eph.tgd = data[25];
+    }
     
     // Вычисляем производные значения
     eph.axis = eph.sqrtA * eph.sqrtA;
@@ -1484,6 +1573,7 @@ where
     eph.valid = 1;
     eph.flag = 1;
     
+    println!("[DEBUG] Successfully parsed GPS ephemeris for SVID {}", eph.svid);
     Some(eph)
 }
 
@@ -1797,4 +1887,140 @@ where
     } else {
         None
     }
+}
+
+/// Парсит первую строку RINEX эфемериды (время + 3 параметра)
+fn read_contents_time(line: &str, data: &mut [f64]) -> Option<u8> {
+    if line.len() < 24 {
+        return None;
+    }
+    
+    // Конвертируем D в E для экспоненциального формата
+    let line = line.replace("D", "E");
+    
+    // Извлекаем SVID
+    let svid = if line.len() > 2 && !line.chars().nth(1).unwrap().is_whitespace() {
+        line[1..3].parse::<u8>().unwrap_or(0)
+    } else {
+        0
+    };
+    
+    // Читаем данные с фиксированных позиций (как в C++)
+    if line.len() > 24 && !line.chars().nth(23).unwrap_or(' ').is_whitespace() {
+        data[0] = line[23..42].trim().parse().unwrap_or(0.0);
+    }
+    if line.len() > 43 && !line.chars().nth(42).unwrap_or(' ').is_whitespace() {
+        data[1] = line[42..61].trim().parse().unwrap_or(0.0);
+    }
+    if line.len() > 62 && !line.chars().nth(61).unwrap_or(' ').is_whitespace() {
+        data[2] = line[61..].trim().parse().unwrap_or(0.0);
+    }
+    
+    Some(svid)
+}
+
+/// Парсит строку данных RINEX (4 параметра с фиксированных позиций)
+fn read_contents_data(line: &str, data: &mut [f64]) {
+    // Конвертируем D в E для экспоненциального формата  
+    let line = line.replace("D", "E");
+    let length = line.len();
+    
+    // Читаем с фиксированных позиций как в C++ 
+    if length > 5 && !line.chars().nth(4).unwrap_or(' ').is_whitespace() {
+        data[0] = line[4..23].trim().parse().unwrap_or(0.0);
+    }
+    if length > 24 && !line.chars().nth(23).unwrap_or(' ').is_whitespace() {
+        data[1] = line[23..42].trim().parse().unwrap_or(0.0);
+    }
+    if length > 43 && !line.chars().nth(42).unwrap_or(' ').is_whitespace() {
+        data[2] = line[42..61].trim().parse().unwrap_or(0.0);
+    }
+    if length > 62 && !line.chars().nth(61).unwrap_or(' ').is_whitespace() {
+        data[3] = line[61..].trim().parse().unwrap_or(0.0);
+    }
+}
+
+/// Преобразует URA в индекс (из C++ версии)
+fn get_ura_index(ura: f64) -> i32 {
+    if ura <= 2.4 { (ura / 0.3 + 0.5) as i32 }
+    else if ura <= 6.0 { ((ura - 2.4) / 0.6 + 8.5) as i32 }
+    else if ura <= 12.0 { ((ura - 6.0) / 1.2 + 14.5) as i32 }
+    else if ura <= 24.0 { ((ura - 12.0) / 2.4 + 19.5) as i32 }
+    else if ura <= 48.0 { ((ura - 24.0) / 4.8 + 24.5) as i32 }
+    else if ura <= 96.0 { ((ura - 48.0) / 9.6 + 29.5) as i32 }
+    else if ura <= 192.0 { ((ura - 96.0) / 19.2 + 34.5) as i32 }
+    else { 15 }
+}
+
+/// Правильный парсер GLONASS эфемерид по образцу C++ DecodeEphOrbit
+fn parse_glonass_ephemeris_correct<I>(line: &str, lines: &mut I) -> Option<GlonassEphemeris>
+where
+    I: Iterator<Item = Result<String, std::io::Error>>
+{
+    let mut data = [0.0f64; 19];
+    
+    // Парсим первую строку (время + 3 параметра)
+    let svid = read_contents_time(line, &mut data[0..3])?;
+    
+    // Читаем 3 строки данных (как в C++ версии)
+    for i in 0..3 {
+        if let Some(Ok(data_line)) = lines.next() {
+            read_contents_data(&data_line, &mut data[i*4+3..i*4+7]);
+        } else {
+            println!("[DEBUG] Failed to read GLONASS data line {}", i+1);
+            return None;
+        }
+    }
+    
+    // Создаем GLONASS эфемериду по образцу C++
+    let mut eph = GlonassEphemeris {
+        flag: 1,
+        valid: 1,
+        slot: svid as u8,
+        n: svid as u8,
+        freq: data[10] as i8,  // Частотный номер
+        tk: 0,  // Будет вычислен ниже
+        P: 0xc0,  // P=11, ln=0, P4=0, P3=0, P2=0, P1=00
+        M: 1,     // GLONASS-M
+        Ft: 0,    // Нет данных
+        Bn: data[6] as u8,
+        En: data[14] as u8, 
+        tb: 0,    // Будет вычислен ниже
+        day: 1,   // Заглушка
+        gamma: data[1],
+        tn: -data[0],  // Clock bias (знак меняется)
+        dtn: 0.0,      // Нет в RINEX
+        // Позиция (км -> м)
+        x: data[3] * 1e3,
+        y: data[7] * 1e3,
+        z: data[11] * 1e3,
+        // Скорость (км/с -> м/с) 
+        vx: data[4] * 1e3,
+        vy: data[8] * 1e3,
+        vz: data[12] * 1e3,
+        // Ускорение (км/с² -> м/с²)
+        ax: data[5] * 1e3,
+        ay: data[9] * 1e3,
+        az: data[13] * 1e3,
+        tc: 0.0,
+        PosVelT: KinematicInfo::default(),
+    };
+    
+    // Вычисляем tk из data[2] (секунды дня)
+    let tk_seconds = data[2] as i32;
+    let hours = tk_seconds / 3600;
+    let minutes = (tk_seconds % 3600) / 60;
+    let half_minutes = (tk_seconds % 60) / 30;
+    eph.tk = ((hours << 7) | (minutes << 1) | half_minutes) as u16;
+    
+    // Вычисляем tb (опорное время в 15-минутных интервалах)  
+    eph.tb = ((tk_seconds + 450) / 900 * 900) as u32;
+    
+    // Устанавливаем P2 бит в зависимости от tb
+    if (eph.tb / 900) & 1 != 0 {
+        eph.P |= 0x04; // Устанавливаем P2 бит
+    }
+    
+    println!("[DEBUG] Successfully parsed GLONASS ephemeris for SVID {}", eph.n);
+    Some(eph)
 }

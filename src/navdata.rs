@@ -656,4 +656,79 @@ impl CNavData {
             self.glonass_slot_freq[slot] = freq;
         }
     }
+
+    // Методы для тестирования RINEX парсера
+    pub fn get_gps_ephemeris_count(&self) -> usize {
+        self.gps_ephemeris_number
+    }
+
+    pub fn get_glonass_ephemeris_count(&self) -> usize {
+        self.glonass_ephemeris_number
+    }
+
+    pub fn get_beidou_ephemeris_count(&self) -> usize {
+        self.bds_ephemeris_number
+    }
+
+    pub fn get_galileo_ephemeris_count(&self) -> usize {
+        self.galileo_ephemeris_number
+    }
+
+    pub fn has_gps_iono(&self) -> bool {
+        self.gps_iono_param.flag != 0
+    }
+
+    pub fn has_bds_iono(&self) -> bool {
+        self.bds_iono_param.flag != 0
+    }
+
+    pub fn has_gal_iono(&self) -> bool {
+        self.galileo_iono_param.flag != 0
+    }
+
+    pub fn has_gps_utc(&self) -> bool {
+        self.gps_utc_param.flag != 0
+    }
+
+    pub fn get_first_gps_ephemeris(&self) -> Option<&GpsEphemeris> {
+        self.gps_ephemeris_pool.first()
+    }
+
+    // Методы для установки ионосферных параметров
+    pub fn set_gps_iono_alpha(&mut self, alpha: [f64; 4]) {
+        self.gps_iono_param.a0 = alpha[0];
+        self.gps_iono_param.a1 = alpha[1];
+        self.gps_iono_param.a2 = alpha[2];
+        self.gps_iono_param.a3 = alpha[3];
+    }
+
+    pub fn set_gps_iono_beta(&mut self, beta: [f64; 4]) {
+        self.gps_iono_param.b0 = beta[0];
+        self.gps_iono_param.b1 = beta[1];
+        self.gps_iono_param.b2 = beta[2];
+        self.gps_iono_param.b3 = beta[3];
+        self.gps_iono_param.flag = 1; // Отмечаем что параметры установлены
+    }
+
+    pub fn set_bds_iono_alpha(&mut self, alpha: [f64; 4]) {
+        self.bds_iono_param.a0 = alpha[0];
+        self.bds_iono_param.a1 = alpha[1];
+        self.bds_iono_param.a2 = alpha[2];
+        self.bds_iono_param.a3 = alpha[3];
+    }
+
+    pub fn set_bds_iono_beta(&mut self, beta: [f64; 4]) {
+        self.bds_iono_param.b0 = beta[0];
+        self.bds_iono_param.b1 = beta[1];
+        self.bds_iono_param.b2 = beta[2];
+        self.bds_iono_param.b3 = beta[3];
+        self.bds_iono_param.flag = 1;
+    }
+
+    pub fn set_gal_iono(&mut self, a0: f64, a1: f64, a2: f64) {
+        self.galileo_iono_param.a0 = a0;
+        self.galileo_iono_param.a1 = a1;
+        self.galileo_iono_param.a2 = a2;
+        self.galileo_iono_param.flag = 1;
+    }
 }
