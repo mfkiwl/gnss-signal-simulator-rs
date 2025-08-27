@@ -30,12 +30,12 @@ use crate::COMPOSE_BITS;
 
 #[derive(Clone)]
 pub struct D1D2NavBit {
-    pub BdsStream123: [[u32; 27]; 53],      // 53 satellites, 3 subframes * 9 words each
-    pub BdsStreamAlm: [[u32; 9]; 63],       // 63 almanac pages, 9 words each
-    pub BdsStreamInfo: [[u32; 9]; 4],       // 4 info pages, 9 words each
-    pub BdsStreamHealth: [[u32; 9]; 3],     // 3 health pages, 9 words each
-    pub BdsStreamD2: [[u32; 40]; 10],       // 10 satellites, 10 pages * 4 words each
-    pub IonoParamSave: IonoParam,
+    pub bds_stream123: [[u32; 27]; 53],      // 53 satellites, 3 subframes * 9 words each
+    pub bds_stream_alm: [[u32; 9]; 63],       // 63 almanac pages, 9 words each
+    pub bds_stream_info: [[u32; 9]; 4],       // 4 info pages, 9 words each
+    pub bds_stream_health: [[u32; 9]; 3],     // 3 health pages, 9 words each
+    pub bds_stream_d2: [[u32; 40]; 10],       // 10 satellites, 10 pages * 4 words each
+    pub iono_param_save: IonoParam,
 }
 
 impl D1D2NavBit {
@@ -48,46 +48,46 @@ impl D1D2NavBit {
 
     pub fn new() -> Self {
         let mut nav_bit = D1D2NavBit {
-            BdsStream123: [[0; 27]; 53],
-            BdsStreamAlm: [[0; 9]; 63],
-            BdsStreamInfo: [[0; 9]; 4],
-            BdsStreamHealth: [[0; 9]; 3],
-            BdsStreamD2: [[0; 40]; 10],
-            IonoParamSave: IonoParam::default(),
+            bds_stream123: [[0; 27]; 53],
+            bds_stream_alm: [[0; 9]; 63],
+            bds_stream_info: [[0; 9]; 4],
+            bds_stream_health: [[0; 9]; 3],
+            bds_stream_d2: [[0; 40]; 10],
+            iono_param_save: IonoParam::default(),
         };
 
         // Fill page number and AlEpID/AmID
         for i in 0..30 {  // subframe 4 page 1~24 and subframe 5 page1~6
-            nav_bit.BdsStreamAlm[i][0] = if i < 24 { 
+            nav_bit.bds_stream_alm[i][0] = if i < 24 { 
                 ((i + 1) << 2) as u32 
             } else { 
                 ((i - 23) << 2) as u32 
             };
-            nav_bit.BdsStreamAlm[i][8] = 3;  // AlEpID = 11
+            nav_bit.bds_stream_alm[i][8] = 3;  // AlEpID = 11
         }
         
         for i in 30..43 {  // subframe 5 page 11~23 for svid 31~43
-            nav_bit.BdsStreamAlm[i][0] = ((i - 19) << 2) as u32;
-            nav_bit.BdsStreamAlm[i][8] = 1;  // AmID = 01
+            nav_bit.bds_stream_alm[i][0] = ((i - 19) << 2) as u32;
+            nav_bit.bds_stream_alm[i][8] = 1;  // AmID = 01
         }
         
         for i in 43..56 {  // subframe 5 page 11~23 for svid 44~56
-            nav_bit.BdsStreamAlm[i][0] = ((i - 32) << 2) as u32;
-            nav_bit.BdsStreamAlm[i][8] = 2;  // AmID = 01
+            nav_bit.bds_stream_alm[i][0] = ((i - 32) << 2) as u32;
+            nav_bit.bds_stream_alm[i][8] = 2;  // AmID = 01
         }
         
         for i in 56..63 {  // subframe 5 page 11~17 for svid 57~63
-            nav_bit.BdsStreamAlm[i][0] = ((i - 45) << 2) as u32;
-            nav_bit.BdsStreamAlm[i][8] = 3;  // AmID = 01
+            nav_bit.bds_stream_alm[i][0] = ((i - 45) << 2) as u32;
+            nav_bit.bds_stream_alm[i][8] = 3;  // AmID = 01
         }
         
         for i in 0..4 {  // subframe 5 page 7~10
-            nav_bit.BdsStreamInfo[0][0] = ((i + 7) << 2) as u32;
+            nav_bit.bds_stream_info[0][0] = ((i + 7) << 2) as u32;
         }
         
         for i in 0..3 {  // subframe 5 page 24
-            nav_bit.BdsStreamHealth[i][0] = (24 << 2) as u32;
-            nav_bit.BdsStreamHealth[i][6] = ((i + 1) << 15) as u32;  // AmID
+            nav_bit.bds_stream_health[i][0] = (24 << 2) as u32;
+            nav_bit.bds_stream_health[i][6] = ((i + 1) << 15) as u32;  // AmID
         }
 
         nav_bit
@@ -123,18 +123,18 @@ impl D1D2NavBit {
                 page %= 24;
                 
                 if subframe == 4 {
-                    stream[1..10].copy_from_slice(&self.BdsStreamAlm[page as usize][0..9]);
+                    stream[1..10].copy_from_slice(&self.bds_stream_alm[page as usize][0..9]);
                 } else if page < 6 {  // subframe 5 page 1~6
-                    stream[1..10].copy_from_slice(&self.BdsStreamAlm[(page + 24) as usize][0..9]);
+                    stream[1..10].copy_from_slice(&self.bds_stream_alm[(page + 24) as usize][0..9]);
                 } else if page < 10 {  // subframe 5 page 7~10
-                    stream[1..10].copy_from_slice(&self.BdsStreamInfo[(page - 6) as usize][0..9]);
+                    stream[1..10].copy_from_slice(&self.bds_stream_info[(page - 6) as usize][0..9]);
                 } else if page < 23 {  // subframe 5 page 11~23
                     if page_ext == 0 {  // AmID = 1
-                        stream[1..10].copy_from_slice(&self.BdsStreamAlm[(page + 20) as usize][0..9]);
+                        stream[1..10].copy_from_slice(&self.bds_stream_alm[(page + 20) as usize][0..9]);
                     } else if page_ext == 1 {  // AmID = 2
-                        stream[1..10].copy_from_slice(&self.BdsStreamAlm[(page + 33) as usize][0..9]);
+                        stream[1..10].copy_from_slice(&self.bds_stream_alm[(page + 33) as usize][0..9]);
                     } else if page < 17 {  // AmID = 3
-                        stream[1..10].copy_from_slice(&self.BdsStreamAlm[(page + 46) as usize][0..9]);
+                        stream[1..10].copy_from_slice(&self.bds_stream_alm[(page + 46) as usize][0..9]);
                     } else {  // subframe 5 undefined page
                         for i in 1..10 {
                             stream[i] = 0;
@@ -142,11 +142,11 @@ impl D1D2NavBit {
                         stream[1] = ((page + 1) << 24) as u32;
                     }
                 } else {  // subframe 5 page 24
-                    stream[1..10].copy_from_slice(&self.BdsStreamHealth[page_ext as usize][0..9]);
+                    stream[1..10].copy_from_slice(&self.bds_stream_health[page_ext as usize][0..9]);
                 }
             } else {
                 for i in 0..9 {
-                    stream[i + 1] = self.BdsStream123[(svid - 6) as usize][(subframe - 1) as usize * 9 + i];
+                    stream[i + 1] = self.bds_stream123[(svid - 6) as usize][(subframe - 1) as usize * 9 + i];
                 }
             }
         } else {  // D2 bit Stream
@@ -158,7 +158,7 @@ impl D1D2NavBit {
                 let sat_idx = if svid <= 5 { svid - 1 } else { svid - 54 };
                 
                 for i in 0..4 {
-                    stream[i + 1] = self.BdsStreamD2[sat_idx as usize][page as usize * 4 + i];
+                    stream[i + 1] = self.bds_stream_d2[sat_idx as usize][page as usize * 4 + i];
                 }
             }
         }
@@ -167,14 +167,14 @@ impl D1D2NavBit {
         stream[0] = (0x712 << 19) | ((subframe << 12) as u32) | (((sow >> 8) & 0xff0) as u32);
         stream[1] |= ((sow & 0xfff) << 10) as u32;
 
-        stream[0] = Self::GetBCH(stream[0]);
-        Self::AssignBits(stream[0] as i32, 30, &mut nav_bits[0..30]);
+        stream[0] = Self::get_bch(stream[0]);
+        Self::assign_bits(stream[0] as i32, 30, &mut nav_bits[0..30]);
         
         for i in 1..10 {
-            let mut cur_word = Self::GetBCH((stream[i] >> 7) & 0x7ff0) << 16;
-            cur_word |= Self::GetBCH((stream[i] << 4) & 0x7ff0);
-            cur_word = Self::Interleave(cur_word);
-            Self::AssignBits(cur_word as i32, 30, &mut nav_bits[i * 30..(i + 1) * 30]);
+            let mut cur_word = Self::get_bch((stream[i] >> 7) & 0x7ff0) << 16;
+            cur_word |= Self::get_bch((stream[i] << 4) & 0x7ff0);
+            cur_word = Self::interleave(cur_word);
+            Self::assign_bits(cur_word as i32, 30, &mut nav_bits[i * 30..(i + 1) * 30]);
         }
 
         0
@@ -188,20 +188,20 @@ impl D1D2NavBit {
         if svid < 1 {
             return 0;
         } else if svid < 6 {  // GEO 1~5
-            let iono_param = self.IonoParamSave;
+            let iono_param = self.iono_param_save;
             let stream_idx = (svid - 1) as usize;
-            let stream_ptr = &mut self.BdsStreamD2[stream_idx];
-            Self::ComposeBdsStreamD2(eph, &iono_param, stream_ptr);
+            let stream_ptr = &mut self.bds_stream_d2[stream_idx];
+            Self::compose_bds_stream_d2(eph, &iono_param, stream_ptr);
         } else if svid < 59 {  // MEO/IGSO 6~58
-            let iono_param = self.IonoParamSave;
+            let iono_param = self.iono_param_save;
             let idx = (svid - 6) as usize;
-            let stream = &mut self.BdsStream123[idx];
-            Self::ComposeBdsStream123(eph, &iono_param, stream);
+            let stream = &mut self.bds_stream123[idx];
+            Self::compose_bds_stream123(eph, &iono_param, stream);
         } else if svid < 64 {  // GEO 59~63
-            let iono_param = self.IonoParamSave;
+            let iono_param = self.iono_param_save;
             let stream_idx = (svid - 54) as usize;
-            let stream = &mut self.BdsStreamD2[stream_idx];
-            Self::ComposeBdsStreamD2(eph, &iono_param, stream);
+            let stream = &mut self.bds_stream_d2[stream_idx];
+            Self::compose_bds_stream_d2(eph, &iono_param, stream);
         } else {
             return 0;
         }
@@ -216,8 +216,8 @@ impl D1D2NavBit {
         // Fill in almanac page
         for i in 0..63 {
             if i < alm.len() {
-                let stream = &mut self.BdsStreamAlm[i];
-                Self::FillBdsAlmanacPage(&alm[i], stream);
+                let stream = &mut self.bds_stream_alm[i];
+                Self::fill_bds_almanac_page(&alm[i], stream);
                 if (alm[i].valid & 1) != 0 {
                     toa = alm[i].toa >> 12;
                     week = alm[i].week & 0xff;
@@ -228,44 +228,44 @@ impl D1D2NavBit {
         // Reset info streams
         for i in 0..4 {
             for j in 0..9 {
-                self.BdsStreamInfo[i][j] = 0;
+                self.bds_stream_info[i][j] = 0;
             }
         }
         
-        self.BdsStreamInfo[0][0] = 7 << 2;
-        self.BdsStreamInfo[1][0] = 8 << 2;
+        self.bds_stream_info[0][0] = 7 << 2;
+        self.bds_stream_info[1][0] = 8 << 2;
         
         // Reset health streams
         for i in 0..3 {
             for j in 0..9 {
-                self.BdsStreamHealth[i][j] = 0;
+                self.bds_stream_health[i][j] = 0;
             }
-            self.BdsStreamHealth[i][0] = (24 << 2) as u32;
-            self.BdsStreamHealth[i][6] = ((i + 1) << 15) as u32;  // AmID
+            self.bds_stream_health[i][0] = (24 << 2) as u32;
+            self.bds_stream_health[i][6] = ((i + 1) << 15) as u32;  // AmID
         }
         
         // Fill in health pages
         if alm.len() >= 19 {
-            Self::FillBdsHealthPage(&alm[0..19], 19, &mut self.BdsStreamInfo[0]);
+            Self::fill_bds_health_page(&alm[0..19], 19, &mut self.bds_stream_info[0]);
         }
         
         if alm.len() >= 30 {
-            Self::FillBdsHealthPage(&alm[19..30], 11, &mut self.BdsStreamInfo[1]);
-            self.BdsStreamInfo[1][6] |= COMPOSE_BITS!(toa, 19, 3);
-            self.BdsStreamInfo[1][5] |= COMPOSE_BITS!((toa >> 3), 0, 5);
-            self.BdsStreamInfo[1][5] |= COMPOSE_BITS!(week, 5, 8);
+            Self::fill_bds_health_page(&alm[19..30], 11, &mut self.bds_stream_info[1]);
+            self.bds_stream_info[1][6] |= COMPOSE_BITS!(toa, 19, 3);
+            self.bds_stream_info[1][5] |= COMPOSE_BITS!((toa >> 3), 0, 5);
+            self.bds_stream_info[1][5] |= COMPOSE_BITS!(week, 5, 8);
         }
         
         if alm.len() >= 43 {
-            Self::FillBdsHealthPage(&alm[30..43], 13, &mut self.BdsStreamHealth[0]);
+            Self::fill_bds_health_page(&alm[30..43], 13, &mut self.bds_stream_health[0]);
         }
         
         if alm.len() >= 56 {
-            Self::FillBdsHealthPage(&alm[43..56], 13, &mut self.BdsStreamHealth[1]);
+            Self::fill_bds_health_page(&alm[43..56], 13, &mut self.bds_stream_health[1]);
         }
         
         if alm.len() >= 63 {
-            Self::FillBdsHealthPage(&alm[56..63], 7, &mut self.BdsStreamHealth[2]);
+            Self::fill_bds_health_page(&alm[56..63], 7, &mut self.bds_stream_health[2]);
         }
         
         0
@@ -276,9 +276,9 @@ impl D1D2NavBit {
             return 0;
         }
         
-        self.IonoParamSave = *iono_param;  // save ionosphere parameters to compose subframe1
+        self.iono_param_save = *iono_param;  // save ionosphere parameters to compose subframe1
 
-        let stream = &mut self.BdsStreamInfo[3];  // UTC parameter in page 10 (indexed at 3)
+        let stream = &mut self.bds_stream_info[3];  // UTC parameter in page 10 (indexed at 3)
         
         stream[0] = COMPOSE_BITS!((utc_param.TLS >> 6), 0, 2);
         stream[0] |= COMPOSE_BITS!(10, 2, 7);  // page number 10
@@ -286,12 +286,12 @@ impl D1D2NavBit {
         stream[1] |= COMPOSE_BITS!(utc_param.TLSF, 8, 8);
         stream[1] |= COMPOSE_BITS!((utc_param.TLS & 0x3f), 16, 6);
         
-        let value = Self::UnscaleDouble(utc_param.A0, -30);
+        let value = Self::unscale_double(utc_param.A0, -30);
         let int_value = Self::roundi(value);
         stream[2] = COMPOSE_BITS!((int_value >> 10), 0, 22);
         stream[3] = COMPOSE_BITS!((int_value & 0x3ff), 12, 10);
         
-        let value = Self::UnscaleDouble(utc_param.A1, -50);
+        let value = Self::unscale_double(utc_param.A1, -50);
         let int_value = Self::roundi(value);
         stream[3] |= COMPOSE_BITS!((int_value >> 12), 0, 12);
         stream[4] = COMPOSE_BITS!((int_value & 0xfff), 10, 12);
@@ -300,7 +300,7 @@ impl D1D2NavBit {
         0
     }
 
-   fn ComposeBdsStream123(ephemeris: &GpsEphemeris, iono_param: &IonoParam, stream: &mut [u32; 27]) -> i32 {
+   fn compose_bds_stream123(ephemeris: &GpsEphemeris, iono_param: &IonoParam, stream: &mut [u32; 27]) -> i32 {
         // subframe 1, Stream[0]~Stream[8]
         stream[0] = COMPOSE_BITS!(ephemeris.health, 9, 1);
         stream[0] |= COMPOSE_BITS!(ephemeris.iodc, 4, 5);
@@ -318,91 +318,91 @@ impl D1D2NavBit {
         stream[2] |= COMPOSE_BITS!(int_value >> 6, 0, 4);
         stream[3] = COMPOSE_BITS!(int_value, 16, 6);
         
-        let value = Self::UnscaleDouble(iono_param.a0, -30);
+        let value = Self::unscale_double(iono_param.a0, -30);
         let int_value = Self::roundi(value);
         stream[3] |= COMPOSE_BITS!(int_value, 8, 8);
         
-        let value = Self::UnscaleDouble(iono_param.a1, -27);
+        let value = Self::unscale_double(iono_param.a1, -27);
         let int_value = Self::roundi(value);
         stream[3] |= COMPOSE_BITS!(int_value, 0, 8);
         
-        let value = Self::UnscaleDouble(iono_param.a2, -24);
+        let value = Self::unscale_double(iono_param.a2, -24);
         let int_value = Self::roundi(value);
         stream[4] = COMPOSE_BITS!(int_value, 14, 8);
         
-        let value = Self::UnscaleDouble(iono_param.a3, -24);
+        let value = Self::unscale_double(iono_param.a3, -24);
         let int_value = Self::roundi(value);
         stream[4] |= COMPOSE_BITS!(int_value, 6, 8);
         
-        let value = Self::UnscaleDouble(iono_param.b0, 11);
+        let value = Self::unscale_double(iono_param.b0, 11);
         let int_value = Self::roundi(value);
         stream[4] |= COMPOSE_BITS!(int_value >> 2, 0, 6);
         stream[5] = COMPOSE_BITS!(int_value, 20, 2);
         
-        let value = Self::UnscaleDouble(iono_param.b1, 14);
+        let value = Self::unscale_double(iono_param.b1, 14);
         let int_value = Self::roundi(value);
         stream[5] |= COMPOSE_BITS!(int_value, 12, 8);
         
-        let value = Self::UnscaleDouble(iono_param.b2, 16);
+        let value = Self::unscale_double(iono_param.b2, 16);
         let int_value = Self::roundi(value);
         stream[5] |= COMPOSE_BITS!(int_value, 4, 8);
         
-        let value = Self::UnscaleDouble(iono_param.b3, 16);
+        let value = Self::unscale_double(iono_param.b3, 16);
         let int_value = Self::roundi(value);
         stream[5] |= COMPOSE_BITS!(int_value >> 4, 0, 4);
         stream[6] = COMPOSE_BITS!(int_value, 18, 4);
         
-        let value = Self::UnscaleDouble(ephemeris.af2, -66);
+        let value = Self::unscale_double(ephemeris.af2, -66);
         let int_value = Self::roundi(value);
         stream[6] |= COMPOSE_BITS!(int_value, 7, 11);
         
-        let value = Self::UnscaleDouble(ephemeris.af0, -33);
+        let value = Self::unscale_double(ephemeris.af0, -33);
         let int_value = Self::roundi(value);
         stream[6] |= COMPOSE_BITS!(int_value >> 17, 0, 7);
         stream[7] = COMPOSE_BITS!(int_value, 5, 17);
         
-        let value = Self::UnscaleDouble(ephemeris.af1, -50);
+        let value = Self::unscale_double(ephemeris.af1, -50);
         let int_value = Self::roundi(value);
         stream[7] |= COMPOSE_BITS!(int_value >> 17, 0, 5);
         stream[8] = COMPOSE_BITS!(int_value, 5, 17);
         stream[8] |= COMPOSE_BITS!(ephemeris.iode, 0, 5);
 
         // subframe 2, Stream[9]~Stream[17]
-        let value = Self::UnscaleDouble(ephemeris.delta_n / std::f64::consts::PI, -43);
+        let value = Self::unscale_double(ephemeris.delta_n / std::f64::consts::PI, -43);
         let int_value = Self::roundi(value);
         stream[9] = COMPOSE_BITS!(int_value >> 6, 0, 10);
         stream[10] = COMPOSE_BITS!(int_value, 16, 6);
         
-        let value = Self::UnscaleDouble(ephemeris.cuc, -31);
+        let value = Self::unscale_double(ephemeris.cuc, -31);
         let int_value = Self::roundi(value);
         stream[10] |= COMPOSE_BITS!(int_value >> 2, 0, 16);
         stream[11] = COMPOSE_BITS!(int_value, 20, 2);
         
-        let value = Self::UnscaleDouble(ephemeris.M0 / std::f64::consts::PI, -31);
+        let value = Self::unscale_double(ephemeris.M0 / std::f64::consts::PI, -31);
         let int_value = Self::roundi(value);
         stream[11] |= COMPOSE_BITS!(int_value >> 12, 0, 20);
         stream[12] = COMPOSE_BITS!(int_value, 10, 12);
         
-        let value = Self::UnscaleDouble(ephemeris.ecc, -33);
+        let value = Self::unscale_double(ephemeris.ecc, -33);
         let uint_value = Self::roundu(value);
         stream[12] |= COMPOSE_BITS!(uint_value >> 22, 0, 10);
         stream[13] = COMPOSE_BITS!(uint_value, 0, 22);
         
-        let value = Self::UnscaleDouble(ephemeris.cus, -31);
+        let value = Self::unscale_double(ephemeris.cus, -31);
         let int_value = Self::roundi(value);
         stream[14] = COMPOSE_BITS!(int_value, 4, 18);
         
-        let value = Self::UnscaleDouble(ephemeris.crc, -6);
+        let value = Self::unscale_double(ephemeris.crc, -6);
         let int_value = Self::roundi(value);
         stream[14] |= COMPOSE_BITS!(int_value >> 14, 0, 4);
         stream[15] = COMPOSE_BITS!(int_value, 8, 14);
         
-        let value = Self::UnscaleDouble(ephemeris.crs, -6);
+        let value = Self::unscale_double(ephemeris.crs, -6);
         let int_value = Self::roundi(value);
         stream[15] |= COMPOSE_BITS!(int_value >> 10, 0, 8);
         stream[16] = COMPOSE_BITS!(int_value, 12, 10);
         
-        let value = Self::UnscaleDouble(ephemeris.sqrtA, -19);
+        let value = Self::unscale_double(ephemeris.sqrtA, -19);
         let uint_value = Self::roundu(value);
         stream[16] |= COMPOSE_BITS!(uint_value >> 20, 0, 12);
         stream[17] = COMPOSE_BITS!(uint_value, 2, 20);
@@ -412,37 +412,37 @@ impl D1D2NavBit {
         stream[18] = COMPOSE_BITS!(ephemeris.toe >> 8, 0, 10);
         stream[19] = COMPOSE_BITS!(ephemeris.toe >> 3, 17, 5);
         
-        let value = Self::UnscaleDouble(ephemeris.i0 / std::f64::consts::PI, -31);
+        let value = Self::unscale_double(ephemeris.i0 / std::f64::consts::PI, -31);
         let int_value = Self::roundi(value);
         stream[19] |= COMPOSE_BITS!(int_value >> 15, 0, 17);
         stream[20] = COMPOSE_BITS!(int_value, 7, 15);
         
-        let value = Self::UnscaleDouble(ephemeris.cic, -31);
+        let value = Self::unscale_double(ephemeris.cic, -31);
         let int_value = Self::roundi(value);
         stream[20] |= COMPOSE_BITS!(int_value >> 11, 0, 7);
         stream[21] = COMPOSE_BITS!(int_value, 11, 11);
         
-        let value = Self::UnscaleDouble(ephemeris.omega_dot / std::f64::consts::PI, -43);
+        let value = Self::unscale_double(ephemeris.omega_dot / std::f64::consts::PI, -43);
         let int_value = Self::roundi(value);
         stream[21] |= COMPOSE_BITS!(int_value >> 13, 0, 11);
         stream[22] = COMPOSE_BITS!(int_value, 9, 13);
         
-        let value = Self::UnscaleDouble(ephemeris.cis, -31);
+        let value = Self::unscale_double(ephemeris.cis, -31);
         let int_value = Self::roundi(value);
         stream[22] |= COMPOSE_BITS!(int_value >> 9, 0, 9);
         stream[23] = COMPOSE_BITS!(int_value, 13, 9);
         
-        let value = Self::UnscaleDouble(ephemeris.idot / std::f64::consts::PI, -43);
+        let value = Self::unscale_double(ephemeris.idot / std::f64::consts::PI, -43);
         let int_value = Self::roundi(value);
         stream[23] |= COMPOSE_BITS!(int_value >> 1, 0, 13);
         stream[24] = COMPOSE_BITS!(int_value, 21, 1);
         
-        let value = Self::UnscaleDouble(ephemeris.omega0 / std::f64::consts::PI, -31);
+        let value = Self::unscale_double(ephemeris.omega0 / std::f64::consts::PI, -31);
         let int_value = Self::roundi(value);
         stream[24] |= COMPOSE_BITS!(int_value >> 11, 0, 21);
         stream[25] = COMPOSE_BITS!(int_value, 11, 11);
         
-        let value = Self::UnscaleDouble(ephemeris.w / std::f64::consts::PI, -31);
+        let value = Self::unscale_double(ephemeris.w / std::f64::consts::PI, -31);
         let int_value = Self::roundi(value);
         stream[25] |= COMPOSE_BITS!(int_value >> 21, 0, 11);
         stream[26] = COMPOSE_BITS!(int_value, 1, 21);
@@ -450,7 +450,7 @@ impl D1D2NavBit {
         0
     }
 
-    fn ComposeBdsStreamD2(ephemeris: &GpsEphemeris, iono_param: &IonoParam, stream: &mut [u32; 40]) -> i32 {
+    fn compose_bds_stream_d2(ephemeris: &GpsEphemeris, iono_param: &IonoParam, stream: &mut [u32; 40]) -> i32 {
         // page 1
         stream[0] = COMPOSE_BITS!(1, 6, 4);
         stream[0] |= COMPOSE_BITS!(ephemeris.health, 5, 1);
@@ -471,50 +471,50 @@ impl D1D2NavBit {
         // page 2
         stream[4] = COMPOSE_BITS!(2, 6, 4);
         
-        let value = Self::UnscaleDouble(iono_param.a0, -30);
+        let value = Self::unscale_double(iono_param.a0, -30);
         let int_value = Self::roundi(value);
         stream[4] |= COMPOSE_BITS!(int_value >> 2, 0, 6);
         stream[4+1] = COMPOSE_BITS!(int_value, 20, 2);
         
-        let value = Self::UnscaleDouble(iono_param.a1, -27);
+        let value = Self::unscale_double(iono_param.a1, -27);
         let int_value = Self::roundi(value);
         stream[4+1] |= COMPOSE_BITS!(int_value, 12, 8);
         
-        let value = Self::UnscaleDouble(iono_param.a2, -24);
+        let value = Self::unscale_double(iono_param.a2, -24);
         let int_value = Self::roundi(value);
         stream[4+1] |= COMPOSE_BITS!(int_value, 4, 8);
         
-        let value = Self::UnscaleDouble(iono_param.a3, -24);
+        let value = Self::unscale_double(iono_param.a3, -24);
         let int_value = Self::roundi(value);
         stream[4+1] |= COMPOSE_BITS!(int_value >> 4, 0, 4);
         stream[4+2] = COMPOSE_BITS!(int_value, 18, 4);
         
-        let value = Self::UnscaleDouble(iono_param.b0, 11);
+        let value = Self::unscale_double(iono_param.b0, 11);
         let int_value = Self::roundi(value);
         stream[4+2] |= COMPOSE_BITS!(int_value, 10, 8);
         
-        let value = Self::UnscaleDouble(iono_param.b1, 14);
+        let value = Self::unscale_double(iono_param.b1, 14);
         let int_value = Self::roundi(value);
         stream[4+2] |= COMPOSE_BITS!(int_value, 2, 8);
         
-        let value = Self::UnscaleDouble(iono_param.b2, 16);
+        let value = Self::unscale_double(iono_param.b2, 16);
         let int_value = Self::roundi(value);
         stream[4+2] |= COMPOSE_BITS!(int_value >> 6, 0, 2);
         stream[4+3] = COMPOSE_BITS!(int_value, 16, 6);
         
-        let value = Self::UnscaleDouble(iono_param.b3, 16);
+        let value = Self::unscale_double(iono_param.b3, 16);
         let int_value = Self::roundi(value);
         stream[4+3] |= COMPOSE_BITS!(int_value, 8, 6);
 
         // page 3
         stream[2*4] = COMPOSE_BITS!(3, 6, 4);
         
-        let value = Self::UnscaleDouble(ephemeris.af0, -33);
+        let value = Self::unscale_double(ephemeris.af0, -33);
         let int_value = Self::roundi(value);
         stream[2*4+2] = COMPOSE_BITS!(int_value >> 12, 0, 12);
         stream[2*4+3] = COMPOSE_BITS!(int_value, 10, 12);
         
-        let value = Self::UnscaleDouble(ephemeris.af1, -50);
+        let value = Self::unscale_double(ephemeris.af1, -50);
         let int_value = Self::roundi(value);
         stream[2*4+3] |= COMPOSE_BITS!(int_value >> 18, 6, 4);
 
@@ -523,17 +523,17 @@ impl D1D2NavBit {
         stream[3*4] |= COMPOSE_BITS!(int_value >> 12, 0, 6);
         stream[3*4+1] = COMPOSE_BITS!(int_value, 10, 12);
         
-        let value = Self::UnscaleDouble(ephemeris.af2, -66);
+        let value = Self::unscale_double(ephemeris.af2, -66);
         let int_value = Self::roundi(value);
         stream[3*4+1] |= COMPOSE_BITS!(int_value >> 1, 0, 11);
         stream[3*4+2] = COMPOSE_BITS!(int_value, 21, 1);
         stream[3*4+2] |= COMPOSE_BITS!(ephemeris.iode, 16, 5);
         
-        let value = Self::UnscaleDouble(ephemeris.delta_n / std::f64::consts::PI, -43);
+        let value = Self::unscale_double(ephemeris.delta_n / std::f64::consts::PI, -43);
         let int_value = Self::roundi(value);
         stream[3*4+2] |= COMPOSE_BITS!(int_value, 0, 16);
         
-        let value = Self::UnscaleDouble(ephemeris.cuc, -31);
+        let value = Self::unscale_double(ephemeris.cuc, -31);
         let int_value = Self::roundi(value);
         stream[3*4+3] = COMPOSE_BITS!(int_value >> 4, 8, 14);
 
@@ -541,18 +541,18 @@ impl D1D2NavBit {
         stream[4*4] = COMPOSE_BITS!(5, 6, 4);
         stream[4*4] |= COMPOSE_BITS!(int_value, 2, 4);
         
-        let value = Self::UnscaleDouble(ephemeris.M0 / std::f64::consts::PI, -31);
+        let value = Self::unscale_double(ephemeris.M0 / std::f64::consts::PI, -31);
         let int_value = Self::roundi(value);
         stream[4*4] |= COMPOSE_BITS!(int_value >> 30, 0, 2);
         stream[4*4+1] = COMPOSE_BITS!(int_value >> 8, 0, 22);
         stream[4*4+2] = COMPOSE_BITS!(int_value, 14, 8);
         
-        let value = Self::UnscaleDouble(ephemeris.cus, -31);
+        let value = Self::unscale_double(ephemeris.cus, -31);
         let int_value = Self::roundi(value);
         stream[4*4+2] |= COMPOSE_BITS!(int_value >> 4, 0, 14);
         stream[4*4+3] = COMPOSE_BITS!(int_value, 18, 4);
         
-        let value = Self::UnscaleDouble(ephemeris.ecc, -33);
+        let value = Self::unscale_double(ephemeris.ecc, -33);
         let uint_value = Self::roundu(value);
         stream[4*4+3] |= COMPOSE_BITS!(uint_value >> 22, 8, 10);
 
@@ -561,13 +561,13 @@ impl D1D2NavBit {
         stream[5*4] |= COMPOSE_BITS!(uint_value >> 16, 0, 6);
         stream[5*4+1] = COMPOSE_BITS!(uint_value, 6, 16);
         
-        let value = Self::UnscaleDouble(ephemeris.sqrtA, -19);
+        let value = Self::unscale_double(ephemeris.sqrtA, -19);
         let uint_value = Self::roundu(value);
         stream[5*4+1] |= COMPOSE_BITS!(uint_value >> 26, 0, 6);
         stream[5*4+2] = COMPOSE_BITS!(uint_value >> 4, 0, 22);
         stream[5*4+3] = COMPOSE_BITS!(uint_value, 18, 4);
         
-        let value = Self::UnscaleDouble(ephemeris.cic, -31);
+        let value = Self::unscale_double(ephemeris.cic, -31);
         let int_value = Self::roundi(value);
         stream[5*4+3] |= COMPOSE_BITS!(int_value >> 8, 8, 10);
 
@@ -576,13 +576,13 @@ impl D1D2NavBit {
         stream[6*4] |= COMPOSE_BITS!(int_value >> 2, 0, 6);
         stream[6*4+1] = COMPOSE_BITS!(int_value, 20, 2);
         
-        let value = Self::UnscaleDouble(ephemeris.cis, -31);
+        let value = Self::unscale_double(ephemeris.cis, -31);
         let int_value = Self::roundi(value);
         stream[6*4+1] |= COMPOSE_BITS!(int_value, 2, 18);
         stream[6*4+1] |= COMPOSE_BITS!(ephemeris.toe >> 18, 0, 2);
         stream[6*4+2] = COMPOSE_BITS!(ephemeris.toe >> 3, 7, 15);
         
-        let value = Self::UnscaleDouble(ephemeris.i0 / std::f64::consts::PI, -31);
+        let value = Self::unscale_double(ephemeris.i0 / std::f64::consts::PI, -31);
         let int_value = Self::roundi(value);
         stream[6*4+2] |= COMPOSE_BITS!(int_value >> 25, 0, 7);
         stream[6*4+3] = COMPOSE_BITS!(int_value >> 11, 8, 14);
@@ -592,16 +592,16 @@ impl D1D2NavBit {
         stream[7*4] |= COMPOSE_BITS!(int_value >> 5, 0, 6);
         stream[7*4+1] = COMPOSE_BITS!(int_value, 17, 5);
         
-        let value = Self::UnscaleDouble(ephemeris.crc, -6);
+        let value = Self::unscale_double(ephemeris.crc, -6);
         let int_value = Self::roundi(value);
         stream[7*4+1] |= COMPOSE_BITS!(int_value >> 1, 0, 17);
         stream[7*4+2] = COMPOSE_BITS!(int_value, 21, 1);
         
-        let value = Self::UnscaleDouble(ephemeris.crs, -6);
+        let value = Self::unscale_double(ephemeris.crs, -6);
         let int_value = Self::roundi(value);
         stream[7*4+2] |= COMPOSE_BITS!(int_value, 3, 18);
         
-        let value = Self::UnscaleDouble(ephemeris.omega_dot / std::f64::consts::PI, -43);
+        let value = Self::unscale_double(ephemeris.omega_dot / std::f64::consts::PI, -43);
         let int_value = Self::roundi(value);
         stream[7*4+2] |= COMPOSE_BITS!(int_value >> 21, 0, 3);
         stream[7*4+3] = COMPOSE_BITS!(int_value >> 5, 6, 16);
@@ -610,13 +610,13 @@ impl D1D2NavBit {
         stream[8*4] = COMPOSE_BITS!(9, 6, 4);
         stream[8*4] |= COMPOSE_BITS!(int_value, 1, 5);
         
-        let value = Self::UnscaleDouble(ephemeris.omega0 / std::f64::consts::PI, -31);
+        let value = Self::unscale_double(ephemeris.omega0 / std::f64::consts::PI, -31);
         let int_value = Self::roundi(value);
         stream[8*4] |= COMPOSE_BITS!(int_value >> 31, 0, 1);
         stream[8*4+1] = COMPOSE_BITS!(int_value >> 9, 0, 22);
         stream[8*4+2] = COMPOSE_BITS!(int_value, 13, 9);
         
-        let value = Self::UnscaleDouble(ephemeris.w / std::f64::consts::PI, -31);
+        let value = Self::unscale_double(ephemeris.w / std::f64::consts::PI, -31);
         let int_value = Self::roundi(value);
         stream[8*4+2] |= COMPOSE_BITS!(int_value >> 19, 0, 13);
         stream[8*4+3] = COMPOSE_BITS!(int_value >> 5, 8, 14);
@@ -625,7 +625,7 @@ impl D1D2NavBit {
         stream[9*4] = COMPOSE_BITS!(10, 6, 4);
         stream[9*4] |= COMPOSE_BITS!(int_value, 1, 5);
         
-        let value = Self::UnscaleDouble(ephemeris.idot / std::f64::consts::PI, -43);
+        let value = Self::unscale_double(ephemeris.idot / std::f64::consts::PI, -43);
         let int_value = Self::roundi(value);
         stream[9*4] |= COMPOSE_BITS!(int_value >> 13, 0, 1);
         stream[9*4+1] = COMPOSE_BITS!(int_value, 9, 13);
@@ -633,54 +633,54 @@ impl D1D2NavBit {
         0
     }
 
-    fn FillBdsAlmanacPage(almanac: &GpsAlmanac, stream: &mut [u32; 9]) -> i32 {
+    fn fill_bds_almanac_page(almanac: &GpsAlmanac, stream: &mut [u32; 9]) -> i32 {
         if almanac.valid == 0 {
             return 0;
         }
         
-        let value = Self::UnscaleDouble(almanac.sqrtA, -11);
+        let value = Self::unscale_double(almanac.sqrtA, -11);
         let uint_value = Self::roundu(value);
         stream[0] |= COMPOSE_BITS!(uint_value >> 22, 0, 2);
         stream[1] = COMPOSE_BITS!(uint_value, 0, 22);
         
-        let value = Self::UnscaleDouble(almanac.af1, -38);
+        let value = Self::unscale_double(almanac.af1, -38);
         let int_value = Self::roundi(value);
         stream[2] = COMPOSE_BITS!(int_value, 11, 11);
         
-        let value = Self::UnscaleDouble(almanac.af0, -20);
+        let value = Self::unscale_double(almanac.af0, -20);
         let int_value = Self::roundi(value);
         stream[2] |= COMPOSE_BITS!(int_value, 0, 11);
         
-        let value = Self::UnscaleDouble(almanac.omega0 / std::f64::consts::PI, -23);
+        let value = Self::unscale_double(almanac.omega0 / std::f64::consts::PI, -23);
         let int_value = Self::roundi(value);
         stream[3] = COMPOSE_BITS!(int_value >> 2, 0, 22);
         stream[4] = COMPOSE_BITS!(int_value, 20, 2);
         
-        let value = Self::UnscaleDouble(almanac.ecc, -21);
+        let value = Self::unscale_double(almanac.ecc, -21);
         let uint_value = Self::roundu(value);
         stream[4] |= COMPOSE_BITS!(uint_value, 3, 17);
         
         let value = if almanac.i0 > 0.5 {
-            Self::UnscaleDouble(almanac.i0 / std::f64::consts::PI - 0.3, -19)
+            Self::unscale_double(almanac.i0 / std::f64::consts::PI - 0.3, -19)
         } else {
-            Self::UnscaleDouble(almanac.i0 / std::f64::consts::PI, -19)
+            Self::unscale_double(almanac.i0 / std::f64::consts::PI, -19)
         };
         let int_value = Self::roundi(value);
         stream[4] |= COMPOSE_BITS!(int_value >> 13, 0, 3);
         stream[5] = COMPOSE_BITS!(int_value, 9, 13);
         stream[5] |= COMPOSE_BITS!(almanac.toa >> 12, 1, 8);
         
-        let value = Self::UnscaleDouble(almanac.omega_dot / std::f64::consts::PI, -38);
+        let value = Self::unscale_double(almanac.omega_dot / std::f64::consts::PI, -38);
         let int_value = Self::roundi(value);
         stream[5] |= COMPOSE_BITS!(int_value >> 16, 0, 1);
         stream[6] = COMPOSE_BITS!(int_value, 6, 16);
         
-        let value = Self::UnscaleDouble(almanac.w / std::f64::consts::PI, -23);
+        let value = Self::unscale_double(almanac.w / std::f64::consts::PI, -23);
         let int_value = Self::roundi(value);
         stream[6] |= COMPOSE_BITS!(int_value >> 18, 0, 6);
         stream[7] = COMPOSE_BITS!(int_value, 4, 18);
         
-        let value = Self::UnscaleDouble(almanac.M0 / std::f64::consts::PI, -23);
+        let value = Self::unscale_double(almanac.M0 / std::f64::consts::PI, -23);
         let int_value = Self::roundi(value);
         stream[7] |= COMPOSE_BITS!(int_value >> 20, 0, 4);
         stream[8] = COMPOSE_BITS!(int_value, 2, 20);
@@ -688,7 +688,7 @@ impl D1D2NavBit {
         0
     }
 
-    fn FillBdsHealthPage(almanac: &[GpsAlmanac], length: usize, stream: &mut [u32; 9]) -> i32 {
+    fn fill_bds_health_page(almanac: &[GpsAlmanac], length: usize, stream: &mut [u32; 9]) -> i32 {
         for i in 0..length.min(almanac.len()) {
             let health = if almanac[i].valid == 1 { 
                 0 
@@ -714,7 +714,7 @@ impl D1D2NavBit {
     // Calculate BCH and XOR to lowest 4bit
     // to check BCH, after calling this function, the lowest 4bit of return value should be 0
     // to calculate BCH, set lowest 4bit as 0 and return value contains the full word
-    fn GetBCH(word: u32) -> u32 {
+    fn get_bch(word: u32) -> u32 {
         let mut word = word;
         
         // calculate parity value
@@ -732,7 +732,7 @@ impl D1D2NavBit {
         word
     }
 
-    fn Interleave(data: u32) -> u32 {
+    fn interleave(data: u32) -> u32 {
         let mut data = data;
         data = (data & 0xff0000ff) | ((data & 0x0000ff00) << 8) | ((data & 0x00ff0000) >> 8);
         data = (data & 0xf00ff00f) | ((data & 0x00f000f0) << 4) | ((data & 0x0f000f00) >> 4);
@@ -741,14 +741,14 @@ impl D1D2NavBit {
         data
     }
 
-    fn AssignBits(value: i32, bits: usize, output: &mut [i32]) {
+    fn assign_bits(value: i32, bits: usize, output: &mut [i32]) {
         for i in 0..bits.min(output.len()) {
             output[i] = (value >> (bits - 1 - i)) & 1;
         }
     }
 
     // Helper functions
-    fn UnscaleDouble(value: f64, scale: i32) -> f64 {
+    fn unscale_double(value: f64, scale: i32) -> f64 {
         value * (2.0_f64).powi(scale)
     }
 

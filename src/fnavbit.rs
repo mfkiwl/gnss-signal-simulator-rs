@@ -44,10 +44,10 @@ const NOMINAL_I0: f64 = 0.977_384_381_116_824_6;
 
 #[derive(Clone)]
 pub struct FNavBit {
-    pub GalEphData: [[[u32; 7]; 4]; 36],    // 36 satellites, 4 page types, 7 words each
-    pub GalAlmData: [[[u32; 7]; 2]; 12],    // 12 almanac groups, 2 page types, 7 words each
-    pub GalUtcData: [u32; 4],               // UTC parameters
-    pub GalIonoData: [u32; 2],              // Ionosphere parameters
+    pub gal_eph_data: [[[u32; 7]; 4]; 36],    // 36 satellites, 4 page types, 7 words each
+    pub gal_alm_data: [[[u32; 7]; 2]; 12],    // 12 almanac groups, 2 page types, 7 words each
+    pub gal_utc_data: [u32; 4],               // UTC parameters
+    pub gal_iono_data: [u32; 2],              // Ionosphere parameters
 }
 
 impl FNavBit {
@@ -55,10 +55,10 @@ impl FNavBit {
 
     pub fn new() -> Self {
         FNavBit {
-            GalEphData: [[[0; 7]; 4]; 36],
-            GalAlmData: [[[0; 7]; 2]; 12],
-            GalUtcData: [0; 4],
-            GalIonoData: [0; 2],
+            gal_eph_data: [[[0; 7]; 4]; 36],
+            gal_alm_data: [[[0; 7]; 2]; 12],
+            gal_utc_data: [0; 4],
+            gal_iono_data: [0; 2],
         }
     }
 
@@ -72,8 +72,8 @@ impl FNavBit {
         let page = (tow % 50) / 10;
         
         let mut encode_data = [0u32; 7];
-        self.GetPageData(svid, page, subframe, gst as u32, &mut encode_data);
-        let crc_result = Self::Crc24qEncode(&encode_data, 248);
+        self.get_page_data(svid, page, subframe, gst as u32, &mut encode_data);
+        let crc_result = Self::crc24q_encode(&encode_data, 248);
 
         // Place message bits and CRC into a single array (248 + 24 = 272 bits)
         let mut uncoded_bits = [0i32; 272];
@@ -114,8 +114,8 @@ impl FNavBit {
         if !(1..=36).contains(&svid) || eph.valid == 0 {
             return 0;
         }
-        let eph_data = &mut self.GalEphData[(svid - 1) as usize];
-        FNavBit::ComposeEphWords(eph, eph_data);
+        let eph_data = &mut self.gal_eph_data[(svid - 1) as usize];
+        FNavBit::compose_eph_words(eph, eph_data);
         svid
     }
 
@@ -132,7 +132,7 @@ impl FNavBit {
         for i in 0..12 {
             let start_idx = i * 3;
             if start_idx + 2 < alm.len() {
-                FNavBit::ComposeAlmWords(&alm[start_idx..start_idx + 3], &mut self.GalAlmData[i], week);
+                FNavBit::compose_alm_words(&alm[start_idx..start_idx + 3], &mut self.gal_alm_data[i], week);
             }
         }
         
@@ -141,37 +141,37 @@ impl FNavBit {
 
     pub fn set_iono_utc(&mut self, iono_param: &IonoParam, utc_param: &UtcParam) -> i32 {
         // Put ionosphere parameters (assuming NeQuick model)
-        let uint_value = Self::UnscaleUint(iono_param.a0, -2);
-        self.GalIonoData[0] = COMPOSE_BITS!(uint_value, 5, 11);
+        let uint_value = Self::unscale_uint(iono_param.a0, -2);
+        self.gal_iono_data[0] = COMPOSE_BITS!(uint_value, 5, 11);
         
-        let int_value = Self::UnscaleInt(iono_param.a1, -8);
-        self.GalIonoData[0] |= COMPOSE_BITS!(int_value >> 6, 0, 5);
-        self.GalIonoData[1] = COMPOSE_BITS!(int_value, 26, 6);
+        let int_value = Self::unscale_int(iono_param.a1, -8);
+        self.gal_iono_data[0] |= COMPOSE_BITS!(int_value >> 6, 0, 5);
+        self.gal_iono_data[1] = COMPOSE_BITS!(int_value, 26, 6);
         
-        let int_value = Self::UnscaleInt(iono_param.a2, -15);
-        self.GalIonoData[1] |= COMPOSE_BITS!(int_value, 12, 14);
-        self.GalIonoData[1] |= COMPOSE_BITS!(iono_param.flag, 7, 5);
+        let int_value = Self::unscale_int(iono_param.a2, -15);
+        self.gal_iono_data[1] |= COMPOSE_BITS!(int_value, 12, 14);
+        self.gal_iono_data[1] |= COMPOSE_BITS!(iono_param.flag, 7, 5);
 
         // Put UTC parameters
-        let int_value = Self::UnscaleInt(utc_param.A0, -30);
-        self.GalUtcData[0] = COMPOSE_BITS!(int_value >> 26, 0, 6);
-        self.GalUtcData[1] = COMPOSE_BITS!(int_value, 6, 26);
+        let int_value = Self::unscale_int(utc_param.A0, -30);
+        self.gal_utc_data[0] = COMPOSE_BITS!(int_value >> 26, 0, 6);
+        self.gal_utc_data[1] = COMPOSE_BITS!(int_value, 6, 26);
         
-        let int_value = Self::UnscaleInt(utc_param.A1, -50);
-        self.GalUtcData[1] |= COMPOSE_BITS!(int_value >> 18, 0, 6);
-        self.GalUtcData[2] = COMPOSE_BITS!(int_value, 14, 18);
-        self.GalUtcData[2] |= COMPOSE_BITS!(utc_param.TLS, 6, 8);
-        self.GalUtcData[2] |= COMPOSE_BITS!(utc_param.tot >> 2, 0, 6);
-        self.GalUtcData[3] = COMPOSE_BITS!(utc_param.tot, 30, 2);
-        self.GalUtcData[3] |= COMPOSE_BITS!(utc_param.WN, 22, 8);
-        self.GalUtcData[3] |= COMPOSE_BITS!(utc_param.WNLSF, 14, 8);
-        self.GalUtcData[3] |= COMPOSE_BITS!(utc_param.DN, 11, 3);
-        self.GalUtcData[3] |= COMPOSE_BITS!(utc_param.TLSF, 3, 8);
+        let int_value = Self::unscale_int(utc_param.A1, -50);
+        self.gal_utc_data[1] |= COMPOSE_BITS!(int_value >> 18, 0, 6);
+        self.gal_utc_data[2] = COMPOSE_BITS!(int_value, 14, 18);
+        self.gal_utc_data[2] |= COMPOSE_BITS!(utc_param.TLS, 6, 8);
+        self.gal_utc_data[2] |= COMPOSE_BITS!(utc_param.tot >> 2, 0, 6);
+        self.gal_utc_data[3] = COMPOSE_BITS!(utc_param.tot, 30, 2);
+        self.gal_utc_data[3] |= COMPOSE_BITS!(utc_param.WN, 22, 8);
+        self.gal_utc_data[3] |= COMPOSE_BITS!(utc_param.WNLSF, 14, 8);
+        self.gal_utc_data[3] |= COMPOSE_BITS!(utc_param.DN, 11, 3);
+        self.gal_utc_data[3] |= COMPOSE_BITS!(utc_param.TLSF, 3, 8);
 
         0
     }
 
-    fn ComposeEphWords(ephemeris: &GpsEphemeris, eph_data: &mut [[u32; 7]; 4]) -> i32 {
+    fn compose_eph_words(ephemeris: &GpsEphemeris, eph_data: &mut [[u32; 7]; 4]) -> i32 {
         // Initialize all data to zero
         for i in 0..4 {
             for j in 0..7 {
@@ -180,79 +180,79 @@ impl FNavBit {
         }
 
         // PageType 1
-        // Note: TOW will be added in GetPageData
+        // Note: TOW will be added in get_page_data
         eph_data[0][0] = COMPOSE_BITS!(1, 16, 6); // Page type = 1
         
         let uint_value = ephemeris.toc / 60;
         eph_data[0][1] = COMPOSE_BITS!(ephemeris.iodc, 16, 10) | COMPOSE_BITS!(uint_value, 2, 14);
         
-        let int_value = Self::UnscaleInt(ephemeris.af2, -59);
+        let int_value = Self::unscale_int(ephemeris.af2, -59);
         eph_data[0][1] |= COMPOSE_BITS!(int_value >> 4, 0, 2);
         eph_data[0][2] = COMPOSE_BITS!(int_value, 28, 4);
         
-        let int_value = Self::UnscaleInt(ephemeris.af1, -46);
+        let int_value = Self::unscale_int(ephemeris.af1, -46);
         eph_data[0][2] |= COMPOSE_BITS!(int_value, 7, 21);
         
         eph_data[0][3] = COMPOSE_BITS!(ephemeris.health & 0x3, 29, 2); // E5a HS
-        let int_value = Self::UnscaleInt(ephemeris.af0, -34);
+        let int_value = Self::unscale_int(ephemeris.af0, -34);
         eph_data[0][3] |= COMPOSE_BITS!(int_value >> 2, 0, 29);
         eph_data[0][4] = COMPOSE_BITS!(int_value, 30, 2);
         
-        let int_value = Self::UnscaleInt(ephemeris.tgd, -32);
+        let int_value = Self::unscale_int(ephemeris.tgd, -32);
         eph_data[0][5] = COMPOSE_BITS!(int_value, 11, 10) | COMPOSE_BITS!((ephemeris.health >> 2) & 0x1, 10, 1);
-        eph_data[0][6] = 0; // GST will be added in GetPageData
+        eph_data[0][6] = 0; // GST will be added in get_page_data
 
         // PageType 2
         eph_data[1][0] = (2 << 16) | COMPOSE_BITS!(ephemeris.iodc, 6, 10);
-        let int_value = Self::UnscaleInt(ephemeris.M0 / std::f64::consts::PI, -31);
+        let int_value = Self::unscale_int(ephemeris.M0 / std::f64::consts::PI, -31);
         eph_data[1][0] |= COMPOSE_BITS!(int_value >> 26, 0, 6);
         eph_data[1][1] = COMPOSE_BITS!(int_value, 6, 26);
         
-        let int_value = Self::UnscaleInt(ephemeris.omega_dot / std::f64::consts::PI, -43);
+        let int_value = Self::unscale_int(ephemeris.omega_dot / std::f64::consts::PI, -43);
         eph_data[1][1] |= COMPOSE_BITS!(int_value >> 18, 0, 6);
         eph_data[1][2] = COMPOSE_BITS!(int_value, 14, 18);
         
-        let uint_value = Self::UnscaleUint(ephemeris.ecc, -33);
+        let uint_value = Self::unscale_uint(ephemeris.ecc, -33);
         eph_data[1][2] |= COMPOSE_BITS!(uint_value >> 18, 0, 14);
         eph_data[1][3] = COMPOSE_BITS!(uint_value, 14, 18);
         
-        let uint_value = Self::UnscaleUint(ephemeris.sqrtA, -19);
+        let uint_value = Self::unscale_uint(ephemeris.sqrtA, -19);
         eph_data[1][3] |= COMPOSE_BITS!(uint_value >> 18, 0, 14);
         eph_data[1][4] = COMPOSE_BITS!(uint_value, 14, 18);
         
-        let int_value = Self::UnscaleInt(ephemeris.omega0 / std::f64::consts::PI, -31);
+        let int_value = Self::unscale_int(ephemeris.omega0 / std::f64::consts::PI, -31);
         eph_data[1][4] |= COMPOSE_BITS!(int_value >> 18, 0, 14);
         eph_data[1][5] = COMPOSE_BITS!(int_value, 14, 18);
         
-        let int_value = Self::UnscaleInt(ephemeris.idot / std::f64::consts::PI, -43);
+        let int_value = Self::unscale_int(ephemeris.idot / std::f64::consts::PI, -43);
         eph_data[1][5] |= COMPOSE_BITS!(int_value, 0, 14);
         eph_data[1][6] = 0; // for GST
 
         // PageType 3
         eph_data[2][0] = (3 << 16) | COMPOSE_BITS!(ephemeris.iodc, 6, 10);
-        let int_value = Self::UnscaleInt(ephemeris.i0 / std::f64::consts::PI, -31);
+        let int_value = Self::unscale_int(ephemeris.i0 / std::f64::consts::PI, -31);
         eph_data[2][0] |= COMPOSE_BITS!(int_value >> 26, 0, 6);
         eph_data[2][1] = COMPOSE_BITS!(int_value, 6, 26);
         
-        let int_value = Self::UnscaleInt(ephemeris.w / std::f64::consts::PI, -31);
+        let int_value = Self::unscale_int(ephemeris.w / std::f64::consts::PI, -31);
         eph_data[2][1] |= COMPOSE_BITS!(int_value >> 26, 0, 6);
         eph_data[2][2] = COMPOSE_BITS!(int_value, 6, 26);
         
-        let int_value = Self::UnscaleInt(ephemeris.delta_n / std::f64::consts::PI, -43);
+        let int_value = Self::unscale_int(ephemeris.delta_n / std::f64::consts::PI, -43);
         eph_data[2][2] |= COMPOSE_BITS!(int_value >> 10, 0, 6);
         eph_data[2][3] = COMPOSE_BITS!(int_value, 22, 10);
         
-        let int_value = Self::UnscaleInt(ephemeris.cuc, -29);
+        let int_value = Self::unscale_int(ephemeris.cuc, -29);
         eph_data[2][3] |= COMPOSE_BITS!(int_value, 6, 16);
         
-        let int_value = Self::UnscaleInt(ephemeris.cus, -29);
+        let int_value = Self::unscale_int(ephemeris.cus, -29);
         eph_data[2][3] |= COMPOSE_BITS!(int_value >> 10, 0, 6);
         eph_data[2][4] = COMPOSE_BITS!(int_value, 22, 10);
         
-        let int_value = Self::UnscaleInt(ephemeris.crc, -5);
+        let int_value = Self::unscale_int(ephemeris.crc, -5);
         eph_data[2][4] |= COMPOSE_BITS!(int_value, 6, 16);
         
-        let int_value = Self::UnscaleInt(ephemeris.crs, -5);
+        let int_value = Self::unscale_int(ephemeris.crs, -5);
         eph_data[2][4] |= COMPOSE_BITS!(int_value >> 10, 0, 6);
         eph_data[2][5] = COMPOSE_BITS!(int_value, 22, 10);
         eph_data[2][5] |= COMPOSE_BITS!((ephemeris.toe / 60), 8, 14);
@@ -260,11 +260,11 @@ impl FNavBit {
 
         // PageType 4
         eph_data[3][0] = (4 << 16) | COMPOSE_BITS!(ephemeris.iodc, 6, 10);
-        let int_value = Self::UnscaleInt(ephemeris.cic, -29);
+        let int_value = Self::unscale_int(ephemeris.cic, -29);
         eph_data[3][0] |= COMPOSE_BITS!(int_value >> 10, 0, 6);
         eph_data[3][1] = COMPOSE_BITS!(int_value, 22, 10);
         
-        let int_value = Self::UnscaleInt(ephemeris.cis, -29);
+        let int_value = Self::unscale_int(ephemeris.cis, -29);
         eph_data[3][1] |= COMPOSE_BITS!(int_value, 6, 16);
         
         for i in 2..7 {
@@ -274,7 +274,7 @@ impl FNavBit {
         0
     }
 
-    fn ComposeAlmWords(almanac: &[GpsAlmanac], alm_data: &mut [[u32; 7]; 2], week: i32) -> i32 {
+    fn compose_alm_words(almanac: &[GpsAlmanac], alm_data: &mut [[u32; 7]; 2], week: i32) -> i32 {
         let toa = if !almanac.is_empty() && (almanac[0].valid & 1) != 0 {
             almanac[0].toa
         } else if almanac.len() > 1 && (almanac[1].valid & 1) != 0 {
@@ -300,34 +300,34 @@ impl FNavBit {
         alm_data[0][0] = COMPOSE_BITS!(5, 16, 6) | COMPOSE_BITS!(4, 12, 4) | COMPOSE_BITS!(week, 10, 2) | COMPOSE_BITS!((toa / 600), 0, 10);
         alm_data[0][1] = COMPOSE_BITS!(almanac[0].svid, 26, 6); // SVID1 starts here
         
-        let int_value = Self::UnscaleInt(almanac[0].sqrtA - SQRT_A0, -11);
+        let int_value = Self::unscale_int(almanac[0].sqrtA - SQRT_A0, -11);
         alm_data[0][1] |= COMPOSE_BITS!(int_value, 13, 13);
         
-        let uint_value = Self::UnscaleUint(almanac[0].ecc, -16);
+        let uint_value = Self::unscale_uint(almanac[0].ecc, -16);
         alm_data[0][1] |= COMPOSE_BITS!(uint_value, 2, 11);
         
-        let int_value = Self::UnscaleInt(almanac[0].w / std::f64::consts::PI, -15);
+        let int_value = Self::unscale_int(almanac[0].w / std::f64::consts::PI, -15);
         alm_data[0][1] |= COMPOSE_BITS!(int_value >> 14, 0, 2);
         alm_data[0][2] = COMPOSE_BITS!(int_value, 18, 14);
         
-        let int_value = Self::UnscaleInt((almanac[0].i0 - NOMINAL_I0) / std::f64::consts::PI, -14);
+        let int_value = Self::unscale_int((almanac[0].i0 - NOMINAL_I0) / std::f64::consts::PI, -14);
         alm_data[0][2] |= COMPOSE_BITS!(int_value, 7, 11);
         
-        let int_value = Self::UnscaleInt(almanac[0].omega0 / std::f64::consts::PI, -15);
+        let int_value = Self::unscale_int(almanac[0].omega0 / std::f64::consts::PI, -15);
         alm_data[0][2] |= COMPOSE_BITS!(int_value >> 9, 0, 7);
         alm_data[0][3] = COMPOSE_BITS!(int_value, 23, 9);
         
-        let int_value = Self::UnscaleInt(almanac[0].omega_dot / std::f64::consts::PI, -33);
+        let int_value = Self::unscale_int(almanac[0].omega_dot / std::f64::consts::PI, -33);
         alm_data[0][3] |= COMPOSE_BITS!(int_value, 12, 11);
         
-        let int_value = Self::UnscaleInt(almanac[0].M0 / std::f64::consts::PI, -15);
+        let int_value = Self::unscale_int(almanac[0].M0 / std::f64::consts::PI, -15);
         alm_data[0][3] |= COMPOSE_BITS!(int_value >> 4, 0, 12);
         alm_data[0][4] = COMPOSE_BITS!(int_value, 28, 4);
         
-        let int_value = Self::UnscaleInt(almanac[0].af0, -19);
+        let int_value = Self::unscale_int(almanac[0].af0, -19);
         alm_data[0][4] |= COMPOSE_BITS!(int_value, 12, 16);
         
-        let int_value = Self::UnscaleInt(almanac[0].af1, -38);
+        let int_value = Self::unscale_int(almanac[0].af1, -38);
         alm_data[0][4] |= COMPOSE_BITS!(int_value >> 1, 0, 12);
         alm_data[0][5] = COMPOSE_BITS!(int_value, 31, 1);
 
@@ -335,71 +335,71 @@ impl FNavBit {
             alm_data[0][5] |= COMPOSE_BITS!(if (almanac[1].valid & 1) != 0 { 0 } else { 1 }, 29, 2);
             alm_data[0][5] |= COMPOSE_BITS!(almanac[1].svid, 23, 6); // SVID2 starts here
             
-            let int_value = Self::UnscaleInt(almanac[1].sqrtA - SQRT_A0, -11);
+            let int_value = Self::unscale_int(almanac[1].sqrtA - SQRT_A0, -11);
             alm_data[0][5] |= COMPOSE_BITS!(int_value, 10, 13);
             
-            let uint_value = Self::UnscaleUint(almanac[1].ecc, -16);
+            let uint_value = Self::unscale_uint(almanac[1].ecc, -16);
             alm_data[0][5] |= COMPOSE_BITS!(uint_value >> 1, 0, 10);
             alm_data[0][6] = COMPOSE_BITS!(uint_value, 31, 1);
             
-            let int_value = Self::UnscaleInt(almanac[1].w / std::f64::consts::PI, -15);
+            let int_value = Self::unscale_int(almanac[1].w / std::f64::consts::PI, -15);
             alm_data[0][6] |= COMPOSE_BITS!(int_value, 15, 16);
             
-            let int_value = Self::UnscaleInt((almanac[1].i0 - NOMINAL_I0) / std::f64::consts::PI, -14);
+            let int_value = Self::unscale_int((almanac[1].i0 - NOMINAL_I0) / std::f64::consts::PI, -14);
             alm_data[0][6] |= COMPOSE_BITS!(int_value, 4, 11);
             
-            let int_value = Self::UnscaleInt(almanac[1].omega0 / std::f64::consts::PI, -15);
+            let int_value = Self::unscale_int(almanac[1].omega0 / std::f64::consts::PI, -15);
             alm_data[0][6] |= COMPOSE_BITS!(int_value >> 12, 0, 4);
 
             // PageType 6
             alm_data[1][0] = COMPOSE_BITS!(6, 16, 6) | COMPOSE_BITS!(4, 12, 4); // Type=6, IODa=4
             alm_data[1][0] |= COMPOSE_BITS!(int_value, 0, 12);
             
-            let int_value = Self::UnscaleInt(almanac[1].omega_dot / std::f64::consts::PI, -33);
+            let int_value = Self::unscale_int(almanac[1].omega_dot / std::f64::consts::PI, -33);
             alm_data[1][1] = COMPOSE_BITS!(int_value, 21, 11);
             
-            let int_value = Self::UnscaleInt(almanac[1].M0 / std::f64::consts::PI, -15);
+            let int_value = Self::unscale_int(almanac[1].M0 / std::f64::consts::PI, -15);
             alm_data[1][1] |= COMPOSE_BITS!(int_value, 5, 16);
             
-            let int_value = Self::UnscaleInt(almanac[1].af0, -19);
+            let int_value = Self::unscale_int(almanac[1].af0, -19);
             alm_data[1][1] |= COMPOSE_BITS!(int_value >> 11, 0, 5);
             alm_data[1][2] = COMPOSE_BITS!(int_value, 21, 11);
             
-            let int_value = Self::UnscaleInt(almanac[1].af1, -38);
+            let int_value = Self::unscale_int(almanac[1].af1, -38);
             alm_data[1][2] |= COMPOSE_BITS!(int_value, 8, 13);
             alm_data[1][2] |= COMPOSE_BITS!(if (almanac[1].valid & 1) != 0 { 0 } else { 1 }, 6, 2);
 
             if almanac.len() > 2 {
                 alm_data[1][2] |= COMPOSE_BITS!(almanac[2].svid, 0, 6); // SVID3 starts here
                 
-                let int_value = Self::UnscaleInt(almanac[2].sqrtA - SQRT_A0, -11);
+                let int_value = Self::unscale_int(almanac[2].sqrtA - SQRT_A0, -11);
                 alm_data[1][3] = COMPOSE_BITS!(int_value, 19, 13);
                 
-                let uint_value = Self::UnscaleUint(almanac[2].ecc, -16);
+                let uint_value = Self::unscale_uint(almanac[2].ecc, -16);
                 alm_data[1][3] |= COMPOSE_BITS!(uint_value, 8, 11);
                 
-                let int_value = Self::UnscaleInt(almanac[2].w / std::f64::consts::PI, -15);
+                let int_value = Self::unscale_int(almanac[2].w / std::f64::consts::PI, -15);
                 alm_data[1][3] |= COMPOSE_BITS!(int_value >> 8, 0, 8);
                 alm_data[1][4] = COMPOSE_BITS!(int_value, 24, 8);
                 
-                let int_value = Self::UnscaleInt((almanac[2].i0 - NOMINAL_I0) / std::f64::consts::PI, -14);
+                let int_value = Self::unscale_int((almanac[2].i0 - NOMINAL_I0) / std::f64::consts::PI, -14);
                 alm_data[1][4] |= COMPOSE_BITS!(int_value, 13, 11);
                 
-                let int_value = Self::UnscaleInt(almanac[2].omega0 / std::f64::consts::PI, -15);
+                let int_value = Self::unscale_int(almanac[2].omega0 / std::f64::consts::PI, -15);
                 alm_data[1][4] |= COMPOSE_BITS!(int_value >> 3, 0, 13);
                 alm_data[1][5] = COMPOSE_BITS!(int_value, 29, 3);
                 
-                let int_value = Self::UnscaleInt(almanac[2].omega_dot / std::f64::consts::PI, -33);
+                let int_value = Self::unscale_int(almanac[2].omega_dot / std::f64::consts::PI, -33);
                 alm_data[1][5] |= COMPOSE_BITS!(int_value, 18, 11);
                 
-                let int_value = Self::UnscaleInt(almanac[2].M0 / std::f64::consts::PI, -15);
+                let int_value = Self::unscale_int(almanac[2].M0 / std::f64::consts::PI, -15);
                 alm_data[1][5] |= COMPOSE_BITS!(int_value, 2, 16);
                 
-                let int_value = Self::UnscaleInt(almanac[2].af0, -19);
+                let int_value = Self::unscale_int(almanac[2].af0, -19);
                 alm_data[1][5] |= COMPOSE_BITS!(int_value >> 14, 0, 2);
                 alm_data[1][6] = COMPOSE_BITS!(int_value, 18, 14);
                 
-                let int_value = Self::UnscaleInt(almanac[2].af1, -38);
+                let int_value = Self::unscale_int(almanac[2].af1, -38);
                 alm_data[1][6] |= COMPOSE_BITS!(int_value, 5, 13);
                 alm_data[1][6] |= COMPOSE_BITS!(if (almanac[2].valid & 1) != 0 { 0 } else { 1 }, 3, 2);
             }
@@ -408,43 +408,43 @@ impl FNavBit {
         0
     }
 
-    fn GetPageData(&self, svid: i32, page: i32, subframe: i32, gst: u32, data: &mut [u32; 7]) {
+    fn get_page_data(&self, svid: i32, page: i32, subframe: i32, gst: u32, data: &mut [u32; 7]) {
         match page {
             0 => { // page 1
                 let tow = gst & 0xFFFFF; // Extract 20-bit TOW
-                data.copy_from_slice(&self.GalEphData[(svid - 1) as usize][0]);
+                data.copy_from_slice(&self.gal_eph_data[(svid - 1) as usize][0]);
                 // Add TOW (20 bits)
                 data[0] |= COMPOSE_BITS!(tow >> 4, 0, 16); // TOW upper 16 bits
                 data[1] |= COMPOSE_BITS!(tow, 28, 4); // TOW lower 4 bits
                 // add iono correction
-                data[3] |= self.GalIonoData[0];
-                data[4] |= self.GalIonoData[1];
+                data[3] |= self.gal_iono_data[0];
+                data[4] |= self.gal_iono_data[1];
                 // add GST (32 bits)
                 data[5] |= COMPOSE_BITS!(gst >> 27, 0, 5); // GST upper 5 bits
                 data[6] |= COMPOSE_BITS!(gst, 5, 27); // GST lower 27 bits
             },
             1 => { // page 2
-                data.copy_from_slice(&self.GalEphData[(svid - 1) as usize][1]);
+                data.copy_from_slice(&self.gal_eph_data[(svid - 1) as usize][1]);
                 data[6] = gst;
             },
             2 => { // page 3
-                data.copy_from_slice(&self.GalEphData[(svid - 1) as usize][2]);
+                data.copy_from_slice(&self.gal_eph_data[(svid - 1) as usize][2]);
                 // add GST
                 data[5] |= COMPOSE_BITS!(gst >> 24, 0, 8);
                 data[6] |= COMPOSE_BITS!(gst, 8, 24);
             },
             3 => { // page 4
-                data.copy_from_slice(&self.GalEphData[(svid - 1) as usize][3]);
+                data.copy_from_slice(&self.gal_eph_data[(svid - 1) as usize][3]);
                 // add GST-UTC
-                data[1] |= self.GalUtcData[0];
-                data[2] = self.GalUtcData[1];
-                data[3] = self.GalUtcData[2];
-                data[4] = self.GalUtcData[3];
+                data[1] |= self.gal_utc_data[0];
+                data[2] = self.gal_utc_data[1];
+                data[3] = self.gal_utc_data[2];
+                data[4] = self.gal_utc_data[3];
                 // add TOW
                 data[6] |= COMPOSE_BITS!(gst, 5, 20);
             },
             4 => { // page 5/6
-                data.copy_from_slice(&self.GalAlmData[(subframe / 2) as usize][(subframe & 1) as usize]);
+                data.copy_from_slice(&self.gal_alm_data[(subframe / 2) as usize][(subframe & 1) as usize]);
             },
             _ => {
                 // Unknown page, fill with zeros
@@ -456,7 +456,7 @@ impl FNavBit {
     }
 
     // Helper functions
-    fn UnscaleInt(value: f64, scale: i32) -> i32 {
+    fn unscale_int(value: f64, scale: i32) -> i32 {
         let scaled = value * (2.0_f64).powi(scale);
         if scaled >= 0.0 {
             (scaled + 0.5) as i32
@@ -465,12 +465,12 @@ impl FNavBit {
         }
     }
 
-    fn UnscaleUint(value: f64, scale: i32) -> u32 {
+    fn unscale_uint(value: f64, scale: i32) -> u32 {
         let scaled = value * (2.0_f64).powi(scale);
         (scaled + 0.5) as u32
     }
 
-    fn Crc24qEncode(data: &[u32], bit_count: usize) -> u32 {
+    fn crc24q_encode(data: &[u32], bit_count: usize) -> u32 {
         crate::crc24q::crc24q_encode(data, bit_count)
     }
 }
