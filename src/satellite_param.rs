@@ -541,40 +541,375 @@ fn geometry_distance(pos1: &KinematicInfo, pos2: &KinematicInfo, los_vector: &mu
 }
 
 // Placeholder functions - these should be implemented in coordinate module
-fn gps_sat_pos_speed_eph(_system: GnssSystem, _time: f64, _eph: &GpsEphemeris, _pos: &mut KinematicInfo, _acc: Option<&mut [f64; 3]>) -> bool {
-    // TODO: Implement satellite position calculation
+/// Рассчитывает позицию и скорость спутника GPS/BeiDou/Galileo на основе эфемерид
+/// Реализация алгоритма Кеплера с поправками для разных ГНСС систем
+fn gps_sat_pos_speed_eph(system: GnssSystem, transmit_time: f64, eph: &GpsEphemeris, pos_vel: &mut KinematicInfo, acc: Option<&mut [f64; 3]>) -> bool {
+    // Рассчет временной разности
+    let mut delta_t = transmit_time - eph.toe;
+    
+    // Защита от переполнения недели
+    if delta_t > 302400.0 {
+        delta_t -= 604800.0;
+    }
+    if delta_t < -302400.0 {
+        delta_t += 604800.0;
+    }
+    
+    // Получение Ek из Mk с помощью итеративного алгоритма
+    let alpha = eph.delta_n_dot * delta_t;
+    let mk = eph.m0 + (eph.n + alpha / 2.0) * delta_t;
+    let mut ek = mk;
+    let mut ek1 = mk;
+    
+    // Итеративное решение уравнения Кеплера: Ek = Mk + e*sin(Ek)
+    for _ in 0..10 {
+        ek = mk + eph.ecc * ek.sin();
+        if (ek - ek1).abs() < 1e-14 {
+            break;
+        }
+        ek1 = ek;
+    }
+    
+    // Присваиваем Ek1 как 1-e*cos(Ek) для дальнейших вычислений
+    ek1 = 1.0 - eph.ecc * ek.cos();
+    
+    // Получаем phi(k) с помощью atan2
+    let phi = ((eph.root_ecc * ek.sin()).atan2(ek.cos() - eph.ecc)) + eph.w;
+    let sin_2phi = (phi + phi).sin();
+    let cos_2phi = (phi + phi).cos();
+    
+    // Получаем u(k), r(k) и i(k)
+    let mut uk = phi;
+    let mut rk = (eph.axis + eph.axis_dot * delta_t) * ek1;
+    let mut ik = eph.i0 + eph.idot * delta_t;
+    
+    // Применяем поправки 2-го порядка к u(k), r(k) и i(k)
+    let duk = eph.cuc * cos_2phi + eph.cus * sin_2phi;
+    let drk = eph.crc * cos_2phi + eph.crs * sin_2phi;
+    let dik = eph.cic * cos_2phi + eph.cis * sin_2phi;
+    
+    uk += duk;
+    rk += drk;
+    ik += dik;
+    
+    // Рассчитываем производные r(k) и u(k)
+    let ek_dot = (eph.n + alpha) / ek1;
+    let phi_dot = ek_dot * eph.root_ecc / ek1;
+    let phi_dot_2 = phi_dot * 2.0;
+    
+    let rk_dot = eph.axis * eph.ecc * ek.sin() * ek_dot + eph.axis_dot * ek1;
+    let drk_dot = (eph.crs * cos_2phi - eph.crc * sin_2phi) * phi_dot_2;
+    let duk_dot = (eph.cus * cos_2phi - eph.cuc * sin_2phi) * phi_dot_2;
+    let dik_dot = (eph.cis * cos_2phi - eph.cic * sin_2phi) * phi_dot_2;
+    
+    let rk_dot = rk_dot + drk_dot;
+    let uk_dot = phi_dot + duk_dot;
+    let ik_dot = eph.idot + dik_dot;
+    
+    // Рассчитываем ускорение если требуется
+    if let Some(acc_array) = acc {
+        let ek_dot2 = -ek_dot * ek_dot * eph.ecc * ek.sin() / ek1;
+        let phi_dot2 = 2.0 * ek_dot2 * eph.root_ecc / ek1;
+        let alpha_acc = 2.0 * phi_dot2 / phi_dot;
+        let beta = phi_dot * phi_dot;
+        
+        let rk_dot2 = eph.axis * eph.ecc * (ek.sin() * ek_dot2 + ek.cos() * ek_dot * ek_dot)
+                     + alpha_acc * drk_dot - beta * drk;
+        let uk_dot2 = phi_dot2 + alpha_acc * duk_dot - beta * duk;
+        let ik_dot2 = alpha_acc * dik_dot - beta * dik;
+        
+        // Сохраняем для использования при расчете ускорения в ECEF
+        // (Эти переменные будут использованы ниже)
+        acc_array[0] = rk_dot2;
+        acc_array[1] = uk_dot2;
+        acc_array[2] = ik_dot2;
+    }
+    
+    // Рассчитываем Xp и Yp и соответствующие производные
+    let sin_uk = uk.sin();
+    let cos_uk = uk.cos();
+    let xp = rk * cos_uk;
+    let yp = rk * sin_uk;
+    let xp_dot = rk_dot * cos_uk - yp * uk_dot;
+    let yp_dot = rk_dot * sin_uk + xp * uk_dot;
+    
+    // Рассчитываем промежуточные переменные для ускорения
+    let (xp_dot2, yp_dot2) = if acc.is_some() {
+        let uk_dot2 = acc.as_ref().unwrap()[1]; // Используем сохраненное значение
+        let rk_dot2 = acc.as_ref().unwrap()[0]; // Используем сохраненное значение
+        let xp_dot2 = rk_dot2 * cos_uk - 2.0 * uk_dot * rk_dot * sin_uk 
+                     - uk_dot * uk_dot * xp - uk_dot2 * yp;
+        let yp_dot2 = rk_dot2 * sin_uk + 2.0 * uk_dot * rk_dot * cos_uk 
+                     - uk_dot * uk_dot * yp + uk_dot2 * xp;
+        (xp_dot2, yp_dot2)
+    } else {
+        (0.0, 0.0)
+    };
+    
+    // Получаем финальную позицию и скорость в ECEF координатах
+    let omega = eph.omega_t + eph.omega_delta * delta_t;
+    let sin_omega = omega.sin();
+    let cos_omega = omega.cos();
+    let sin_ik = ik.sin();
+    let cos_ik = ik.cos();
+    
+    pos_vel.z = yp * sin_ik;
+    pos_vel.vz = yp_dot * sin_ik;
+    
+    pos_vel.x = xp * cos_omega - yp * cos_ik * sin_omega;
+    pos_vel.y = xp * sin_omega + yp * cos_ik * cos_omega;
+    
+    let phi_dot_ecef = yp_dot * cos_ik - pos_vel.z * ik_dot;
+    pos_vel.vx = xp_dot * cos_omega - phi_dot_ecef * sin_omega;
+    pos_vel.vy = xp_dot * sin_omega + phi_dot_ecef * cos_omega;
+    
+    // Компенсация вращения Земли
+    pos_vel.vx -= pos_vel.y * eph.omega_delta;
+    pos_vel.vy += pos_vel.x * eph.omega_delta;
+    pos_vel.vz += yp * ik_dot * cos_ik;
+    
+    // Рассчитываем ускорение если предоставлен валидный указатель массива
+    if let Some(acc_array) = acc {
+        let ik_dot2 = acc_array[2]; // Используем сохраненное значение
+        let alpha_final = pos_vel.vz * ik_dot + pos_vel.z * ik_dot2 - xp_dot * eph.omega_delta
+                         + yp_dot * ik_dot * sin_ik - yp_dot2 * cos_ik;
+        let beta_final = xp_dot2 + pos_vel.z * ik_dot * eph.omega_delta 
+                        - yp_dot * eph.omega_delta * cos_ik;
+        
+        acc_array[0] = -pos_vel.vy * eph.omega_delta + alpha_final * sin_omega + beta_final * cos_omega;
+        acc_array[1] = pos_vel.vx * eph.omega_delta - alpha_final * cos_omega + beta_final * sin_omega;
+        acc_array[2] = (yp_dot2 - yp * ik_dot * ik_dot) * sin_ik
+                      + (yp * ik_dot2 + 2.0 * yp_dot * ik_dot) * cos_ik;
+    }
+    
+    // Специальная обработка для BeiDou GEO спутников (svid <= 5)
+    if system == GnssSystem::Beidou && eph.svid <= 5 {
+        // Поворот на -5 градусов
+        let cos_5 = 0.99619469809174553; // cos(5°)
+        let sin_5 = 0.087155742747658173559; // sin(5°)
+        
+        let yp_rotated = pos_vel.y * cos_5 - pos_vel.z * sin_5;
+        pos_vel.z = pos_vel.z * cos_5 + pos_vel.y * sin_5;
+        let yp_dot_rotated = pos_vel.vy * cos_5 - pos_vel.vz * sin_5;
+        pos_vel.vz = pos_vel.vz * cos_5 + pos_vel.vy * sin_5;
+        
+        // Поворот на delta_t * CGCS2000_OMEGDOTE
+        let cgcs2000_omegdote = 7.2921150e-5; // Константа для BeiDou
+        let omega_rot = cgcs2000_omegdote * delta_t;
+        let sin_rot = omega_rot.sin();
+        let cos_rot = omega_rot.cos();
+        
+        pos_vel.y = yp_rotated * cos_rot - pos_vel.x * sin_rot;
+        pos_vel.x = pos_vel.x * cos_rot + yp_rotated * sin_rot;
+        pos_vel.vy = yp_dot_rotated * cos_rot - pos_vel.vx * sin_rot;
+        pos_vel.vx = pos_vel.vx * cos_rot + yp_dot_rotated * sin_rot;
+        
+        // Компенсация вращения Земли для скорости
+        pos_vel.vx += pos_vel.y * cgcs2000_omegdote;
+        pos_vel.vy -= pos_vel.x * cgcs2000_omegdote;
+        
+        // Обработка ускорения для BeiDou GEO
+        if let Some(acc_array) = acc {
+            let yp_acc = acc_array[1] * cos_5 - acc_array[2] * sin_5;
+            acc_array[2] = acc_array[2] * cos_5 + acc_array[1] * sin_5;
+            acc_array[1] = yp_acc * cos_rot - acc_array[0] * sin_rot;
+            acc_array[0] = acc_array[0] * cos_rot + yp_acc * sin_rot;
+            
+            acc_array[0] += 2.0 * pos_vel.vy * cgcs2000_omegdote;
+            acc_array[1] -= 2.0 * pos_vel.vx * cgcs2000_omegdote;
+        }
+    }
+    
     true
 }
 
-fn glonass_sat_pos_speed_eph(_time: f64, _eph: &GlonassEphemeris, _pos: &mut KinematicInfo, _acc: Option<&mut [f64; 3]>) -> bool {
-    // TODO: Implement GLONASS satellite position calculation
+/// Рассчитывает позицию и скорость спутника ГЛОНАСС на основе эфемерид
+/// Использует численное интегрирование (упрощенная версия без полного Рунге-Кутта)
+/// TODO: Полная реализация с методом Рунге-Кутта для точных вычислений
+fn glonass_sat_pos_speed_eph(transmit_time: f64, eph: &GlonassEphemeris, pos_vel: &mut KinematicInfo, _acc: Option<&mut [f64; 3]>) -> bool {
+    const COARSE_STEP: f64 = 30.0;
+    
+    let mut delta_t = transmit_time - eph.tb as f64;
+    if delta_t > 43200.0 {
+        delta_t -= 86400.0;
+    } else if delta_t < -43200.0 {
+        delta_t += 86400.0;
+    }
+    
+    // Упрощенная линейная экстраполяция (не точная, но работающая заглушка)
+    // В реальной версии здесь должно быть численное интегрирование с учетом возмущений J2
+    pos_vel.x = eph.x + eph.vx * delta_t + 0.5 * eph.ax * delta_t * delta_t;
+    pos_vel.y = eph.y + eph.vy * delta_t + 0.5 * eph.ay * delta_t * delta_t;
+    pos_vel.z = eph.z + eph.vz * delta_t + 0.5 * eph.az * delta_t * delta_t;
+    
+    pos_vel.vx = eph.vx + eph.ax * delta_t;
+    pos_vel.vy = eph.vy + eph.ay * delta_t;
+    pos_vel.vz = eph.vz + eph.az * delta_t;
+    
+    // Коррекция на вращение Земли (переход из ПЗ-90 в ECEF)
+    const PZ90_OMEGDOTE: f64 = 7.2921150e-5; // радиан/с
+    
+    // Компенсация вращения Земли для скорости
+    pos_vel.vx += pos_vel.y * PZ90_OMEGDOTE;
+    pos_vel.vy -= pos_vel.x * PZ90_OMEGDOTE;
+    
     true
 }
 
-fn glonass_clock_correction(_eph: &GlonassEphemeris, _time: f64) -> f64 {
-    // TODO: Implement GLONASS clock correction
-    // return -eph->tn + eph->gamma * (time - eph->tb);
-    0.0
+/// Рассчитывает коррекцию часов ГЛОНАСС спутника
+/// Линейный дрейф: -tn + gamma * (time - tb)
+fn glonass_clock_correction(eph: &GlonassEphemeris, transmit_time: f64) -> f64 {
+    let mut time_diff = transmit_time - eph.tb as f64;
+    
+    if time_diff > 43200.0 {
+        time_diff -= 86400.0;
+    } else if time_diff < -43200.0 {
+        time_diff += 86400.0;
+    }
+    
+    -eph.tn + eph.gamma * time_diff
 }
 
-fn gps_iono_delay(_iono_param: &IonoParam, _time: f64, _lat: f64, _lon: f64, _elevation: f64, _azimuth: f64) -> f64 {
-    // TODO: Implement ionospheric delay calculation
-    0.0
+/// Рассчитывает ионосферную задержку по модели Klobuchar
+/// Применяется для GPS системы, подходит для BeiDou и Galileo
+fn gps_iono_delay(iono_param: &IonoParam, time: f64, lat: f64, lon: f64, elevation: f64, azimuth: f64) -> f64 {
+    use std::f64::consts::PI;
+    
+    let el = elevation / PI;
+    let mut lat_semi = lat / PI;
+    let mut lon_semi = lon / PI;
+    
+    // Рассчет подспутниковой широты и долготы
+    let psi = 0.0137 / (el + 0.11) - 0.022;
+    lat_semi += psi * azimuth.cos();
+    
+    // Ограничение широты
+    if lat_semi > 0.416 {
+        lat_semi = 0.416;
+    } else if lat_semi < -0.416 {
+        lat_semi = -0.416;
+    }
+    
+    lon_semi += psi * azimuth.sin() / (lat_semi * PI).cos();
+    lat_semi += 0.064 * ((lon_semi - 1.617) * PI).cos();
+    
+    // Коэффициент отображения
+    let f = 1.0 + 16.0 * (0.53 - el).powi(3);
+    
+    // Период
+    let mut per = iono_param.b0 + (iono_param.b1 + (iono_param.b2 + iono_param.b3 * lat_semi) * lat_semi) * lat_semi;
+    if per < 72000.0 {
+        per = 72000.0;
+    }
+    
+    // Местное время
+    let mut t = (43200.0 * lon_semi) + time;
+    while t >= 86400.0 {
+        t -= 86400.0;
+    }
+    while t < 0.0 {
+        t += 86400.0;
+    }
+    
+    let x = PI * 2.0 * (t - 50400.0) / per;
+    let f_light = f * LIGHT_SPEED;
+    
+    if x >= 1.57 || x <= -1.57 {
+        // Ночное время
+        f_light * 5e-9
+    } else {
+        // Амплитуда
+        let amp = iono_param.a0 + (iono_param.a1 + (iono_param.a2 + iono_param.a3 * lat_semi) * lat_semi) * lat_semi;
+        if amp < 0.0 {
+            f_light * 5e-9
+        } else {
+            let x2 = x * x;
+            let x1 = 1.0 - x2 / 2.0 + x2 * x2 / 24.0; // Полином Тейлора для cos(x)
+            f_light * (5e-9 + amp * x1)
+        }
+    }
 }
 
-fn tropo_delay(_lat: f64, _alt: f64, _elevation: f64) -> f64 {
-    // TODO: Implement tropospheric delay calculation
-    0.0
+/// Рассчитывает тропосферную задержку по упрощенной модели Saastamoinen
+/// Учитывает высоту, широту и угол места
+fn tropo_delay(lat: f64, alt: f64, elevation: f64) -> f64 {
+    use std::f64::consts::PI;
+    
+    const T0: f64 = 273.16 + 15.0; // средняя температура на уровне моря
+    const P0: f64 = 1013.25; // среднее давление на уровне моря (hPa)
+    const REL_HUMI: f64 = 0.7; // относительная влажность
+    
+    // Коррекция на высоту (экспоненциальное убывание атмосферы)
+    let temp = T0 - 0.0065 * alt; // температурный градиент 6.5 K/км
+    let pressure = P0 * (1.0 - 0.0065 * alt / T0).powf(5.225);
+    
+    // Давление водяного пара (упрощенная формула)
+    let e = REL_HUMI * 6.11 * (17.502 * (temp - 273.16) / (temp - 32.19)).exp();
+    
+    // Коррекция на широту
+    let lat_factor = 1.0 - 0.00266 * (2.0 * lat).cos() - 0.00000028 * alt;
+    
+    // Общая задержка в зените (в метрах)
+    let zenith_delay = 0.0022768 * pressure / lat_factor 
+                     + (0.0022768 / lat_factor) * (1255.0 / temp + 0.05) * e - 1.16e-7;
+    
+    // Коррекция на угол места (функция отображения)
+    let sin_elev = elevation.sin();
+    let mapping_function = 1.0 / (sin_elev + 0.00143 / (sin_elev + 0.0445));
+    
+    zenith_delay * mapping_function
 }
 
-fn gps_clock_correction(_eph: &GpsEphemeris, _time: f64) -> f64 {
-    // TODO: Implement GPS clock correction
-    0.0
+/// Рассчитывает коррекцию часов GPS спутника
+/// Использует полином второго порядка: af0 + af1*dt + af2*dt^2
+fn gps_clock_correction(eph: &GpsEphemeris, transmit_time: f64) -> f64 {
+    let mut time_diff = transmit_time - eph.toc;
+    
+    // Защита от переполнения недели
+    if time_diff > 302400.0 {
+        time_diff -= 604800.0;
+    }
+    if time_diff < -302400.0 {
+        time_diff += 604800.0;
+    }
+    
+    let clock_adj = eph.af0 + (eph.af1 + eph.af2 * time_diff) * time_diff;
+    clock_adj * (1.0 - eph.af1) // коррекция времени
 }
 
-fn get_leap_second(_seconds: u32) -> i32 {
-    // TODO: Implement leap second calculation
-    18 // Current GPS-UTC offset
+/// Получает количество високосных секунд для заданного GPS времени в секундах с начала эпохи
+/// Возвращает количество накопленных високосных секунд
+fn get_leap_second(seconds: u32) -> i32 {
+    // Таблица времен добавления високосных секунд (в GPS секундах с 6 января 1980)
+    const INSERT_TIME: [u32; 18] = [
+        46828800,  // 1981-07-01
+        78364801,  // 1982-07-01
+        109900802, // 1983-07-01
+        173059203, // 1985-07-01
+        252028804, // 1988-01-01
+        315187205, // 1990-01-01
+        346723206, // 1991-01-01
+        393984007, // 1992-07-01
+        425520008, // 1993-07-01
+        457056009, // 1994-07-01
+        504489610, // 1996-01-01
+        551750411, // 1997-07-01
+        599184012, // 1999-01-01
+        820108813, // 2006-01-01
+        914803214, // 2009-01-01
+        1025136015, // 2012-07-01
+        1119744016, // 2015-07-01
+        1167264017, // 2017-01-01
+    ];
+    
+    for (i, &insert_time) in INSERT_TIME.iter().enumerate() {
+        if seconds <= insert_time {
+            return i as i32;
+        }
+    }
+    
+    // Если время больше последней записи в таблице, возвращаем максимальное количество
+    INSERT_TIME.len() as i32
 }
 
 /// Calculate satellite position and velocity with prediction

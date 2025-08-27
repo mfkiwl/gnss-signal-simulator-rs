@@ -5,9 +5,6 @@
 //          Copyright (C) 2020-2029 by Jun Mo, All rights reserved.
 //
 //----------------------------------------------------------------------
-
-use crate::types::*;
-use crate::constants::*;
 //! # Преобразования координат
 //!
 //! Модуль для преобразований между различными системами координат,
@@ -26,6 +23,9 @@ use crate::constants::*;
 //! - CGCS2000 (система BeiDou)
 //! - GTRF (система Galileo)
 //! - Локальные топоцентрические системы (ENU, NED)
+
+use crate::types::*;
+use crate::constants::*;
 
 use std::f64::consts::PI;
 
