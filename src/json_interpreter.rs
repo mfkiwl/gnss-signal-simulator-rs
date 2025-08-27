@@ -564,6 +564,102 @@ fn set_init_pos_vel(trajectory: &mut CTrajectory, pos: &LlaPosition, vel: &Local
     trajectory.set_init_pos_vel_lla(*pos, *vel, flag);
 }
 
+/// Читает ограниченное количество навигационных данных из RINEX файла для валидации
+/// max_per_system - максимальное количество эфемерид на каждую систему
+pub fn read_nav_file_limited(nav_data: &mut CNavData, filename: &str, max_per_system: usize) {
+    use std::fs::File;
+    use std::io::{BufRead, BufReader};
+    
+    let file = match File::open(filename) {
+        Ok(f) => f,
+        Err(e) => {
+            eprintln!("Error: Unable to open navigation file: {} - {}", filename, e);
+            return;
+        }
+    };
+    
+    let reader = BufReader::new(file);
+    let mut lines = reader.lines();
+    let mut header_complete = false;
+    
+    // Счетчики для каждой системы
+    let mut gps_count = 0;
+    let mut glonass_count = 0; 
+    let mut beidou_count = 0;
+    let mut galileo_count = 0;
+    
+    while let Some(Ok(line)) = lines.next() {
+        if !header_complete {
+            if line.contains("END OF HEADER") {
+                header_complete = true;
+            } else if line.contains("IONOSPHERIC CORR") {
+                if line.starts_with("GPSA") {
+                    if let Some(iono_alpha) = parse_rinex3_iono_alpha(&line) {
+                        nav_data.set_gps_iono_alpha(iono_alpha);
+                    }
+                } else if line.starts_with("GPSB") {
+                    if let Some(iono_beta) = parse_rinex3_iono_beta(&line) {
+                        nav_data.set_gps_iono_beta(iono_beta);
+                    }
+                }
+            }
+            continue;
+        }
+        
+        // Проверяем лимиты
+        if gps_count >= max_per_system && glonass_count >= max_per_system && 
+           beidou_count >= max_per_system && galileo_count >= max_per_system {
+            break;
+        }
+        
+        let system_char = line.chars().next().unwrap_or(' ');
+        
+        match system_char {
+            'G' | ' ' => {
+                if gps_count < max_per_system {
+                    println!("[DEBUG] Parsing GPS ephemeris {}/{}: {}", gps_count+1, max_per_system, &line[..std::cmp::min(20, line.len())]);
+                    if let Some(eph) = parse_gps_ephemeris(&line, &mut lines) {
+                        nav_data.add_gps_ephemeris(eph);
+                        gps_count += 1;
+                    }
+                }
+            },
+            'R' => {
+                if glonass_count < max_per_system {
+                    println!("[DEBUG] Parsing GLONASS ephemeris {}/{}: {}", glonass_count+1, max_per_system, &line[..std::cmp::min(20, line.len())]);
+                    if let Some(eph) = parse_glonass_ephemeris_correct(&line, &mut lines) {
+                        nav_data.add_glonass_ephemeris(eph);
+                        glonass_count += 1;
+                    }
+                }
+            },
+            'C' => {
+                if beidou_count < max_per_system {
+                    println!("[DEBUG] Parsing BeiDou ephemeris {}/{}: {}", beidou_count+1, max_per_system, &line[..std::cmp::min(20, line.len())]);
+                    if let Some(mut eph) = parse_gps_ephemeris(&line, &mut lines) {
+                        eph.toe = (eph.toe as i32 - 14) as i32;
+                        nav_data.add_beidou_ephemeris(eph);
+                        beidou_count += 1;
+                    }
+                }
+            },
+            'E' => {
+                if galileo_count < max_per_system {
+                    println!("[DEBUG] Parsing Galileo ephemeris {}/{}: {}", galileo_count+1, max_per_system, &line[..std::cmp::min(20, line.len())]);
+                    if let Some(eph) = parse_gps_ephemeris(&line, &mut lines) {
+                        nav_data.add_galileo_ephemeris(eph);
+                        galileo_count += 1;
+                    }
+                }
+            },
+            _ => continue,
+        }
+    }
+    
+    println!("[INFO] Limited parsing complete: GPS={}, GLONASS={}, BeiDou={}, Galileo={}", 
+             gps_count, glonass_count, beidou_count, galileo_count);
+}
+
 /// Читает навигационные данные из RINEX файла
 /// Поддерживает RINEX 2.x и 3.x форматы для GPS, ГЛОНАСС, BeiDou, Galileo
 pub fn read_nav_file(nav_data: &mut CNavData, filename: &str) {
@@ -1889,53 +1985,56 @@ where
     }
 }
 
-/// Парсит первую строку RINEX эфемериды (время + 3 параметра)
+/// Парсит первую строку RINEX эфемериды (время + 3 параметра) - ТОЧНО как в C++
 fn read_contents_time(line: &str, data: &mut [f64]) -> Option<u8> {
-    if line.len() < 24 {
+    if line.len() < 23 {
         return None;
     }
     
-    // Конвертируем D в E для экспоненциального формата
-    let line = line.replace("D", "E");
-    
-    // Извлекаем SVID
-    let svid = if line.len() > 2 && !line.chars().nth(1).unwrap().is_whitespace() {
-        line[1..3].parse::<u8>().unwrap_or(0)
+    // Извлекаем SVID из позиций 1-2 (как в C++)
+    let svid = if line.len() > 2 && !line.chars().nth(1).unwrap_or(' ').is_whitespace() {
+        line[1..3].trim().parse::<u8>().unwrap_or(0)
     } else {
         0
     };
     
-    // Читаем данные с фиксированных позиций (как в C++)
-    if line.len() > 24 && !line.chars().nth(23).unwrap_or(' ').is_whitespace() {
+    // Конвертируем D в E для экспоненциального формата
+    let line = line.replace("D", "E");
+    
+    // Читаем af0, af1, af2 с ТОЧНЫХ позиций как в C++ (позиции 23-42, 42-61, 61-80)
+    if line.len() > 42 {
         data[0] = line[23..42].trim().parse().unwrap_or(0.0);
     }
-    if line.len() > 43 && !line.chars().nth(42).unwrap_or(' ').is_whitespace() {
+    if line.len() > 61 {
         data[1] = line[42..61].trim().parse().unwrap_or(0.0);
     }
-    if line.len() > 62 && !line.chars().nth(61).unwrap_or(' ').is_whitespace() {
+    if line.len() > 80 {
+        data[2] = line[61..80].trim().parse().unwrap_or(0.0);
+    } else if line.len() > 61 {
         data[2] = line[61..].trim().parse().unwrap_or(0.0);
     }
     
     Some(svid)
 }
 
-/// Парсит строку данных RINEX (4 параметра с фиксированных позиций)
+/// Парсит строку данных RINEX (4 параметра с ТОЧНЫХ позиций) - как в C++
 fn read_contents_data(line: &str, data: &mut [f64]) {
     // Конвертируем D в E для экспоненциального формата  
     let line = line.replace("D", "E");
-    let length = line.len();
     
-    // Читаем с фиксированных позиций как в C++ 
-    if length > 5 && !line.chars().nth(4).unwrap_or(' ').is_whitespace() {
+    // Читаем 4 значения с ТОЧНЫХ позиций как в C++ (позиции 4-23, 23-42, 42-61, 61-80)
+    if line.len() > 23 {
         data[0] = line[4..23].trim().parse().unwrap_or(0.0);
     }
-    if length > 24 && !line.chars().nth(23).unwrap_or(' ').is_whitespace() {
+    if line.len() > 42 {
         data[1] = line[23..42].trim().parse().unwrap_or(0.0);
     }
-    if length > 43 && !line.chars().nth(42).unwrap_or(' ').is_whitespace() {
+    if line.len() > 61 {
         data[2] = line[42..61].trim().parse().unwrap_or(0.0);
     }
-    if length > 62 && !line.chars().nth(61).unwrap_or(' ').is_whitespace() {
+    if line.len() > 80 {
+        data[3] = line[61..80].trim().parse().unwrap_or(0.0);
+    } else if line.len() > 61 {
         data[3] = line[61..].trim().parse().unwrap_or(0.0);
     }
 }
