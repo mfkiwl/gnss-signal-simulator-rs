@@ -22,8 +22,10 @@ use std::f64::consts::PI;
 
 use crate::constants::*;
 use crate::types::*;
+use crate::gnsstime::{utc_to_glonass_time, utc_to_galileo_time};
+use crate::coordinate::{glonass_sat_pos_speed_eph, gps_sat_pos_speed_eph};
 
-pub fn CheckAlmnanacType(file: &mut File) -> AlmanacType {
+pub fn check_almanac_type(file: &mut File) -> AlmanacType {
     let mut reader = BufReader::new(file);
     let mut line = String::new();
     
@@ -52,7 +54,7 @@ pub fn CheckAlmnanacType(file: &mut File) -> AlmanacType {
     }
 }
 
-pub fn ReadAlmanacGps(mut file: File, almanac: &mut [GpsAlmanac; 32]) -> i32 {
+pub fn read_almanac_gps(mut file: File, almanac: &mut [GpsAlmanac; 32]) -> i32 {
     let mut reader = BufReader::new(&mut file);
     let mut line = String::new();
     let mut alm_count = 0;
@@ -63,7 +65,7 @@ pub fn ReadAlmanacGps(mut file: File, almanac: &mut [GpsAlmanac; 32]) -> i32 {
         }
         
         if line.starts_with('*') {
-            if let Some(svid) = GetAlmanacGps(&mut reader) {
+            if let Some(svid) = get_almanac_gps(&mut reader) {
                 if svid.svid > 0 && svid.svid <= 32 {
                     alm_count += 1;
                     let idx = (svid.svid - 1) as usize;
@@ -79,7 +81,7 @@ pub fn ReadAlmanacGps(mut file: File, almanac: &mut [GpsAlmanac; 32]) -> i32 {
     alm_count
 }
 
-pub fn GetAlmanacGps(reader: &mut BufReader<&mut File>) -> Option<GpsAlmanac> {
+pub fn get_almanac_gps(reader: &mut BufReader<&mut File>) -> Option<GpsAlmanac> {
     let mut alm = GpsAlmanac::default();
     let mut line = String::new();
 
@@ -170,11 +172,11 @@ pub fn GetAlmanacGps(reader: &mut BufReader<&mut File>) -> Option<GpsAlmanac> {
     }
 }
 
-pub fn ReadAlmanacBds(mut file: File, almanac: &mut [GpsAlmanac; 63]) -> i32 {
+pub fn read_almanac_bds(mut file: File, almanac: &mut [GpsAlmanac; 63]) -> i32 {
     let mut reader = BufReader::new(&mut file);
     let mut alm_count = 0;
 
-    while let Some(alm) = GetAlmanacBds(&mut reader) {
+    while let Some(alm) = get_almanac_bds(&mut reader) {
         if alm.svid > 0 && alm.svid <= 63 {
             alm_count += 1;
             let idx = (alm.svid - 1) as usize;
@@ -187,7 +189,7 @@ pub fn ReadAlmanacBds(mut file: File, almanac: &mut [GpsAlmanac; 63]) -> i32 {
     alm_count
 }
 
-pub fn GetAlmanacBds(reader: &mut BufReader<&mut File>) -> Option<GpsAlmanac> {
+pub fn get_almanac_bds(reader: &mut BufReader<&mut File>) -> Option<GpsAlmanac> {
     let mut line = String::new();
     if reader.read_line(&mut line).is_err() || line.trim().is_empty() {
         return None;
@@ -226,7 +228,7 @@ pub fn GetAlmanacBds(reader: &mut BufReader<&mut File>) -> Option<GpsAlmanac> {
     Some(alm)
 }
 
-pub fn ReadAlmanacGalileo(mut file: File, almanac: &mut [GpsAlmanac; 36]) -> i32 {
+pub fn read_almanac_galileo(mut file: File, almanac: &mut [GpsAlmanac; 36]) -> i32 {
     let mut reader = BufReader::new(&mut file);
     let mut line = String::new();
     let mut alm_count = 0;
@@ -256,7 +258,7 @@ pub fn ReadAlmanacGalileo(mut file: File, almanac: &mut [GpsAlmanac; 36]) -> i32
                     utc_time.Hour = 0;
                     utc_time.Minute = 0;
                     utc_time.Second = 0.0;
-                    time = UtcToGalileoTime(utc_time);
+                    time = utc_to_galileo_time(utc_time);
                 }
             }
         }
@@ -271,7 +273,7 @@ pub fn ReadAlmanacGalileo(mut file: File, almanac: &mut [GpsAlmanac; 36]) -> i32
         if bytes_read == 0 { break; }
         
         if line.contains("<svAlmanac>") {
-            if let Some(alm) = GetAlmanacGalileo(&mut reader, time.Week) {
+            if let Some(alm) = get_almanac_galileo(&mut reader, time.Week) {
                 if alm.svid > 0 && alm.svid <= 36 {
                     alm_count += 1;
                     let idx = (alm.svid - 1) as usize;
@@ -287,7 +289,7 @@ pub fn ReadAlmanacGalileo(mut file: File, almanac: &mut [GpsAlmanac; 36]) -> i32
     alm_count
 }
 
-pub fn GetAlmanacGalileo(reader: &mut BufReader<&mut File>, ref_week: i32) -> Option<GpsAlmanac> {
+pub fn get_almanac_galileo(reader: &mut BufReader<&mut File>, ref_week: i32) -> Option<GpsAlmanac> {
     let mut alm = GpsAlmanac::default();
     let mut svid = 0u8;
     let mut data = 0i32;
@@ -389,11 +391,11 @@ pub fn GetAlmanacGalileo(reader: &mut BufReader<&mut File>, ref_week: i32) -> Op
     Some(alm)
 }
 
-pub fn ReadAlmanacGlonass(mut file: File, almanac: &mut [GlonassAlmanac; 24]) -> i32 {
+pub fn read_almanac_glonass(mut file: File, almanac: &mut [GlonassAlmanac; 24]) -> i32 {
     let mut reader = BufReader::new(&mut file);
     let mut alm_count = 0;
 
-    while let Some((slot, alm)) = GetAlmanacGlonass(&mut reader) {
+    while let Some((slot, alm)) = get_almanac_glonass(&mut reader) {
         if slot > 0 && slot <= 24 {
             alm_count += 1;
             let idx = (slot - 1) as usize;
@@ -407,7 +409,7 @@ pub fn ReadAlmanacGlonass(mut file: File, almanac: &mut [GlonassAlmanac; 24]) ->
     alm_count
 }
 
-pub fn GetAlmanacGlonass(reader: &mut BufReader<&mut File>) -> Option<(i32, GlonassAlmanac)> {
+pub fn get_almanac_glonass(reader: &mut BufReader<&mut File>) -> Option<(i32, GlonassAlmanac)> {
     let mut line = String::new();
     if reader.read_line(&mut line).is_err() || line.trim().is_empty() {
         return None;
@@ -437,7 +439,7 @@ pub fn GetAlmanacGlonass(reader: &mut BufReader<&mut File>) -> Option<(i32, Glon
     utc_time.Minute = 0;
     utc_time.Second = 0.0;
 
-    let glonass_time = UtcToGlonassTime(utc_time);
+    let glonass_time = utc_to_glonass_time(utc_time);
 
     let mut alm = GlonassAlmanac::default();
     alm.t = parts[2].parse().ok()?;
@@ -462,7 +464,7 @@ pub fn GetAlmanacGlonass(reader: &mut BufReader<&mut File>) -> Option<(i32, Glon
     Some((slot, alm))
 }
 
-pub fn NormAngle(mut angle: f64) -> f64 {
+pub fn norm_angle(mut angle: f64) -> f64 {
     while angle < -PI {
         angle += PI2;
     }
@@ -472,7 +474,7 @@ pub fn NormAngle(mut angle: f64) -> f64 {
     angle
 }
 
-pub fn GetAlmanacFromEphemeris(eph: &GpsEphemeris, week: i32, toa: i32) -> GpsAlmanac {
+pub fn get_almanac_from_ephemeris(eph: &GpsEphemeris, week: i32, toa: i32) -> GpsAlmanac {
     let mut alm = GpsAlmanac::default();
 
     alm.valid = eph.valid & 1;
@@ -484,9 +486,9 @@ pub fn GetAlmanacFromEphemeris(eph: &GpsEphemeris, week: i32, toa: i32) -> GpsAl
     }
 
     if eph.sqrtA > 6000.0 && eph.i0 < 0.5 {
-        ConvertAlmanacFromEphemerisGeo(&mut alm, eph, week, toa);
+        convert_almanac_from_ephemeris_geo(&mut alm, eph, week, toa);
     } else {
-        ConvertAlmanacFromEphemeris(&mut alm, eph, week, toa);
+        convert_almanac_from_ephemeris(&mut alm, eph, week, toa);
     }
     
     alm.flag = if eph.sqrtA > 6000.0 {
@@ -498,7 +500,7 @@ pub fn GetAlmanacFromEphemeris(eph: &GpsEphemeris, week: i32, toa: i32) -> GpsAl
 
 const INCLINATION_FACTOR: f64 = 0.946_515_487_891_825_8;
 
-pub fn GetAlmanacFromEphemerisGlonass(eph: &GlonassEphemeris, day: i32, leap_year: i32) -> GlonassAlmanac {
+pub fn get_almanac_from_ephemeris_glonass(eph: &GlonassEphemeris, day: i32, leap_year: i32) -> GlonassAlmanac {
     let mut alm = GlonassAlmanac::default();
     let mut pos_vel = KinematicInfo::default();
     let mut t = eph.tb as f64 - eph.z / eph.vz;
@@ -506,7 +508,8 @@ pub fn GetAlmanacFromEphemerisGlonass(eph: &GlonassEphemeris, day: i32, leap_yea
 
     // Calculate time of ascending
     while iter > 0 {
-        GlonassSatPosSpeedEph(t, eph, &mut pos_vel);
+        let mut eph_mut = *eph;
+        glonass_sat_pos_speed_eph(t, &mut eph_mut, &mut pos_vel, None);
         t -= pos_vel.z / pos_vel.vz;
         if pos_vel.z.abs() <= 1e-3 {
             break;
@@ -555,9 +558,9 @@ pub fn GetAlmanacFromEphemerisGlonass(eph: &GlonassEphemeris, day: i32, leap_yea
     }
 
     // Calculate argument of perigee
-    let E = rv.atan2((1.0 - r / a) * (a * PZ90_GM).sqrt());
+    let e = rv.atan2((1.0 - r / a) * (a * PZ90_GM).sqrt());
     let root_ecc = (p / a).sqrt();
-    alm.w = -(root_ecc * E.sin()).atan2(E.cos() - alm.ecc) / PI;
+    alm.w = -(root_ecc * e.sin()).atan2(e.cos() - alm.ecc) / PI;
     alm.clock_error = eph.tn;
 
     alm.flag = 1;
@@ -568,7 +571,7 @@ pub fn GetAlmanacFromEphemerisGlonass(eph: &GlonassEphemeris, day: i32, leap_yea
     alm
 }
 
-pub fn ConvertAlmanacFromEphemeris(alm: &mut GpsAlmanac, eph: &GpsEphemeris, week: i32, toa: i32) -> bool {
+pub fn convert_almanac_from_ephemeris(alm: &mut GpsAlmanac, eph: &GpsEphemeris, week: i32, toa: i32) -> bool {
     alm.toa = toa;
     alm.week = week;
     let dt = (week - eph.week) * 604800 + (toa - eph.toe);
@@ -581,19 +584,20 @@ pub fn ConvertAlmanacFromEphemeris(alm: &mut GpsAlmanac, eph: &GpsEphemeris, wee
     alm.af1 = eph.af1;
 
     // Parameters adjusted with reference time change
-    alm.M0 = NormAngle(eph.M0 + eph.n * dt as f64);
-    alm.omega0 = NormAngle(eph.omega0 + eph.omega_dot * dt as f64);
+    alm.M0 = norm_angle(eph.M0 + eph.n * dt as f64);
+    alm.omega0 = norm_angle(eph.omega0 + eph.omega_dot * dt as f64);
     alm.i0 = eph.i0 + eph.idot * dt as f64;
     alm.af0 = eph.af0 + eph.af1 * dt as f64;
 
     true
 }
 
-pub fn ConvertAlmanacFromEphemerisGeo(alm: &mut GpsAlmanac, eph: &GpsEphemeris, week: i32, toa: i32) -> bool {
+pub fn convert_almanac_from_ephemeris_geo(alm: &mut GpsAlmanac, eph: &GpsEphemeris, week: i32, toa: i32) -> bool {
     let mut pos_vel = KinematicInfo::default();
 
     // Calculate satellite position and velocity at toe
-    GpsSatPosSpeedEph(GnssSystem::BdsSystem, eph.toe as f64, eph, &mut pos_vel);
+    let mut eph_mut = *eph;
+    gps_sat_pos_speed_eph(GnssSystem::BdsSystem, eph.toe as f64, &mut eph_mut, &mut pos_vel, None);
 
     // Velocity compensation from ECEF to inertial coordinate
     pos_vel.vx -= pos_vel.y * CGCS2000_OMEGDOTE;
@@ -622,14 +626,14 @@ pub fn ConvertAlmanacFromEphemerisGeo(alm: &mut GpsAlmanac, eph: &GpsEphemeris, 
     alm.ecc = if a > p { (1.0 - p / a).sqrt() } else { 0.0 };
 
     // Calculate mean anomaly at reference time
-    let E = rv.atan2((1.0 - r / a) * alm.sqrtA * CGCS2000_SQRT_GM);
-    alm.M0 = E - alm.ecc * E.sin();
+    let e_val = rv.atan2((1.0 - r / a) * alm.sqrtA * CGCS2000_SQRT_GM);
+    alm.M0 = e_val - alm.ecc * e_val.sin();
 
     // Calculate true anomaly
     let root_ecc = (p / a).sqrt();
     let u = (pos_vel.z * h2.sqrt()).atan2(pos_vel.y * h[0] - pos_vel.x * h[1]);
-    let w = u - (root_ecc * E.sin()).atan2(E.cos() - alm.ecc);
-    alm.w = NormAngle(w);
+    let w = u - (root_ecc * e_val.sin()).atan2(e_val.cos() - alm.ecc);
+    alm.w = norm_angle(w);
 
     // Set parameters
     alm.toa = toa;
@@ -638,39 +642,21 @@ pub fn ConvertAlmanacFromEphemerisGeo(alm: &mut GpsAlmanac, eph: &GpsEphemeris, 
     alm.af1 = eph.af1;
     
     let dt = (week - eph.week) * 604800 + (toa - eph.toe);
-    alm.M0 = NormAngle(alm.M0 + eph.n * dt as f64);
-    alm.omega0 = NormAngle(alm.omega0 + eph.omega_dot * dt as f64);
+    alm.M0 = norm_angle(alm.M0 + eph.n * dt as f64);
+    alm.omega0 = norm_angle(alm.omega0 + eph.omega_dot * dt as f64);
     alm.af0 = eph.af0 + eph.af1 * dt as f64;
 
     true
 }
 
-pub fn ReadAlmanac(mut file: File, _system: GnssSystem, alm_gps: &mut [GpsAlmanac; 32], alm_bds: &mut [GpsAlmanac; 63], alm_gal: &mut [GpsAlmanac; 36], alm_glo: &mut [GlonassAlmanac; 24]) -> i32 {
-    let alm_type = CheckAlmnanacType(&mut file);
+pub fn read_almanac(mut file: File, _system: GnssSystem, alm_gps: &mut [GpsAlmanac; 32], alm_bds: &mut [GpsAlmanac; 63], alm_gal: &mut [GpsAlmanac; 36], alm_glo: &mut [GlonassAlmanac; 24]) -> i32 {
+    let alm_type = check_almanac_type(&mut file);
     match alm_type {
-        AlmanacType::AlmanacGps => ReadAlmanacGps(file, alm_gps),
-        AlmanacType::AlmanacBds => ReadAlmanacBds(file, alm_bds),
-        AlmanacType::AlmanacGalileo => ReadAlmanacGalileo(file, alm_gal),
-        AlmanacType::AlmanacGlonass => ReadAlmanacGlonass(file, alm_glo),
+        AlmanacType::AlmanacGps => read_almanac_gps(file, alm_gps),
+        AlmanacType::AlmanacBds => read_almanac_bds(file, alm_bds),
+        AlmanacType::AlmanacGalileo => read_almanac_galileo(file, alm_gal),
+        AlmanacType::AlmanacGlonass => read_almanac_glonass(file, alm_glo),
         _ => 0,
     }
 }
 
-// Placeholder functions that would need to be implemented based on external dependencies
-pub fn UtcToGalileoTime(_utc: UtcTime) -> GnssTime {
-    // This would need actual implementation from gnsstime module
-    GnssTime { Week: 0, MilliSeconds: 0, SubMilliSeconds: 0.0 }
-}
-
-pub fn UtcToGlonassTime(_utc: UtcTime) -> GlonassTime {
-    // This would need actual implementation from gnsstime module
-    GlonassTime { LeapYear: 0, Day: 0, MilliSeconds: 0, SubMilliSeconds: 0.0 }
-}
-
-pub fn GlonassSatPosSpeedEph(_t: f64, _eph: &GlonassEphemeris, _pos_vel: &mut KinematicInfo) {
-    // This would need actual implementation from satellite_param module
-}
-
-pub fn GpsSatPosSpeedEph(__system: GnssSystem, _time: f64, _eph: &GpsEphemeris, _pos_vel: &mut KinematicInfo) {
-    // This would need actual implementation from satellite_param module
-}

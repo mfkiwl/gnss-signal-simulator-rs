@@ -33,41 +33,41 @@ pub const B2B_SYMBOL_LENGTH: usize = 81;
 #[derive(Clone)]
 pub struct BCNav3Bit {
     // Ephemeris parameters part 1 (63 satellites, variable length)
-    pub Ephemeris1: [[u32; 32]; 63],
+    pub ephemeris1: [[u32; 32]; 63],
     
     // Ephemeris parameters part 2 (63 satellites, variable length)
-    pub Ephemeris2: [[u32; 32]; 63],
+    pub ephemeris2: [[u32; 32]; 63],
     
     // Clock parameters for all satellites (63 satellites, 4 parameters each)
-    pub ClockParam: [[u32; 4]; 63],
+    pub clock_param: [[u32; 4]; 63],
     
     // Integrity flags for all satellites (63 satellites)
-    pub IntegrityFlags: [u32; 63],
+    pub integrity_flags: [u32; 63],
     
     // TGS/ISC parameters (63 satellites, 3 parameters each)
-    pub TgsIscParam: [[u32; 3]; 63],
+    pub tgs_isc_param: [[u32; 3]; 63],
     
     // Ionosphere parameters (BDGIM format)
-    pub BdGimIono: [u32; 3],
+    pub bd_gim_iono: [u32; 3],
     
     // BDT-UTC parameters
-    pub BdtUtcParam: [u32; 4],
+    pub bdt_utc_param: [u32; 4],
     
     // EOP parameters
-    pub EopParam: [u32; 6],
+    pub eop_param: [u32; 6],
     
     // BGTO parameters (3 sets)
-    pub BgtoParam: [[u32; 3]; 3],
+    pub bgto_param: [[u32; 3]; 3],
     
     // Almanac parameters (midi format, 63 satellites)
-    pub MidiAlmanac: [[u32; 7]; 63],
+    pub midi_almanac: [[u32; 7]; 63],
     
     // Almanac parameters (reduced format, 63 satellites)
-    pub ReducedAlmanac: [[u32; 2]; 63],
+    pub reduced_almanac: [[u32; 2]; 63],
     
     // Almanac week and time of week
-    pub AlmanacWeek: u32,
-    pub AlmanacToa: u32,
+    pub almanac_week: u32,
+    pub almanac_toa: u32,
 }
 
 impl Default for BCNav3Bit {
@@ -166,19 +166,19 @@ impl BCNav3Bit {
 
     pub fn new() -> Self {
         BCNav3Bit {
-            Ephemeris1: [[0; 32]; 63],
-            Ephemeris2: [[0; 32]; 63],
-            ClockParam: [[0; 4]; 63],
-            IntegrityFlags: [0; 63],
-            TgsIscParam: [[0; 3]; 63],
-            BdGimIono: [0; 3],
-            BdtUtcParam: [0; 4],
-            EopParam: [0; 6],
-            BgtoParam: [[0; 3]; 3],
-            MidiAlmanac: [[0; 7]; 63],
-            ReducedAlmanac: [[0; 2]; 63],
-            AlmanacWeek: 0,
-            AlmanacToa: 0,
+            ephemeris1: [[0; 32]; 63],
+            ephemeris2: [[0; 32]; 63],
+            clock_param: [[0; 4]; 63],
+            integrity_flags: [0; 63],
+            tgs_isc_param: [[0; 3]; 63],
+            bd_gim_iono: [0; 3],
+            bdt_utc_param: [0; 4],
+            eop_param: [0; 6],
+            bgto_param: [[0; 3]; 3],
+            midi_almanac: [[0; 7]; 63],
+            reduced_almanac: [[0; 2]; 63],
+            almanac_week: 0,
+            almanac_toa: 0,
         }
     }
 
@@ -345,34 +345,34 @@ impl BCNav3Bit {
             10 => {
                 // Ephemeris message
                 frame_data[1] = COMPOSE_BITS!(sow as u32, 4, 20);
-                self.append_word(frame_data, 16, &self.Ephemeris1[(svid-1) as usize], 211);
-                self.append_word(frame_data, 10 * 24, &self.Ephemeris2[(svid-1) as usize], 222);
-                frame_data[19] |= COMPOSE_BITS!(self.IntegrityFlags[(svid-1) as usize] >> 8, 3, 4); // B2a DIF/SIF/AIF
-                frame_data[19] |= COMPOSE_BITS!(self.IntegrityFlags[(svid-1) as usize] >> 11, 0, 4); // SISMAI
+                self.append_word(frame_data, 16, &self.ephemeris1[(svid-1) as usize], 211);
+                self.append_word(frame_data, 10 * 24, &self.ephemeris2[(svid-1) as usize], 222);
+                frame_data[19] |= COMPOSE_BITS!(self.integrity_flags[(svid-1) as usize] >> 8, 3, 4); // B2a DIF/SIF/AIF
+                frame_data[19] |= COMPOSE_BITS!(self.integrity_flags[(svid-1) as usize] >> 11, 0, 4); // SISMAI
             },
             30 => {
                 // Clock, ionosphere, UTC, EOP message
                 frame_data[1] = COMPOSE_BITS!(sow as u32, 4, 20);
                 frame_data[1] |= COMPOSE_BITS!((week >> 9) as u32, 0, 4);
                 frame_data[2] = COMPOSE_BITS!(week as u32, 15, 9);
-                self.append_word(frame_data, 2 * 24 + 13, &self.ClockParam[(svid-1) as usize], 69);
-                frame_data[5] |= COMPOSE_BITS!(self.TgsIscParam[(svid-1) as usize][2], 12, 2);
-                self.append_word(frame_data, 5 * 24 + 22, &self.BdGimIono, 74);
-                self.append_word(frame_data, 9 * 24, &self.BdtUtcParam, 97);
-                self.append_word(frame_data, 13 * 24 + 1, &self.EopParam, 138);
+                self.append_word(frame_data, 2 * 24 + 13, &self.clock_param[(svid-1) as usize], 69);
+                frame_data[5] |= COMPOSE_BITS!(self.tgs_isc_param[(svid-1) as usize][2], 12, 2);
+                self.append_word(frame_data, 5 * 24 + 22, &self.bd_gim_iono, 74);
+                self.append_word(frame_data, 9 * 24, &self.bdt_utc_param, 97);
+                self.append_word(frame_data, 13 * 24 + 1, &self.eop_param, 138);
                 frame_data[19] = 0; // SISAI_oc, SISAI_oe and HS filled with 0
             },
             40 => {
                 // Almanac message
                 frame_data[1] = COMPOSE_BITS!(sow as u32, 4, 20);
-                self.append_word(frame_data, 24 + 20, &self.BgtoParam[(sow % 3) as usize], 68); // First 3 BGTO fields
+                self.append_word(frame_data, 24 + 20, &self.bgto_param[(sow % 3) as usize], 68); // First 3 BGTO fields
                 
                 let almanac_prn = sow % 63;
-                self.append_word(frame_data, 4 * 24 + 16, &self.MidiAlmanac[almanac_prn as usize], 156); // Midi almanac
+                self.append_word(frame_data, 4 * 24 + 16, &self.midi_almanac[almanac_prn as usize], 156); // Midi almanac
                 
-                frame_data[11] |= COMPOSE_BITS!(self.AlmanacWeek, 13, 7);
-                frame_data[11] |= COMPOSE_BITS!(self.AlmanacToa >> 1, 7, 7);
-                frame_data[12] = COMPOSE_BITS!(self.AlmanacToa, 23, 1);
+                frame_data[11] |= COMPOSE_BITS!(self.almanac_week, 13, 7);
+                frame_data[11] |= COMPOSE_BITS!(self.almanac_toa >> 1, 7, 7);
+                frame_data[12] = COMPOSE_BITS!(self.almanac_toa, 23, 1);
                 
                 // Reduced almanac for 5 satellites
                 for i in 0..5 {
@@ -385,7 +385,7 @@ impl BCNav3Bit {
                         4 => 18 * 24 + 9,
                         _ => 0,
                     };
-                    self.append_word(frame_data, bit_position, &self.ReducedAlmanac[reduced_prn as usize], 38);
+                    self.append_word(frame_data, bit_position, &self.reduced_almanac[reduced_prn as usize], 38);
                 }
             },
             _ => {
@@ -395,7 +395,7 @@ impl BCNav3Bit {
     }
 
     // Interface methods required by NavBitTrait
-    pub fn SetEphemeris(&mut self, svid: i32, eph: &GpsEphemeris) -> bool {
+    pub fn set_ephemeris(&mut self, svid: i32, eph: &GpsEphemeris) -> bool {
         if !(1..=63).contains(&svid) {
             return false;
         }
@@ -423,8 +423,8 @@ impl BCNav3Bit {
             // Copy to backup
             _eph2_data = eph1_data;
             
-            self.Ephemeris1[index] = eph1_data;
-            self.Ephemeris2[index] = _eph2_data;
+            self.ephemeris1[index] = eph1_data;
+            self.ephemeris2[index] = _eph2_data;
             
             true
         } else {
@@ -432,7 +432,7 @@ impl BCNav3Bit {
         }
     }
 
-    pub fn SetAlmanac(&mut self, alm: &[GpsAlmanac]) -> bool {
+    pub fn set_almanac(&mut self, alm: &[GpsAlmanac]) -> bool {
         // BDS B2b navigation message doesn't include almanac data
         // Almanac is broadcast in B1C and D1/D2 signals
         // This implementation acknowledges almanac data but doesn't store it
@@ -446,7 +446,7 @@ impl BCNav3Bit {
         true
     }
 
-    pub fn SetIonoUtc(&mut self, iono_param: Option<&IonoParam>, utc_param: Option<&UtcParam>) -> bool {
+    pub fn set_iono_utc(&mut self, iono_param: Option<&IonoParam>, utc_param: Option<&UtcParam>) -> bool {
         // Set ionospheric and UTC parameters for BDS B2b format
         if let Some(iono) = iono_param {
             if iono.flag > 0 {

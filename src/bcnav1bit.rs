@@ -92,10 +92,10 @@ impl BCNav1Bit {
         };
 
         // Initialize page type IDs for all 4 pages
-        bcnav.UpdateSubframe3Page1();
-        bcnav.UpdateSubframe3Page2();
-        bcnav.UpdateSubframe3Page3();
-        bcnav.UpdateSubframe3Page4();
+        bcnav.update_subframe3_page1();
+        bcnav.update_subframe3_page2();
+        bcnav.update_subframe3_page3();
+        bcnav.update_subframe3_page4();
 
         bcnav
     }
@@ -223,7 +223,7 @@ impl BCNav1Bit {
         frame2_data[23] = self.base.compose_bits(self.base.TgsIscParam[svid_idx][0], 7, 17);
     }
 
-    pub fn SetIonoUtc(&mut self, iono_param: Option<&IonoParam>, utc_param: Option<&UtcParam>) -> i32 {
+    pub fn set_iono_utc(&mut self, iono_param: Option<&IonoParam>, utc_param: Option<&UtcParam>) -> i32 {
         // Set ionospheric parameters from Klobuchar model to BDGIM format
         if let Some(iono) = iono_param {
             if (iono.flag & 1) != 0 {
@@ -238,7 +238,7 @@ impl BCNav1Bit {
                 self.base.BdGimIono[1] |= ((iono.b2 / (1u64 << 16) as f64) as i32 & 0xFF) as u32;
                 self.base.BdGimIono[2] = (((iono.b3 / (1u64 << 16) as f64) as i32 & 0xFF) << 24) as u32;
                 
-                self.UpdateSubframe3Page1();
+                self.update_subframe3_page1();
             }
         }
         
@@ -254,14 +254,14 @@ impl BCNav1Bit {
                 self.base.BdtUtcParam[2] |= ((utc.DN & 0x7) << 5) as u32;
                 self.base.BdtUtcParam[3] = ((utc.TLSF as u32) & 0xFF) << 24;
                 
-                self.UpdateSubframe3Page2();
+                self.update_subframe3_page2();
             }
         }
         
         0
     }
 
-    fn UpdateSubframe3Page1(&mut self) {
+    fn update_subframe3_page1_internal(&mut self) {
         // Page Type 1: Ionosphere parameters (Message Type ID = 1)
         // This would be applied to specific satellites that broadcast ionosphere data
         // For now, just initialize the first satellite's subframe3
@@ -278,7 +278,7 @@ impl BCNav1Bit {
         self.bds_subframe3[0][3] |= 0; // Placeholder for SISAI_B1C, SISAI_B2a, etc.
     }
 
-    fn UpdateSubframe3Page2(&mut self) {
+    fn update_subframe3_page2_internal(&mut self) {
         // Page Type 2: UTC parameters (Message Type ID = 2)
         // This would be applied to specific satellites that broadcast UTC data
         // For now, just initialize the second satellite's subframe3
@@ -294,12 +294,12 @@ impl BCNav1Bit {
         }
     }
 
-    fn UpdateSubframe3Page3(&mut self) {
+    fn update_subframe3_page3_internal(&mut self) {
         // Page Type 3: EOP and BGTO parameters (Message Type ID = 3)
         self.bds_subframe3[2][0] = 3 << 17; // Message Type ID in bits 22-17
     }
 
-    fn UpdateSubframe3Page4(&mut self) {
+    fn update_subframe3_page4_internal(&mut self) {
         // Page Type 4: Reduced almanac (Message Type ID = 4)
         self.bds_subframe3[3][0] = 4 << 17; // Message Type ID in bits 22-17
     }
@@ -314,30 +314,30 @@ impl BCNav1Bit {
 
     // Public wrapper methods for compatibility
     pub fn update_subframe3_page1(&mut self) {
-        self.UpdateSubframe3Page1();
+        self.update_subframe3_page1_internal();
     }
 
     pub fn update_subframe3_page2(&mut self) {
-        self.UpdateSubframe3Page2();
+        self.update_subframe3_page2_internal();
     }
 
     pub fn update_subframe3_page3(&mut self) {
-        self.UpdateSubframe3Page3();
+        self.update_subframe3_page3_internal();
     }
 
     pub fn update_subframe3_page4(&mut self) {
-        self.UpdateSubframe3Page4();
+        self.update_subframe3_page4_internal();
     }
 
     // Interface methods required by NavBitTrait
-    pub fn GetFrameData(&self, start_time: GnssTime, svid: i32, _param: i32, nav_bits: &mut [i32]) -> i32 {
+    pub fn get_frame_data_immutable(&self, start_time: GnssTime, svid: i32, _param: i32, nav_bits: &mut [i32]) -> i32 {
         // Convert mutable self to const by cloning temporarily and calling get_frame_data
         // This is not ideal but matches the interface requirement
         let mut temp_self = self.clone();
         temp_self.get_frame_data(start_time, svid, _param, nav_bits)
     }
 
-    pub fn SetEphemeris(&mut self, svid: i32, eph: &GpsEphemeris) -> bool {
+    pub fn set_ephemeris(&mut self, svid: i32, eph: &GpsEphemeris) -> bool {
         // Convert GpsEphemeris to BDS B1C ephemeris format
         if !(1..=63).contains(&svid) {
             return false;
@@ -357,10 +357,10 @@ impl BCNav1Bit {
         bds_eph.top -= 14;
         
         // For BDS, satellite numbers > 32 are valid (up to 63 for BDS)
-        self.base.SetEphemeris(svid, &bds_eph)
+        self.base.set_ephemeris(svid, &bds_eph) == 0
     }
 
-    pub fn SetAlmanac(&mut self, alm: &[GpsAlmanac]) -> bool {
+    pub fn set_almanac(&mut self, alm: &[GpsAlmanac]) -> bool {
         // Convert GPS almanac to BDS B1C almanac format
         let mut bds_alm = Vec::new();
         
@@ -378,7 +378,7 @@ impl BCNav1Bit {
             }
         }
         
-        self.base.SetAlmanac(&bds_alm)
+        self.base.set_almanac(&bds_alm) == 0
     }
 }
 

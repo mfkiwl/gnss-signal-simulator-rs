@@ -27,7 +27,8 @@
 
 use crate::types::*;
 use crate::COMPOSE_BITS;
-use crate::{gps_time_to_utc, utc_to_glonass_time};
+use crate::{gps_time_to_utc};
+use crate::gnsstime::utc_to_glonass_time;
 // use crate::constants::*; // Unused import
 
 #[derive(Clone)]
