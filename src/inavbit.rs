@@ -631,13 +631,6 @@ impl INavBit {
 
 
 
-#[derive(Copy, Clone, Default)]
-pub struct IonoNequick {
-    pub ai0: f64,
-    pub ai1: f64,
-    pub ai2: f64,
-    pub flag: u32,
-}
 
 #[cfg(test)]
 mod tests {

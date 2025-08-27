@@ -28,7 +28,7 @@ use std::fs::File;
 use std::io::{Write, BufWriter};
 use std::time::Instant;
 
-use crate::inavbit::{IonoNequick as INavIonoNequick};
+use crate::types::IonoNequick as INavIonoNequick;
 use std::env;
 use crate::types::*;
 use crate::complex_number::ComplexNumber;

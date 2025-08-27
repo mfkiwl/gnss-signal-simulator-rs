@@ -23,6 +23,7 @@ use std::os::raw::c_char;
 use crate::trajectory::CTrajectory;
 use crate::types::*;
 use crate::powercontrol::SignalPower;
+use crate::{JsonObject, CPowerControl};
 use crate::{lla_to_ecef, gps_time_to_utc, bds_time_to_utc, glonass_time_to_utc, speed_ecef_to_local, ecef_to_lla};
 use crate::types::{GpsEphemeris, GlonassEphemeris, GpsAlmanac, GlonassAlmanac, UtcParam};
 use crate::constants::EARTH_GM;
@@ -100,7 +101,7 @@ static DICTIONARY_LIST_POWER_UNIT: &[&str] = &[
 // Use types from types.rs instead of redefining them
 
 #[repr(C)]
-pub struct OutputParam {
+pub struct COutputParam {
     pub filename: [c_char; 256],
     pub output_type: i32,
     pub format: i32,
@@ -116,7 +117,7 @@ pub struct OutputParam {
 }
 
 #[repr(C)]
-pub struct DelayConfig {
+pub struct CDelayConfig {
     // Add fields as needed
 }
 
@@ -125,56 +126,19 @@ pub struct DelayConfig {
 // Use ConvertMatrix from types.rs
 
 // Enums
-#[repr(C)]
-pub enum TrajectoryType {
-    TrajTypeUnknown = 0,
-    TrajTypeConst = 1,
-    TrajTypeConstAcc = 2,
-    TrajTypeVerticalAcc = 3,
-    TrajTypeJerk = 4,
-    TrajTypeHorizontalTurn = 5,
-}
+// TrajectoryType imported from trajectory.rs
 
-#[repr(C)]
-pub enum TrajectoryDataType {
-    TrajDataTimeSpan = 0,
-    TrajDataAcceleration = 1,
-    TrajDataSpeed = 2,
-    TrajDataAccRate = 3,
-    TrajDataAngularRate = 4,
-    TrajDataAngle = 5,
-    TrajDataRadius = 6,
-}
+// TrajectoryDataType imported from trajectory.rs
 
 // GnssSystem is imported from types.rs
 
-#[repr(C)]
-pub enum OutputType {
-    OutputTypePosition = 0,
-    OutputTypeObservation = 1,
-    OutputTypeIFdata = 2,
-    OutputTypeBaseband = 3,
-}
+// OutputType imported from types.rs
 
-#[repr(C)]
-pub enum OutputFormat {
-    OutputFormatECEF = 0,
-    OutputFormatLLA = 1,
-    OutputFormatNMEA = 2,
-    OutputFormatKML = 3,
-    OutputFormatRINEX = 4,
-    OutputFormatIQ8 = 5,
-    OutputFormatIQ4 = 6,
-}
+// OutputFormat imported from types.rs
 
-#[repr(C)]
-pub enum ElevationAdjust {
-    ElevationAdjustNone = 0,
-    ElevationAdjustSinSqrtFade = 1,
-}
+// ElevationAdjust imported from powercontrol.rs
 
-// Forward declarations for external types
-pub struct JsonObject;
+// JsonObject imported from json_parser.rs
 // Структура для хранения навигационных данных
 pub struct CNavData {
     // Ионосферные параметры GPS
@@ -352,19 +316,7 @@ impl CNavData {
     }
 }
 
-pub struct CPowerControl;
-
-impl Default for CPowerControl {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl CPowerControl {
-    pub fn new() -> Self {
-        CPowerControl {}
-    }
-}
+// CPowerControl imported from powercontrol.rs
 
 // Helper functions
 fn search_dictionary(word: &str, dictionary_list: &[&str]) -> i32 {
@@ -954,18 +906,18 @@ extern "C" {
 fn set_output_param(object: *mut JsonObject, output_param: &mut OutputParam) -> bool {
     // Set default values
     output_param.filename[0] = 0;
-    output_param.gps_mask_out = 0;
-    output_param.glonass_mask_out = 0;
-    output_param.bds_mask_out = 0;
-    output_param.galileo_mask_out = 0;
-    output_param.elevation_mask = deg2rad(5.0);
-    output_param.interval = 1000;
+    output_param.GpsMaskOut = 0;
+    output_param.GlonassMaskOut = 0;
+    output_param.BdsMaskOut = 0;
+    output_param.GalileoMaskOut = 0;
+    output_param.ElevationMask = deg2rad(5.0);
+    output_param.Interval = 1000;
     
     // Default output GPS L1 only
-    output_param.freq_select[0] = 0x1;
-    output_param.freq_select[1] = 0;
-    output_param.freq_select[2] = 0;
-    output_param.freq_select[3] = 0;
+    output_param.FreqSelect[0] = 0x1;
+    output_param.FreqSelect[1] = 0;
+    output_param.FreqSelect[2] = 0;
+    output_param.FreqSelect[3] = 0;
 
     unsafe {
         let mut current_object = object;
@@ -974,12 +926,29 @@ fn set_output_param(object: *mut JsonObject, output_param: &mut OutputParam) -> 
             match search_dictionary(&key, KEY_DICTIONARY_LIST_OUTPUT) {
                 0 => { // "type"
                     if is_string_type(current_object) {
-                        output_param.output_type = search_dictionary(&get_object_string(current_object), DICTIONARY_LIST_OUTPUT_TYPE);
+                        let output_type_index = search_dictionary(&get_object_string(current_object), DICTIONARY_LIST_OUTPUT_TYPE);
+                        output_param.Type = match output_type_index {
+                            0 => OutputType::OutputTypePosition,
+                            1 => OutputType::OutputTypeObservation,
+                            2 => OutputType::OutputTypeIFdata,
+                            3 => OutputType::OutputTypeBaseband,
+                            _ => OutputType::default(),
+                        };
                     }
                 },
                 1 => { // "format"
                     if is_string_type(current_object) {
-                        output_param.format = search_dictionary(&get_object_string(current_object), DICTIONARY_LIST_OUTPUT_FORMAT);
+                        let format_index = search_dictionary(&get_object_string(current_object), DICTIONARY_LIST_OUTPUT_FORMAT);
+                        output_param.Format = match format_index {
+                            0 => OutputFormat::OutputFormatEcef,
+                            1 => OutputFormat::OutputFormatLla,
+                            2 => OutputFormat::OutputFormatNmea,
+                            3 => OutputFormat::OutputFormatKml,
+                            4 => OutputFormat::OutputFormatRinex,
+                            5 => OutputFormat::OutputFormatIQ8,
+                            6 => OutputFormat::OutputFormatIQ4,
+                            _ => OutputFormat::default(),
+                        };
                     }
                 },
                 2 => { // "name"
@@ -988,13 +957,13 @@ fn set_output_param(object: *mut JsonObject, output_param: &mut OutputParam) -> 
                         let filename_bytes = filename.as_bytes();
                         let copy_len = std::cmp::min(filename_bytes.len(), 255);
                         for i in 0..copy_len {
-                            output_param.filename[i] = filename_bytes[i] as c_char;
+                            output_param.filename[i] = filename_bytes[i];
                         }
                         output_param.filename[copy_len] = 0;
                     }
                 },
                 3 => { // "interval"
-                    output_param.interval = (get_double_value(current_object) * 1000.0) as i32;
+                    output_param.Interval = (get_double_value(current_object) * 1000.0) as i32;
                 },
                 4 => { // "config"
                     process_config_param(json_stream_get_first_object(current_object), output_param);
@@ -1009,10 +978,10 @@ fn set_output_param(object: *mut JsonObject, output_param: &mut OutputParam) -> 
                     }
                 },
                 12 => { // "sampleFreq"
-                    output_param.sample_freq = (get_double_value(current_object) * 1000.0).round() as i32;
+                    output_param.SampleFreq = (get_double_value(current_object) * 1000.0).round() as i32;
                 },
                 13 => { // "centerFreq"
-                    output_param.center_freq = (get_double_value(current_object) * 1000.0).round() as i32;
+                    output_param.CenterFreq = (get_double_value(current_object) * 1000.0).round() as i32;
                 },
                 _ => {}
             }
@@ -1155,7 +1124,7 @@ fn process_config_param(object: *mut JsonObject, output_param: &mut OutputParam)
             let key = get_object_key(current_object);
             match search_dictionary(&key, KEY_DICTIONARY_LIST_OUTPUT) {
                 6 => { // "elevationMask"
-                    output_param.elevation_mask = deg2rad(get_double_value(current_object));
+                    output_param.ElevationMask = deg2rad(get_double_value(current_object));
                 },
                 7 => { // "maskOut"
                     if get_object_type(current_object) == 2 { // ValueTypeArray
@@ -1213,22 +1182,22 @@ fn mask_out_satellite(system: i32, svid: i32, output_param: &mut OutputParam) ->
     match system {
         0 => { // GpsSystem
             if (1..=32).contains(&svid) {
-                output_param.gps_mask_out |= 1 << (svid - 1);
+                output_param.GpsMaskOut |= 1 << (svid - 1);
             }
         },
         1 => { // BdsSystem
             if (1..=63).contains(&svid) {
-                output_param.bds_mask_out |= 1u64 << (svid - 1);
+                output_param.BdsMaskOut |= 1u64 << (svid - 1);
             }
         },
         2 => { // GalileoSystem
             if (1..=50).contains(&svid) {
-                output_param.galileo_mask_out |= 1u64 << (svid - 1);
+                output_param.GalileoMaskOut |= 1u64 << (svid - 1);
             }
         },
         3 => { // GlonassSystem
             if (1..=24).contains(&svid) {
-                output_param.glonass_mask_out |= 1 << (svid - 1);
+                output_param.GlonassMaskOut |= 1 << (svid - 1);
             }
         },
         _ => return false,
@@ -1268,9 +1237,9 @@ fn process_system_select(object: *mut JsonObject, output_param: &mut OutputParam
                         }
                         let object_type = get_object_type(current_object);
                         if object_type == 6 { // ValueTypeTrue
-                            output_param.freq_select[system as usize] |= 1 << signal_index;
+                            output_param.FreqSelect[system as usize] |= 1 << signal_index;
                         } else if object_type == 7 { // ValueTypeFalse
-                            output_param.freq_select[system as usize] &= !(1 << signal_index);
+                            output_param.FreqSelect[system as usize] &= !(1 << signal_index);
                         }
                     }
                 },

@@ -227,7 +227,6 @@ impl SatelliteSignal {
                 return true;
             } else {
                 self.is_in_time_marker = false;
-                let milliseconds = transmit_time_adj.MilliSeconds - 300;
                 frame_number = transmit_time_adj.MilliSeconds / self.attribute.frame_length;
                 bit_number = ((string_position - 300) * 85 / 1700) as usize;  // ГЛОНАСС: 85 информационных бит за 1700 мс
                 if bit_number >= 85 { bit_number = 84; }  // Ограничить диапазон 0-84
