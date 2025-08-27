@@ -28,9 +28,7 @@ use crate::ifdatagen::NavBitTrait;
 
 const AMPLITUDE_1_2: f64 = 0.707_106_781_186_547_6;
 const AMPLITUDE_1_4: f64 = 0.5;
-const AMPLITUDE_29_44: f64 = 0.811_844_140_885_988_7;
 const AMPLITUDE_3_4: f64 = 0.866_025_403_784_438_6;
-const AMPLITUDE_5_11: f64 = 0.6741998624632421;
 
 pub struct SignalAttribute {
     pub code_length: i32,
@@ -212,7 +210,7 @@ impl SatelliteSignal {
         let mut bit_number = 0;
         let bit_pos;
         let data_bit;
-        let mut pilot_bit = 0;
+        let mut pilot_bit = 0;  // По умолчанию 0 для сигналов без пилотной составляющей
 
         if self.sat_system == GnssSystem::GlonassSystem && (self.sat_signal == crate::SIGNAL_INDEX_G1 as i32 || self.sat_signal == crate::SIGNAL_INDEX_G2 as i32) {
             let string_position = transmit_time_adj.MilliSeconds % 2000;
@@ -231,8 +229,8 @@ impl SatelliteSignal {
                 self.is_in_time_marker = false;
                 let milliseconds = transmit_time_adj.MilliSeconds - 300;
                 frame_number = transmit_time_adj.MilliSeconds / self.attribute.frame_length;
-                bit_number = ((string_position - 300) * 100 / 1700) as usize;
-                if bit_number >= 100 { bit_number = 99; }
+                bit_number = ((string_position - 300) * 85 / 1700) as usize;  // ГЛОНАСС: 85 информационных бит за 1700 мс
+                if bit_number >= 85 { bit_number = 84; }  // Ограничить диапазон 0-84
                 bit_pos = ((string_position - 300) % 17) / self.attribute.code_length;
             }
         } else {
@@ -291,8 +289,8 @@ impl SatelliteSignal {
                     *pilot_signal = ComplexNumber { real: pilot_bit as f64 * AMPLITUDE_3_4, imag: 0.0 };
                 },
                 L2C => {
-                    *data_signal = ComplexNumber { real: data_bit as f64, imag: 0.0 };
-                    *pilot_signal = ComplexNumber { real: 1.0, imag: 0.0 };
+                    *data_signal = ComplexNumber { real: data_bit as f64 * AMPLITUDE_1_2, imag: 0.0 };
+                    *pilot_signal = ComplexNumber { real: pilot_bit as f64 * AMPLITUDE_1_2, imag: 0.0 };
                 },
                 L5 => {
                     *data_signal = ComplexNumber { real: data_bit as f64 * AMPLITUDE_1_2, imag: 0.0 };
@@ -306,8 +304,8 @@ impl SatelliteSignal {
             },
             GnssSystem::BdsSystem => match self.sat_signal {
                 B1C => {
-                    *data_signal = ComplexNumber { real: 0.0, imag: -data_bit as f64 * AMPLITUDE_1_4 };
-                    *pilot_signal = ComplexNumber { real: pilot_bit as f64 * AMPLITUDE_29_44, imag: 0.0 };
+                    *data_signal = ComplexNumber { real: 0.0, imag: -data_bit as f64 * AMPLITUDE_1_2 };
+                    *pilot_signal = ComplexNumber { real: pilot_bit as f64 * AMPLITUDE_1_2, imag: 0.0 };
                 },
                 B1I | B2I | B3I => {
                     *data_signal = ComplexNumber { real: data_bit as f64, imag: 0.0 };
