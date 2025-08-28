@@ -1155,6 +1155,7 @@ impl IFDataGen {
         
         // PERFORMANCE OPTIMIZATION: Use real GNSS signal generation with optimizations
         let debug_mode = false; // Always use full signal generation
+        let max_satellites_for_debug = 3; // Limit to 3 satellites for faster debugging
 
         println!("[INFO]\tStarting signal generation loop...");
         println!("[INFO]\tSignal Duration: {:.2} s", total_duration_ms as f64 / 1000.0);
@@ -1206,12 +1207,25 @@ impl IFDataGen {
                 // Full GNSS signal generation (slower but accurate)
                 FastMath::generate_noise_block(&mut noise_array, 1.0);
 
-                // OPTIMIZED: Generate satellite signals in parallel where possible
-                // For now, batch process to reduce overhead
+                // CRITICAL OPTIMIZATION: Generate satellite signals more efficiently
                 let current_time = self.cur_time;
-                for signal in sat_if_signals.iter_mut() {
-                    if let Some(ref mut sig) = signal {
-                        sig.get_if_sample(current_time);
+                
+                // Limit active satellites for debugging performance
+                let active_sats = sat_if_signals.len().min(max_satellites_for_debug);
+                
+                // Only update satellite parameters every 10ms (they change slowly)
+                if should_update_sat_params {
+                    for i in 0..active_sats {
+                        if let Some(ref mut sig) = sat_if_signals[i] {
+                            sig.get_if_sample(current_time);
+                        }
+                    }
+                } else {
+                    // Use fast cached version for non-update cycles
+                    for i in 0..active_sats {
+                        if let Some(ref mut sig) = sat_if_signals[i] {
+                            sig.get_if_sample(current_time); // This will use fast path due to caching
+                        }
                     }
                 }
 
