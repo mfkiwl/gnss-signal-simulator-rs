@@ -78,6 +78,37 @@ impl Avx512Accelerator {
         _mm512_storeu_ps(real_out.as_mut_ptr(), real_part);
         _mm512_storeu_ps(imag_out.as_mut_ptr(), imag_part);
     }
+
+    /// ОПТИМИЗИРОВАННАЯ функция для PRN * carrier с амплитудой
+    /// Специально для случая генерации GNSS сигналов
+    #[target_feature(enable = "avx512f")]
+    pub unsafe fn complex_multiply_prn_carrier_avx512(
+        prn_data: &[f32], 
+        carrier_cos: &[f32], 
+        carrier_sin: &[f32],
+        output_i: &mut [f32], 
+        output_q: &mut [f32],
+        amplitude: f32
+    ) {
+        assert!(prn_data.len() >= 16);
+        assert!(carrier_cos.len() >= 16);
+        assert!(carrier_sin.len() >= 16);
+        assert!(output_i.len() >= 16);
+        assert!(output_q.len() >= 16);
+        
+        let prn = _mm512_loadu_ps(prn_data.as_ptr());
+        let cos_val = _mm512_loadu_ps(carrier_cos.as_ptr());
+        let sin_val = _mm512_loadu_ps(carrier_sin.as_ptr());
+        let amp = _mm512_set1_ps(amplitude);
+        
+        // PRN * carrier_cos * amplitude для I канала
+        let i_result = _mm512_mul_ps(_mm512_mul_ps(prn, cos_val), amp);
+        // PRN * carrier_sin * amplitude для Q канала
+        let q_result = _mm512_mul_ps(_mm512_mul_ps(prn, sin_val), amp);
+        
+        _mm512_storeu_ps(output_i.as_mut_ptr(), i_result);
+        _mm512_storeu_ps(output_q.as_mut_ptr(), q_result);
+    }
     
     /// СУПЕР-КРИТИЧЕСКАЯ ОПТИМИЗАЦИЯ: Тригонометрия с AVX-512
     /// Обрабатывает 16 углов одновременно используя lookup таблицы
@@ -173,10 +204,54 @@ impl Avx512Accelerator {
         _mm512_storeu_ps(output_real.as_mut_ptr(), cos_approx);
         _mm512_storeu_ps(output_imag.as_mut_ptr(), sin_approx);
     }
+
+    /// AVX-512 векторное сложение двух массивов float32
+    /// СУПЕР-БЫСТРОЕ сложение 16 элементов одновременно!
+    #[target_feature(enable = "avx512f")]
+    pub unsafe fn vector_add_avx512(
+        a: &[f32], 
+        b: &[f32], 
+        result: &mut [f32]
+    ) {
+        assert!(a.len() >= 16 && b.len() >= 16 && result.len() >= 16);
+        
+        let vec_a = _mm512_loadu_ps(a.as_ptr());
+        let vec_b = _mm512_loadu_ps(b.as_ptr());
+        let vec_result = _mm512_add_ps(vec_a, vec_b);
+        
+        _mm512_storeu_ps(result.as_mut_ptr(), vec_result);
+    }
+
+    /// AVX-512 векторное умножение на скаляр
+    /// Умножает массив float32 на скалярное значение
+    #[target_feature(enable = "avx512f")]
+    pub unsafe fn vector_multiply_scalar_avx512(
+        input: &[f32],
+        scalar: &[f32], // Для совместимости с API (должен содержать 16 одинаковых значений)
+        result: &mut [f32]
+    ) {
+        assert!(input.len() >= 16 && scalar.len() >= 16 && result.len() >= 16);
+        
+        let vec_input = _mm512_loadu_ps(input.as_ptr());
+        let vec_scalar = _mm512_loadu_ps(scalar.as_ptr());
+        let vec_result = _mm512_mul_ps(vec_input, vec_scalar);
+        
+        _mm512_storeu_ps(result.as_mut_ptr(), vec_result);
+    }
 }
 
 /// Безопасная обертка для использования AVX-512 оптимизаций
 pub struct SafeAvx512Processor;
+
+impl SafeAvx512Processor {
+    pub fn new() -> Self {
+        SafeAvx512Processor
+    }
+    
+    pub fn is_available(&self) -> bool {
+        Avx512Accelerator::is_available()
+    }
+}
 
 impl SafeAvx512Processor {
     /// Обработать PRN коды с максимальной скоростью

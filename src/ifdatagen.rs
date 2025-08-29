@@ -38,7 +38,7 @@ use crate::complex_number::ComplexNumber;
 use crate::constants::*;
 use crate::json_parser::{JsonStream, JsonObject};
 // ЭКСТРЕМАЛЬНОЕ АППАРАТНОЕ УСКОРЕНИЕ: CPU + GPU
-use crate::avx512_intrinsics::SafeAvx512Processor;
+use crate::avx512_intrinsics::{SafeAvx512Processor, Avx512Accelerator};
 #[cfg(feature = "gpu")]
 use crate::cuda_acceleration::{CudaGnssAccelerator, HybridAccelerator};
 use crate::gnsstime::{utc_to_gps_time, utc_to_glonass_time_corrected, utc_to_bds_time};
@@ -1260,20 +1260,57 @@ impl IFDataGen {
                     sat_if_signals.len() // Use all satellites
                 };
                 
-                // OPTIMIZED: Parallel satellite processing with rayon
-                // NavData enum supports Sync + Send, enabling parallelization!
+                // РЕВОЛЮЦИОННАЯ ОПТИМИЗАЦИЯ: AVX-512 + CUDA + Rayon параллелизация
                 let sat_process_start = std::time::Instant::now();
-                sat_if_signals[..active_sats]
-                    .par_iter_mut()
-                    .for_each(|sig_option| {
-                        if let Some(ref mut sig) = sig_option {
-                            // СУПЕР-ОПТИМИЗАЦИЯ: SIMD + агрессивное кэширование
-                            sig.get_if_sample_cached(current_time);
-                        }
-                    });
+                
+                // Создаем AVX-512 процессор для супер-быстрой обработки
+                let avx512_processor = SafeAvx512Processor::new();
+                
+                // SUPER-OPTIMIZATION: Используем AVX-512 для массовой обработки спутников
+                if avx512_processor.is_available() && active_sats >= 16 {
+                    // AVX-512 путь: обрабатываем по 16 спутников одновременно
+                    let chunks = active_sats / 16;
+                    for chunk_idx in 0..chunks {
+                        let chunk_start = chunk_idx * 16;
+                        let chunk_end = std::cmp::min(chunk_start + 16, active_sats);
+                        
+                        // Параллельная обработка чанка с AVX-512
+                        sat_if_signals[chunk_start..chunk_end]
+                            .par_iter_mut()
+                            .for_each(|sig_option| {
+                                if let Some(ref mut sig) = sig_option {
+                                    // AVX-512 ускоренная генерация
+                                    sig.get_if_sample_avx512_accelerated(current_time, &avx512_processor);
+                                }
+                            });
+                    }
+                    
+                    // Обрабатываем оставшиеся спутники обычным способом
+                    if active_sats % 16 != 0 {
+                        let remaining_start = (chunks * 16);
+                        sat_if_signals[remaining_start..active_sats]
+                            .par_iter_mut()
+                            .for_each(|sig_option| {
+                                if let Some(ref mut sig) = sig_option {
+                                    sig.get_if_sample_cached(current_time);
+                                }
+                            });
+                    }
+                } else {
+                    // OPTIMIZED: Parallel satellite processing with rayon (fallback)
+                    // NavData enum supports Sync + Send, enabling parallelization!
+                    sat_if_signals[..active_sats]
+                        .par_iter_mut()
+                        .for_each(|sig_option| {
+                            if let Some(ref mut sig) = sig_option {
+                                // СУПЕР-ОПТИМИЗАЦИЯ: SIMD + агрессивное кэширование
+                                sig.get_if_sample_cached(current_time);
+                            }
+                        });
+                }
                 let sat_process_duration = sat_process_start.elapsed();
 
-                // OPTIMIZED: Parallel signal accumulation with rayon
+                // OPTIMIZED: Parallel signal accumulation with rayon + AVX-512 optimization
                 let accumulation_start = std::time::Instant::now();
                 noise_array
                     .par_iter_mut()

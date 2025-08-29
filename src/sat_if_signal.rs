@@ -605,6 +605,121 @@ impl SatIfSignal {
         }
     }
 
+    /// AVX-512 СВЕРХ-ОПТИМИЗИРОВАННАЯ генерация IF сигнала
+    /// РЕВОЛЮЦИОННОЕ ускорение: 16x floats обрабатываются одновременно!
+    pub fn get_if_sample_avx512_accelerated(&mut self, cur_time: GnssTime, avx512_processor: &crate::avx512_intrinsics::SafeAvx512Processor) {
+        use crate::avx512_intrinsics::Avx512Accelerator;
+        
+        // Если AVX-512 недоступен, используем кэшированную версию
+        if !avx512_processor.is_available() {
+            return self.get_if_sample_cached(cur_time);
+        }
+        
+        // Получаем параметры спутника
+        let p_sat_param = if let Some(ref sat_param) = self.sat_param {
+            sat_param
+        } else {
+            return;
+        };
+        
+        // СУПЕР-БЫСТРАЯ подготовка параметров (те же что и в кэшированной версии)
+        let code_attribute = self.prn_sequence.attribute.as_ref().unwrap();
+        let chip_rate = code_attribute.chip_rate as f64;
+        
+        if self.computation_cache.needs_update(p_sat_param.CN0 as f64, self.sample_number) {
+            self.computation_cache.update(
+                p_sat_param.CN0 as f64, 
+                self.sample_number, 
+                self.if_freq as f64, 
+                chip_rate
+            );
+        }
+        
+        let ms_offset = cur_time.MilliSeconds - self.signal_time.MilliSeconds;
+        let base_chip_offset = (ms_offset as f64) * self.computation_cache.cached_chip_rate;
+        let amp = self.computation_cache.cached_amp;
+        let code_step = self.computation_cache.cached_code_step;
+        let phase_step = self.computation_cache.cached_phase_step;
+        let nav_value = if self.data_signal.real >= 0.0 { 1.0 } else { -1.0 };
+        
+        // Подготовка PRN и carrier кэшей
+        if let Some(data_prn) = &self.prn_sequence.data_prn {
+            if self.prn_cache.needs_update(cur_time.MilliSeconds) {
+                self.prn_cache.update_cache(data_prn, cur_time.MilliSeconds);
+            }
+        }
+        
+        if self.carrier_phase_cache.is_none() {
+            self.carrier_phase_cache = Some(CarrierPhaseCache::new(
+                self.sample_number as usize, 
+                phase_step
+            ));
+        }
+        
+        // РЕВОЛЮЦИЯ AVX-512: Обрабатываем 16 сэмплов одновременно!
+        if let Some(ref carrier_cache) = self.carrier_phase_cache {
+            let samples_per_group = 16; // AVX-512 обрабатывает 16 float32 одновременно
+            let full_groups = (self.sample_number as usize) / samples_per_group;
+            
+            // КРИТИЧЕСКАЯ ОПТИМИЗАЦИЯ: Подготовка данных для AVX-512
+            let mut prn_data = vec![0.0f32; samples_per_group];
+            let mut carrier_cos = vec![0.0f32; samples_per_group]; 
+            let mut carrier_sin = vec![0.0f32; samples_per_group];
+            
+            // МЕГА-УСКОРЕНИЕ: Векторизованная обработка групп по 16 элементов
+            for group in 0..full_groups {
+                let base_idx = group * samples_per_group;
+                
+                // Подготовка данных для AVX-512 векторизации
+                for i in 0..samples_per_group {
+                    let sample_idx = base_idx + i;
+                    let chip_offset = base_chip_offset + (sample_idx as f64) * code_step;
+                    let chip_index = (chip_offset as usize) & 0x3FF; // Битовая операция для 1023
+                    
+                    prn_data[i] = self.prn_cache.get_prn_bit(chip_index) as f32;
+                    carrier_cos[i] = carrier_cache.cached_cos[sample_idx] as f32;
+                    carrier_sin[i] = carrier_cache.cached_sin[sample_idx] as f32;
+                }
+                
+                // РЕВОЛЮЦИЯ! AVX-512 массовая обработка 16 сэмплов одновременно!
+                let mut output_i = vec![0.0f32; samples_per_group];
+                let mut output_q = vec![0.0f32; samples_per_group];
+                
+                unsafe {
+                    // Используем наши супер-быстрые AVX-512 инструкции
+                    Avx512Accelerator::complex_multiply_prn_carrier_avx512(
+                        &prn_data, &carrier_cos, &carrier_sin,
+                        &mut output_i, &mut output_q,
+                        amp as f32 * nav_value as f32
+                    );
+                }
+                
+                // Записываем результаты обратно в массив сэмплов
+                for i in 0..samples_per_group {
+                    let sample_idx = base_idx + i;
+                    if sample_idx < self.sample_array.len() {
+                        self.sample_array[sample_idx].real = output_i[i] as f64;
+                        self.sample_array[sample_idx].imag = output_q[i] as f64;
+                    }
+                }
+            }
+            
+            // Обрабатываем оставшиеся сэмплы обычным способом (если есть)
+            let remaining_start = full_groups * samples_per_group;
+            for i in remaining_start..(self.sample_number as usize) {
+                let chip_offset = base_chip_offset + (i as f64) * code_step;
+                let chip_index = (chip_offset as usize) & 0x3FF;
+                
+                let prn_bit = self.prn_cache.get_prn_bit(chip_index);
+                let cos_val = carrier_cache.cached_cos[i];
+                let sin_val = carrier_cache.cached_sin[i];
+                
+                self.sample_array[i].real = amp * prn_bit * cos_val * nav_value;
+                self.sample_array[i].imag = amp * prn_bit * sin_val * nav_value;
+            }
+        }
+    }
+
     /// СУПЕР-ОПТИМИЗИРОВАННАЯ генерация IF сигнала с агрессивным кэшированием
     /// Использует предвычисленные PRN коды и фазы несущей
     pub fn get_if_sample_cached(&mut self, cur_time: GnssTime) {
