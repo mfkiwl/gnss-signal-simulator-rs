@@ -1199,8 +1199,8 @@ impl IFDataGen {
             self.step_to_next_ms(&mut cur_pos)?;
             
             // OPTIMIZATION: Update satellite parameters less frequently for better performance
-            // Satellite positions change slowly, so update every 10ms instead of every 1ms
-            let should_update_sat_params = (length % 10) == 0;
+            // Satellite positions change very slowly, so update every 50ms instead of every 10ms for 5x fewer calculations
+            let should_update_sat_params = (length % 50) == 0;
             if should_update_sat_params {
                 self.update_sat_params_optimized(cur_pos)?;
             }

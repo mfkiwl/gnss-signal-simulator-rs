@@ -20,7 +20,7 @@ use std::collections::HashMap;
 /// Предвычисляет PRN биты на несколько миллисекунд вперед
 #[derive(Clone)]
 pub struct PrnCache {
-    /// Кэш PRN битов: (chip_index % 1023) -> prn_bit_value
+    /// Кэш PRN битов: (chip_index & 0x3FF) -> prn_bit_value
     cached_prn_bits: Vec<f64>,
     /// Время последнего обновления кэша (в миллисекундах)
     last_update_ms: i32,
@@ -98,6 +98,8 @@ pub struct ComputationCache {
     pub cached_phase_step: f64,
     /// Кэшированная chip_rate (постоянная величина)
     pub cached_chip_rate: f64,
+    /// Предвычисленная константа 2*PI (избегает повторных вычислений!)
+    pub cached_two_pi: f64,
     /// Последний обновлённый CN0 (для проверки сброса кэша)
     pub last_cn0: f64,
     /// Последний sample_number (для проверки сброса кэша)
@@ -113,6 +115,7 @@ impl ComputationCache {
             cached_code_step: 0.0,
             cached_phase_step: 0.0,
             cached_chip_rate: 0.0,
+            cached_two_pi: 2.0 * std::f64::consts::PI, // ОПТИМИЗАЦИЯ: предвычисленная константа!
             last_cn0: -9999.0, // Невозможное значение
             last_sample_number: -1,
             is_valid: false,
@@ -300,8 +303,16 @@ impl SatIfSignal {
         let ms_offset = cur_time.MilliSeconds - self.signal_time.MilliSeconds;
         let base_chip_offset = (ms_offset as f64) * code_attribute.chip_rate as f64;
         
-        // Амплитуда кэширована (CN0 не меняется каждую миллисекунду)
-        let amp = 10.0_f64.powf((p_sat_param.CN0 as f64 - 3000.0) / 1000.0) / (self.sample_number as f64).sqrt();
+        // КЭШИРОВАННАЯ амплитуда - используем ComputationCache!
+        if self.computation_cache.needs_update(p_sat_param.CN0 as f64, self.sample_number) {
+            self.computation_cache.update(
+                p_sat_param.CN0 as f64, 
+                self.sample_number, 
+                self.if_freq as f64, 
+                code_attribute.chip_rate as f64
+            );
+        }
+        let amp = self.computation_cache.cached_amp;
 
         // СУПЕРСКОРОСТНАЯ генерация как в C++ версии с #pragma omp simd
         let data_prn = self.prn_sequence.data_prn.as_ref().unwrap();
@@ -309,7 +320,7 @@ impl SatIfSignal {
         for i in 0..self.sample_number as usize {
             // PRN индекс с минимальными вычислениями
             let chip_count = (base_chip_offset + (i as f64) * code_step) as i32;
-            let data_chip = (chip_count % 1023) as usize; // GPS L1CA = 1023 chips
+            let data_chip = (chip_count & 0x3FF) as usize; // GPS L1CA = 1023 chips
             
             // Быстрое получение PRN значения
             let data_sign = if data_chip < data_prn.len() && data_prn[data_chip] != 0 { -1.0 } else { 1.0 };
@@ -317,7 +328,7 @@ impl SatIfSignal {
             let prn_imag = data_imag * data_sign;
             
             // Быстрое фазовое вращение с lookup table
-            let phase = (i as f64) * phase_step * 2.0 * std::f64::consts::PI;
+            let phase = (i as f64) * phase_step * self.computation_cache.cached_two_pi;
             let rotation_cos = FastMath::fast_cos(phase);
             let rotation_sin = FastMath::fast_sin(phase);
             
@@ -357,7 +368,16 @@ impl SatIfSignal {
         let mut cur_chip = (self.start_transmit_time.MilliSeconds as f64 % code_attribute.pilot_period as f64 + self.start_transmit_time.SubMilliSeconds) * code_attribute.chip_rate as f64;
         self.start_transmit_time = self.end_transmit_time;
 
-        let amp = 10.0_f64.powf((p_sat_param.CN0 as f64 - 3000.0) / 1000.0) / (self.sample_number as f64).sqrt();
+        // КЭШИРОВАННАЯ амплитуда - устранили избыточные вычисления!
+        if self.computation_cache.needs_update(p_sat_param.CN0 as f64, self.sample_number) {
+            self.computation_cache.update(
+                p_sat_param.CN0 as f64, 
+                self.sample_number, 
+                self.if_freq as f64, 
+                code_attribute.chip_rate as f64
+            );
+        }
+        let amp = self.computation_cache.cached_amp;
 
         for i in 0..self.sample_number as usize {
             let prn_value = self.get_prn_value(&mut cur_chip, code_step);
@@ -388,7 +408,16 @@ impl SatIfSignal {
         let base_chip_offset = (ms_offset as f64) * code_attribute.chip_rate as f64;
         
         // Cache amplitude calculation (CN0 doesn't change per millisecond)
-        let amp = 10.0_f64.powf((p_sat_param.CN0 as f64 - 3000.0) / 1000.0) / (self.sample_number as f64).sqrt();
+        // КЭШИРОВАННАЯ амплитуда - устранили избыточные вычисления!
+        if self.computation_cache.needs_update(p_sat_param.CN0 as f64, self.sample_number) {
+            self.computation_cache.update(
+                p_sat_param.CN0 as f64, 
+                self.sample_number, 
+                self.if_freq as f64, 
+                code_attribute.chip_rate as f64
+            );
+        }
+        let amp = self.computation_cache.cached_amp;
 
         // ULTRA FAST: Pre-calculate phase and chip increments
         let phase_step = phase_increment / (self.sample_number as f64);
@@ -399,7 +428,7 @@ impl SatIfSignal {
             let mut cur_chip = base_chip_offset + (i as f64) * code_step;
             
             // OPTIMIZED PRN: Only handle GPS L1CA (most common case)
-            let chip_index = (cur_chip as i32) % 1023; // GPS L1CA is 1023 chips
+            let chip_index = (cur_chip as i32) & 0x3FF; // GPS L1CA is 1023 chips
             let prn_bit = if let Some(data_prn) = &self.prn_sequence.data_prn {
                 if chip_index >= 0 && (chip_index as usize) < data_prn.len() && data_prn[chip_index as usize] != 0 { 
                     -1.0 
@@ -413,7 +442,7 @@ impl SatIfSignal {
             let nav_value = if self.data_signal.real >= 0.0 { 1.0 } else { -1.0 };
             
             // ULTRA FAST trigonometry using lookup table
-            let angle = cur_phase * 2.0 * std::f64::consts::PI;
+            let angle = cur_phase * self.computation_cache.cached_two_pi;
             let cos_val = FastMath::fast_cos(angle);
             let sin_val = FastMath::fast_sin(angle);
             
@@ -443,7 +472,16 @@ impl SatIfSignal {
         let chip_advance = code_attribute.chip_rate as f64;
         let code_step = chip_advance / (self.sample_number as f64);
         let base_chip_offset = (ms_offset as f64) * code_attribute.chip_rate as f64;
-        let amp = 10.0_f64.powf((p_sat_param.CN0 as f64 - 3000.0) / 1000.0) / (self.sample_number as f64).sqrt();
+        // КЭШИРОВАННАЯ амплитуда - устранили избыточные вычисления!
+        if self.computation_cache.needs_update(p_sat_param.CN0 as f64, self.sample_number) {
+            self.computation_cache.update(
+                p_sat_param.CN0 as f64, 
+                self.sample_number, 
+                self.if_freq as f64, 
+                code_attribute.chip_rate as f64
+            );
+        }
+        let amp = self.computation_cache.cached_amp;
         let phase_step = phase_increment / (self.sample_number as f64);
         let nav_value = if self.data_signal.real >= 0.0 { 1.0 } else { -1.0 };
         
@@ -454,7 +492,7 @@ impl SatIfSignal {
         let nav_value_vec = f64x4::splat(nav_value);
         let base_phase_vec = f64x4::new([0.0, phase_step, phase_step * 2.0, phase_step * 3.0]);
         let phase_increment_vec = f64x4::splat(phase_step * 4.0);
-        let two_pi_vec = f64x4::splat(2.0 * std::f64::consts::PI);
+        let two_pi_vec = f64x4::splat(self.computation_cache.cached_two_pi);
         let base_chip_vec = f64x4::new([
             base_chip_offset,
             base_chip_offset + code_step,
@@ -476,10 +514,10 @@ impl SatIfSignal {
                 
                 // SIMD векторизованная обработка PRN кодов
                 let chip_indices: [i32; 4] = [
-                    (cur_chip_vec.as_array_ref()[0] as i32) % 1023,
-                    (cur_chip_vec.as_array_ref()[1] as i32) % 1023,
-                    (cur_chip_vec.as_array_ref()[2] as i32) % 1023,
-                    (cur_chip_vec.as_array_ref()[3] as i32) % 1023,
+                    (cur_chip_vec.as_array_ref()[0] as i32) & 0x3FF,
+                    (cur_chip_vec.as_array_ref()[1] as i32) & 0x3FF,
+                    (cur_chip_vec.as_array_ref()[2] as i32) & 0x3FF,
+                    (cur_chip_vec.as_array_ref()[3] as i32) & 0x3FF,
                 ];
                 
                 // Получение PRN битов
@@ -531,7 +569,7 @@ impl SatIfSignal {
             let mut cur_chip = cur_chip_vec.as_array_ref()[0];
             
             for i in 0..remaining {
-                let chip_index = (cur_chip as i32) % 1023;
+                let chip_index = (cur_chip as i32) & 0x3FF; // Битовая операция вместо модуло!
                 let prn_bit = if let Some(data_prn) = &self.prn_sequence.data_prn {
                     if chip_index >= 0 && (chip_index as usize) < data_prn.len() && data_prn[chip_index as usize] != 0 { 
                         -1.0 
@@ -542,7 +580,7 @@ impl SatIfSignal {
                     1.0 
                 };
                 
-                let angle = cur_phase * 2.0 * std::f64::consts::PI;
+                let angle = cur_phase * self.computation_cache.cached_two_pi;
                 let cos_val = FastMath::fast_cos(angle);
                 let sin_val = FastMath::fast_sin(angle);
                 
@@ -612,7 +650,7 @@ impl SatIfSignal {
             
             // СУПЕР-КРИТИЧЕСКАЯ ОПТИМИЗАЦИЯ: полное кэширование всех вычислений!
             let code_step_x4 = code_step * 4.0; // Предвычисляем шаг для группы
-            let pi2 = 2.0 * std::f64::consts::PI;
+            let pi2 = self.computation_cache.cached_two_pi;
             let pi2_phase_step = pi2 * phase_step; // Предвычисляем константу
             
             // Векторизованная обработка групп по 4 элемента с ПОЛНЫМ кэшированием
@@ -672,7 +710,7 @@ impl SatIfSignal {
                 
                 for i in 0..remaining {
                     let idx = start_idx + i;
-                    let chip_index = ((base_chip_offset + (idx as f64) * code_step) as usize) % 1023;
+                    let chip_index = ((base_chip_offset + (idx as f64) * code_step) as usize) & 0x3FF;
                     
                     // Кэшированные значения
                     let prn_bit = self.prn_cache.get_prn_bit(chip_index);
