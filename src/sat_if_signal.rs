@@ -35,7 +35,7 @@ impl PrnCache {
         Self {
             cached_prn_bits: vec![1.0; 1023], // Инициализируем все как 1.0 (нет кода)
             last_update_ms: -1,
-            update_interval_ms: 100, // Обновлять каждые 100ms (агрессивное кэширование)
+            update_interval_ms: 1, // Обновлять каждую 1ms (GPS L1CA требует обновления каждую миллисекунду)
             is_valid: false,
         }
     }
@@ -610,24 +610,22 @@ impl SatIfSignal {
             let samples_per_group = 4;
             let full_groups = (self.sample_number as usize) / samples_per_group;
             
-            // КРИТИЧЕСКАЯ ОПТИМИЗАЦИЯ: векторизованные chip_indices расчёты
-            let code_step_4x = f64x4::splat(code_step);
-            let offsets_4x = f64x4::new([0.0, 1.0, 2.0, 3.0]);
-            let chip_mod_1023 = f64x4::splat(1023.0);
-            let base_chip_vec = f64x4::splat(base_chip_offset);
+            // СУПЕР-КРИТИЧЕСКАЯ ОПТИМИЗАЦИЯ: полное кэширование всех вычислений!
+            let code_step_x4 = code_step * 4.0; // Предвычисляем шаг для группы
+            let pi2 = 2.0 * std::f64::consts::PI;
+            let pi2_phase_step = pi2 * phase_step; // Предвычисляем константу
             
-            // Векторизованная обработка групп по 4 элемента с кэшированием
+            // Векторизованная обработка групп по 4 элемента с ПОЛНЫМ кэшированием
             for group in 0..full_groups {
                 let base_idx = group * samples_per_group;
                 
-                // СУПЕР-ОПТИМИЗАЦИЯ: векторизованное вычисление chip_indices
-                let indices_f64 = base_chip_vec + (f64x4::splat(base_idx as f64) + offsets_4x) * code_step_4x;
-                let indices_mod = indices_f64 - (indices_f64 / chip_mod_1023).floor() * chip_mod_1023;
+                // МЕГА-ОПТИМИЗАЦИЯ: Используем простые битовые операции вместо модуло!
+                let chip_start = base_chip_offset + (base_idx as f64) * code_step;
                 let chip_indices: [usize; 4] = [
-                    indices_mod.as_array_ref()[0] as usize,
-                    indices_mod.as_array_ref()[1] as usize,
-                    indices_mod.as_array_ref()[2] as usize,
-                    indices_mod.as_array_ref()[3] as usize,
+                    (chip_start as usize) & 0x3FF, // 1023 = 0x3FF, битовая операция!
+                    ((chip_start + code_step) as usize) & 0x3FF,
+                    ((chip_start + code_step * 2.0) as usize) & 0x3FF,
+                    ((chip_start + code_step * 3.0) as usize) & 0x3FF,
                 ];
                 
                 // КЭШИРОВАННЫЕ PRN биты - молниеносный доступ!
@@ -638,16 +636,19 @@ impl SatIfSignal {
                     self.prn_cache.get_prn_bit(chip_indices[3]),
                 ]);
                 
-                // SIMD тригонометрические вычисления
-                let phase_indices = f64x4::new([
-                    (base_idx + 0) as f64 * phase_step * 2.0 * std::f64::consts::PI,
-                    (base_idx + 1) as f64 * phase_step * 2.0 * std::f64::consts::PI,
-                    (base_idx + 2) as f64 * phase_step * 2.0 * std::f64::consts::PI,
-                    (base_idx + 3) as f64 * phase_step * 2.0 * std::f64::consts::PI,
+                // РЕВОЛЮЦИЯ! Используем готовые cos/sin из кэша вместо пересчёта!
+                let cos_vals = f64x4::new([
+                    carrier_cache.cached_cos[base_idx + 0],
+                    carrier_cache.cached_cos[base_idx + 1],
+                    carrier_cache.cached_cos[base_idx + 2],
+                    carrier_cache.cached_cos[base_idx + 3],
                 ]);
-                
-                let cos_vals = FastMath::fast_cos_simd(phase_indices);
-                let sin_vals = FastMath::fast_sin_simd(phase_indices);
+                let sin_vals = f64x4::new([
+                    carrier_cache.cached_sin[base_idx + 0],
+                    carrier_cache.cached_sin[base_idx + 1],
+                    carrier_cache.cached_sin[base_idx + 2],
+                    carrier_cache.cached_sin[base_idx + 3],
+                ]);
                 
                 // Супер-оптимизированная SIMD генерация сигнала
                 let nav_value_vec = f64x4::splat(nav_value);
