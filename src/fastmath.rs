@@ -57,6 +57,16 @@ impl FastMath {
         unsafe { SIN_LUT[index] }
     }
 
+    // КРИТИЧЕСКАЯ ОПТИМИЗАЦИЯ: быстрая версия sin БЕЗ нормализации для предварительно нормализованных углов
+    #[inline]
+    pub fn fast_sin_unnormalized(angle: f64) -> f64 {
+        Self::initialize_lut();
+        
+        // Предполагаем что angle уже в диапазоне [0, 2*PI) - НЕТ нормализации!
+        let index = (angle * (65536.0 / (2.0 * std::f64::consts::PI))) as usize & (65536 - 1);
+        unsafe { SIN_LUT[index] }
+    }
+
     // Fast cosine using lookup table
     pub fn fast_cos(angle: f64) -> f64 {
         Self::initialize_lut();
@@ -72,6 +82,16 @@ impl FastMath {
         unsafe { COS_LUT[index] }
     }
 
+    // КРИТИЧЕСКАЯ ОПТИМИЗАЦИЯ: быстрая версия cos БЕЗ нормализации для предварительно нормализованных углов
+    #[inline]
+    pub fn fast_cos_unnormalized(angle: f64) -> f64 {
+        Self::initialize_lut();
+        
+        // Предполагаем что angle уже в диапазоне [0, 2*PI) - НЕТ нормализации!
+        let index = (angle * (65536.0 / (2.0 * std::f64::consts::PI))) as usize & (65536 - 1);
+        unsafe { COS_LUT[index] }
+    }
+
     // Fast complex rotation using lookup tables
     pub fn fast_rotate(angle: f64) -> ComplexNumber {
         Self::initialize_lut();
@@ -83,6 +103,16 @@ impl FastMath {
         }
         
         // Convert to table index
+        let index = (angle * (65536.0 / (2.0 * std::f64::consts::PI))) as usize & (65536 - 1);
+        unsafe { ComplexNumber { real: COS_LUT[index], imag: SIN_LUT[index] } }
+    }
+
+    // КРИТИЧЕСКАЯ ОПТИМИЗАЦИЯ: быстрая версия rotate БЕЗ нормализации - МАКСИМАЛЬНАЯ СКОРОСТЬ!
+    #[inline]
+    pub fn fast_rotate_unnormalized(angle: f64) -> ComplexNumber {
+        Self::initialize_lut();
+        
+        // Предполагаем что angle уже в диапазоне [0, 2*PI) - НЕТ нормализации!
         let index = (angle * (65536.0 / (2.0 * std::f64::consts::PI))) as usize & (65536 - 1);
         unsafe { ComplexNumber { real: COS_LUT[index], imag: SIN_LUT[index] } }
     }

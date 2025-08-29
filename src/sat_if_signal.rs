@@ -839,7 +839,10 @@ impl SatIfSignal {
     }
 
     fn get_rotate_value(&self, cur_phase: &mut f64, phase_step: f64) -> ComplexNumber {
-        let rotate = FastMath::fast_rotate(*cur_phase * PI2);
+        // КРИТИЧЕСКАЯ ОПТИМИЗАЦИЯ: используем unnormalized версию FastMath для максимальной скорости
+        // Углы фазы уже находятся в правильном диапазоне, нет необходимости в нормализации!
+        let phase_angle = *cur_phase * PI2;
+        let rotate = FastMath::fast_rotate_unnormalized(phase_angle);
         *cur_phase += phase_step;
         rotate
     }
