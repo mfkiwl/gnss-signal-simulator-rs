@@ -1215,8 +1215,9 @@ impl IFDataGen {
                     // Simple sine wave test signal + noise
                     let phase = (j as f64) * 2.0 * std::f64::consts::PI / 1000.0; // 1kHz test tone
                     let amplitude = 0.1; // Low amplitude test signal
-                    noise_array[j].real = phase.sin() * amplitude + (rand::random::<f64>() - 0.5) * 0.01;
-                    noise_array[j].imag = phase.cos() * amplitude + (rand::random::<f64>() - 0.5) * 0.01;
+                    // УСКОРЕНИЕ: используем FastMath вместо стандартных sin/cos
+                    noise_array[j].real = crate::fastmath::FastMath::fast_sin(phase) * amplitude + (rand::random::<f64>() - 0.5) * 0.01;
+                    noise_array[j].imag = crate::fastmath::FastMath::fast_cos(phase) * amplitude + (rand::random::<f64>() - 0.5) * 0.01;
                 }
             } else {
                 // Full GNSS signal generation (slower but accurate)
@@ -1759,10 +1760,11 @@ impl IFDataGen {
                 
                 // Вызов функции расчета позиции спутника (упрощенный)
                 // В полной реализации: gps_sat_pos_speed_eph(system, gps_time_seconds, ephemeris, &mut sat_pos_vel)
-                // Пока используем координаты из эфемерид
-                sat_pos_vel.x = ephemeris.axis * (ephemeris.M0 + ephemeris.n * gps_time_seconds).cos();
-                sat_pos_vel.y = ephemeris.axis * (ephemeris.M0 + ephemeris.n * gps_time_seconds).sin();
-                sat_pos_vel.z = ephemeris.axis * ephemeris.i0.sin() * (ephemeris.M0 + ephemeris.n * gps_time_seconds).sin();
+                // УСКОРЕНИЕ: используем FastMath для тригонометрии в критическом цикле орбит
+                let mean_anomaly = ephemeris.M0 + ephemeris.n * gps_time_seconds;
+                sat_pos_vel.x = ephemeris.axis * crate::fastmath::FastMath::fast_cos(mean_anomaly);
+                sat_pos_vel.y = ephemeris.axis * crate::fastmath::FastMath::fast_sin(mean_anomaly);
+                sat_pos_vel.z = ephemeris.axis * crate::fastmath::FastMath::fast_sin(ephemeris.i0) * crate::fastmath::FastMath::fast_sin(mean_anomaly);
                 
                 // Вычисляем угол места (elevation) от текущей позиции до спутника
                 let dx = sat_pos_vel.x - cur_pos.x;
@@ -2313,7 +2315,7 @@ impl IFDataGen {
         // Eccentric anomaly - iterative solution
         let mut ek = mk;
         for _ in 0..10 {
-            let ek1 = mk + (eph.ecc as f64) * ek.sin();
+            let ek1 = mk + (eph.ecc as f64) * crate::fastmath::FastMath::fast_sin(ek);
             if (ek1 - ek).abs() < 1e-12 {
                 ek = ek1;
                 break;
@@ -2321,9 +2323,9 @@ impl IFDataGen {
             ek = ek1;
         }
         
-        // True anomaly
-        let sin_ek = ek.sin();
-        let cos_ek = ek.cos();
+        // УСКОРЕНИЕ: FastMath для True anomaly
+        let sin_ek = crate::fastmath::FastMath::fast_sin(ek);
+        let cos_ek = crate::fastmath::FastMath::fast_cos(ek);
         let ecc = eph.ecc as f64;
         
         let phi = ((1.0 - ecc * ecc).sqrt() * sin_ek / (1.0 - ecc * cos_ek)).atan2(
@@ -2333,9 +2335,9 @@ impl IFDataGen {
         // Argument of latitude
         let uk = phi + eph.w as f64;
         
-        // Second harmonic perturbations
-        let sin_2u = (2.0 * uk).sin();
-        let cos_2u = (2.0 * uk).cos();
+        // УСКОРЕНИЕ: FastMath для Second harmonic perturbations
+        let sin_2u = crate::fastmath::FastMath::fast_sin(2.0 * uk);
+        let cos_2u = crate::fastmath::FastMath::fast_cos(2.0 * uk);
         
         let duk = eph.cus as f64 * sin_2u + eph.cuc as f64 * cos_2u;
         let drk = eph.crs as f64 * sin_2u + eph.crc as f64 * cos_2u;
@@ -2346,18 +2348,18 @@ impl IFDataGen {
         let rk = a * (1.0 - ecc * cos_ek) + drk;
         let ik = eph.i0 as f64 + eph.idot as f64 * delta_t + dik;
         
-        // Positions in orbital plane
-        let xp = rk * uk_corrected.cos();
-        let yp = rk * uk_corrected.sin();
+        // УСКОРЕНИЕ: FastMath для Positions in orbital plane
+        let xp = rk * crate::fastmath::FastMath::fast_cos(uk_corrected);
+        let yp = rk * crate::fastmath::FastMath::fast_sin(uk_corrected);
         
         // Corrected longitude of ascending node
         let omega_k = eph.omega0 as f64 + (eph.omega_dot as f64 - WGS_OMEGDOTE) * delta_t - WGS_OMEGDOTE * eph.toe as f64;
         
-        // Earth-fixed coordinates
-        let sin_omega = omega_k.sin();
-        let cos_omega = omega_k.cos();
-        let sin_i = ik.sin();
-        let cos_i = ik.cos();
+        // УСКОРЕНИЕ: FastMath для Earth-fixed coordinates - критично для производительности!
+        let sin_omega = crate::fastmath::FastMath::fast_sin(omega_k);
+        let cos_omega = crate::fastmath::FastMath::fast_cos(omega_k);
+        let sin_i = crate::fastmath::FastMath::fast_sin(ik);
+        let cos_i = crate::fastmath::FastMath::fast_cos(ik);
         
         let x = xp * cos_omega - yp * cos_i * sin_omega;
         let y = xp * sin_omega + yp * cos_i * cos_omega;
