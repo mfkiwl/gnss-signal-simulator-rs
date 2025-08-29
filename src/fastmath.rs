@@ -9,6 +9,7 @@
 use crate::ComplexNumber;
 use std::sync::Once;
 use rand::Rng;
+use wide::{f64x4, i32x4, CmpEq};
 
 pub struct FastMath;
 
@@ -113,6 +114,93 @@ impl FastMath {
         }
 
         ComplexNumber { real: u1 * factor * sigma, imag: u2 * factor * sigma }
+    }
+
+    // SIMD vectorized sine function - processes 4 angles at once
+    pub fn fast_sin_simd(angles: f64x4) -> f64x4 {
+        Self::initialize_lut();
+        
+        const TWO_PI: f64 = 2.0 * std::f64::consts::PI;
+        const LUT_SCALE: f64 = 65536.0 / TWO_PI;
+        
+        // Process each angle individually since wide doesn't support % operator
+        let angles_array = angles.as_array_ref();
+        
+        unsafe {
+            f64x4::new([
+                {
+                    let mut angle = angles_array[0] % TWO_PI;
+                    if angle < 0.0 { angle += TWO_PI; }
+                    let index = (angle * LUT_SCALE) as usize & (65536 - 1);
+                    SIN_LUT[index]
+                },
+                {
+                    let mut angle = angles_array[1] % TWO_PI;
+                    if angle < 0.0 { angle += TWO_PI; }
+                    let index = (angle * LUT_SCALE) as usize & (65536 - 1);
+                    SIN_LUT[index]
+                },
+                {
+                    let mut angle = angles_array[2] % TWO_PI;
+                    if angle < 0.0 { angle += TWO_PI; }
+                    let index = (angle * LUT_SCALE) as usize & (65536 - 1);
+                    SIN_LUT[index]
+                },
+                {
+                    let mut angle = angles_array[3] % TWO_PI;
+                    if angle < 0.0 { angle += TWO_PI; }
+                    let index = (angle * LUT_SCALE) as usize & (65536 - 1);
+                    SIN_LUT[index]
+                }
+            ])
+        }
+    }
+    
+    // SIMD vectorized cosine function - processes 4 angles at once
+    pub fn fast_cos_simd(angles: f64x4) -> f64x4 {
+        Self::initialize_lut();
+        
+        const TWO_PI: f64 = 2.0 * std::f64::consts::PI;
+        const LUT_SCALE: f64 = 65536.0 / TWO_PI;
+        
+        // Process each angle individually since wide doesn't support % operator
+        let angles_array = angles.as_array_ref();
+        
+        unsafe {
+            f64x4::new([
+                {
+                    let mut angle = angles_array[0] % TWO_PI;
+                    if angle < 0.0 { angle += TWO_PI; }
+                    let index = (angle * LUT_SCALE) as usize & (65536 - 1);
+                    COS_LUT[index]
+                },
+                {
+                    let mut angle = angles_array[1] % TWO_PI;
+                    if angle < 0.0 { angle += TWO_PI; }
+                    let index = (angle * LUT_SCALE) as usize & (65536 - 1);
+                    COS_LUT[index]
+                },
+                {
+                    let mut angle = angles_array[2] % TWO_PI;
+                    if angle < 0.0 { angle += TWO_PI; }
+                    let index = (angle * LUT_SCALE) as usize & (65536 - 1);
+                    COS_LUT[index]
+                },
+                {
+                    let mut angle = angles_array[3] % TWO_PI;
+                    if angle < 0.0 { angle += TWO_PI; }
+                    let index = (angle * LUT_SCALE) as usize & (65536 - 1);
+                    COS_LUT[index]
+                }
+            ])
+        }
+    }
+    
+    // SIMD vectorized complex rotation - processes 4 angles at once
+    pub fn fast_rotate_simd(angles: f64x4) -> (f64x4, f64x4) {
+        let cos_vals = Self::fast_cos_simd(angles);
+        let sin_vals = Self::fast_sin_simd(angles);
+        (cos_vals, sin_vals)
     }
 
     // Batch noise generation for better cache efficiency

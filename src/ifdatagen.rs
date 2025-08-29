@@ -1227,8 +1227,8 @@ impl IFDataGen {
                     .par_iter_mut()
                     .for_each(|sig_option| {
                         if let Some(ref mut sig) = sig_option {
-                            // SIMD оптимизация: используем векторизованную функцию
-                            sig.get_if_sample_simd(current_time);
+                            // СУПЕР-ОПТИМИЗАЦИЯ: SIMD + агрессивное кэширование
+                            sig.get_if_sample_cached(current_time);
                         }
                     });
 

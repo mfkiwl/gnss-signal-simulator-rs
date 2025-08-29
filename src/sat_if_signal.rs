@@ -14,6 +14,99 @@ use crate::satellite_signal::SatelliteSignal;
 use crate::constants::*;
 use crate::fastmath::FastMath;
 use wide::f64x4;  // SIMD векторизация для 4 элементов за раз
+use std::collections::HashMap;
+
+/// Кэш PRN кодов для агрессивной оптимизации
+/// Предвычисляет PRN биты на несколько миллисекунд вперед
+#[derive(Clone)]
+pub struct PrnCache {
+    /// Кэш PRN битов: (chip_index % 1023) -> prn_bit_value
+    cached_prn_bits: Vec<f64>,
+    /// Время последнего обновления кэша (в миллисекундах)
+    last_update_ms: i32,
+    /// Интервал обновления кэша (миллисекунды)
+    update_interval_ms: i32,
+    /// Флаг валидности кэша
+    is_valid: bool,
+}
+
+impl PrnCache {
+    pub fn new() -> Self {
+        Self {
+            cached_prn_bits: vec![1.0; 1023], // Инициализируем все как 1.0 (нет кода)
+            last_update_ms: -1,
+            update_interval_ms: 100, // Обновлять каждые 100ms (агрессивное кэширование)
+            is_valid: false,
+        }
+    }
+    
+    /// Проверяет нужно ли обновить кэш
+    pub fn needs_update(&self, current_ms: i32) -> bool {
+        !self.is_valid || (current_ms - self.last_update_ms) >= self.update_interval_ms
+    }
+    
+    /// Обновляет кэш PRN битов из данных
+    pub fn update_cache(&mut self, data_prn: &[i32], current_ms: i32) {
+        // Предвычисляем все PRN биты для GPS L1CA (1023 чипа)
+        for chip_index in 0..1023 {
+            self.cached_prn_bits[chip_index] = if chip_index < data_prn.len() && data_prn[chip_index] != 0 {
+                -1.0
+            } else {
+                1.0
+            };
+        }
+        self.last_update_ms = current_ms;
+        self.is_valid = true;
+    }
+    
+    /// Быстрый доступ к PRN биту по индексу
+    #[inline]
+    pub fn get_prn_bit(&self, chip_index: usize) -> f64 {
+        self.cached_prn_bits[chip_index % 1023]
+    }
+}
+
+/// Кэш фаз несущей для дальнейшей оптимизации
+#[derive(Clone)]
+pub struct CarrierPhaseCache {
+    /// Предвычисленные cos значения
+    cached_cos: Vec<f64>,
+    /// Предвычисленные sin значения  
+    cached_sin: Vec<f64>,
+    /// Размер кэша (количество фаз)
+    cache_size: usize,
+    /// Шаг фазы
+    phase_step: f64,
+}
+
+impl CarrierPhaseCache {
+    pub fn new(sample_number: usize, phase_step: f64) -> Self {
+        let cache_size = sample_number;
+        let mut cached_cos = Vec::with_capacity(cache_size);
+        let mut cached_sin = Vec::with_capacity(cache_size);
+        
+        // Предвычисляем все cos/sin значения
+        for i in 0..cache_size {
+            let phase = (i as f64) * phase_step;
+            let angle = phase * 2.0 * std::f64::consts::PI;
+            cached_cos.push(FastMath::fast_cos(angle));
+            cached_sin.push(FastMath::fast_sin(angle));
+        }
+        
+        Self {
+            cached_cos,
+            cached_sin,
+            cache_size,
+            phase_step,
+        }
+    }
+    
+    #[inline]
+    pub fn get_cos_sin(&self, sample_index: usize) -> (f64, f64) {
+        let idx = sample_index % self.cache_size;
+        (self.cached_cos[idx], self.cached_sin[idx])
+    }
+}
 
 pub struct SatIfSignal {
     sample_number: i32,
@@ -36,6 +129,9 @@ pub struct SatIfSignal {
     data_signal: ComplexNumber,
     pilot_signal: ComplexNumber,
     half_cycle_flag: i32,
+    // НОВЫЕ КЭШИ ДЛЯ АГРЕССИВНОЙ ОПТИМИЗАЦИИ
+    prn_cache: PrnCache,
+    carrier_phase_cache: Option<CarrierPhaseCache>,
 }
 
 impl SatIfSignal {
@@ -79,6 +175,9 @@ impl SatIfSignal {
             data_signal: ComplexNumber::new(),
             pilot_signal: ComplexNumber::new(),
             half_cycle_flag: 0,
+            // Инициализация кэшей
+            prn_cache: PrnCache::new(),
+            carrier_phase_cache: None, // Будет инициализирован при первом использовании
         }
     }
 
@@ -381,6 +480,116 @@ impl SatIfSignal {
                 
                 cur_phase += phase_step;
                 cur_chip += code_step;
+            }
+        }
+    }
+
+    /// СУПЕР-ОПТИМИЗИРОВАННАЯ генерация IF сигнала с агрессивным кэшированием
+    /// Использует предвычисленные PRN коды и фазы несущей
+    pub fn get_if_sample_cached(&mut self, cur_time: GnssTime) {
+        // Получаем параметры спутника
+        let p_sat_param = if let Some(ref sat_param) = self.sat_param {
+            sat_param
+        } else {
+            return;
+        };
+        
+        // Подготовка всех параметров
+        let ms_offset = cur_time.MilliSeconds - self.signal_time.MilliSeconds;
+        let phase_increment = (self.if_freq as f64) / 1000.0;
+        let code_attribute = self.prn_sequence.attribute.as_ref().unwrap();
+        let chip_advance = code_attribute.chip_rate as f64;
+        let code_step = chip_advance / (self.sample_number as f64);
+        let base_chip_offset = (ms_offset as f64) * code_attribute.chip_rate as f64;
+        let amp = 10.0_f64.powf((p_sat_param.CN0 as f64 - 3000.0) / 1000.0) / (self.sample_number as f64).sqrt();
+        let phase_step = phase_increment / (self.sample_number as f64);
+        let nav_value = if self.data_signal.real >= 0.0 { 1.0 } else { -1.0 };
+        
+        // АГРЕССИВНОЕ КЭШИРОВАНИЕ: Обновляем PRN кэш если нужно
+        if let Some(data_prn) = &self.prn_sequence.data_prn {
+            if self.prn_cache.needs_update(cur_time.MilliSeconds) {
+                self.prn_cache.update_cache(data_prn, cur_time.MilliSeconds);
+            }
+        }
+        
+        // АГРЕССИВНОЕ КЭШИРОВАНИЕ: Инициализируем кэш фаз несущей если нужно
+        if self.carrier_phase_cache.is_none() {
+            self.carrier_phase_cache = Some(CarrierPhaseCache::new(
+                self.sample_number as usize, 
+                phase_step
+            ));
+        }
+        
+        // Супер-быстрая генерация с использованием кэшей
+        if let Some(ref carrier_cache) = self.carrier_phase_cache {
+            // SIMD + кэширование для максимальной производительности
+            let samples_per_group = 4;
+            let full_groups = (self.sample_number as usize) / samples_per_group;
+            
+            // Векторизованная обработка групп по 4 элемента с кэшированием
+            for group in 0..full_groups {
+                let base_idx = group * samples_per_group;
+                
+                // Предвычисляем chip_indices для группы
+                let chip_indices: [usize; 4] = [
+                    ((base_chip_offset + ((base_idx + 0) as f64) * code_step) as usize) % 1023,
+                    ((base_chip_offset + ((base_idx + 1) as f64) * code_step) as usize) % 1023,
+                    ((base_chip_offset + ((base_idx + 2) as f64) * code_step) as usize) % 1023,
+                    ((base_chip_offset + ((base_idx + 3) as f64) * code_step) as usize) % 1023,
+                ];
+                
+                // КЭШИРОВАННЫЕ PRN биты (очень быстро!)
+                let prn_bits = f64x4::new([
+                    self.prn_cache.get_prn_bit(chip_indices[0]),
+                    self.prn_cache.get_prn_bit(chip_indices[1]),
+                    self.prn_cache.get_prn_bit(chip_indices[2]),
+                    self.prn_cache.get_prn_bit(chip_indices[3]),
+                ]);
+                
+                // SIMD тригонометрические вычисления
+                let phase_indices = f64x4::new([
+                    (base_idx + 0) as f64 * phase_step * 2.0 * std::f64::consts::PI,
+                    (base_idx + 1) as f64 * phase_step * 2.0 * std::f64::consts::PI,
+                    (base_idx + 2) as f64 * phase_step * 2.0 * std::f64::consts::PI,
+                    (base_idx + 3) as f64 * phase_step * 2.0 * std::f64::consts::PI,
+                ]);
+                
+                let cos_vals = FastMath::fast_cos_simd(phase_indices);
+                let sin_vals = FastMath::fast_sin_simd(phase_indices);
+                
+                // Супер-оптимизированная SIMD генерация сигнала
+                let nav_value_vec = f64x4::splat(nav_value);
+                let amp_vec = f64x4::splat(amp);
+                
+                // Используем SIMD функцию для комплексных вычислений
+                ComplexNumber::simd_generate_signal(
+                    prn_bits,
+                    nav_value_vec,
+                    cos_vals,
+                    sin_vals,
+                    amp_vec,
+                    &mut self.sample_array[base_idx..base_idx + samples_per_group]
+                );
+            }
+            
+            // Обработка оставшихся элементов
+            let remaining = (self.sample_number as usize) % samples_per_group;
+            if remaining > 0 {
+                let start_idx = full_groups * samples_per_group;
+                
+                for i in 0..remaining {
+                    let idx = start_idx + i;
+                    let chip_index = ((base_chip_offset + (idx as f64) * code_step) as usize) % 1023;
+                    
+                    // Кэшированные значения
+                    let prn_bit = self.prn_cache.get_prn_bit(chip_index);
+                    let (cos_val, sin_val) = carrier_cache.get_cos_sin(idx);
+                    
+                    self.sample_array[idx] = ComplexNumber {
+                        real: prn_bit * nav_value * cos_val * amp,
+                        imag: prn_bit * nav_value * sin_val * amp,
+                    };
+                }
             }
         }
     }
