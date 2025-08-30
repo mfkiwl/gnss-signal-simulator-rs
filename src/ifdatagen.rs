@@ -661,13 +661,25 @@ impl IFDataGen {
             // Создаем CNavData для загрузки эфемерид
             let mut c_nav_data = crate::json_interpreter::CNavData::default();
             
-            // Определяем включенные системы из JSON конфигурации
-            let enabled_systems = vec!["BeiDou"]; // Только BeiDou для B1C пресета
+            // Определяем включенные системы из JSON конфигурации (FreqSelect)
+            let mut enabled_systems = Vec::new();
+            if self.output_param.FreqSelect[GnssSystem::GpsSystem as usize] != 0 {
+                enabled_systems.push("GPS");
+            }
+            if self.output_param.FreqSelect[GnssSystem::GlonassSystem as usize] != 0 {
+                enabled_systems.push("GLONASS");
+            }
+            if self.output_param.FreqSelect[GnssSystem::BdsSystem as usize] != 0 {
+                enabled_systems.push("BeiDou");
+            }
+            if self.output_param.FreqSelect[GnssSystem::GalileoSystem as usize] != 0 {
+                enabled_systems.push("Galileo");
+            }
             
-            println!("[DEBUG] Using filtered RINEX loading for BeiDou: time={}-{:02}-{:02} {:02}:{:02}:{:02}, systems={:?}", 
+            println!("[DEBUG] Using filtered RINEX loading: time={}-{:02}-{:02} {:02}:{:02}:{:02}, systems={:?}", 
                 utc_time.Year, utc_time.Month, utc_time.Day, utc_time.Hour, utc_time.Minute, utc_time.Second, enabled_systems);
             
-            // Используем оптимизированную загрузку RINEX с фильтрацией BeiDou  
+            // Используем оптимизированную загрузку RINEX с фильтрацией систем из JSON  
             crate::json_interpreter::read_nav_file_filtered(
                 &mut c_nav_data, 
                 &rinex_file,
@@ -676,7 +688,8 @@ impl IFDataGen {
             );
             
             // Копируем загруженные эфемериды в наши данные
-            self.copy_beidou_ephemeris_from_json_nav_data(&c_nav_data);
+            self.copy_ephemeris_from_json_nav_data(&c_nav_data); // GPS эфемериды
+            self.copy_beidou_ephemeris_from_json_nav_data(&c_nav_data); // BeiDou эфемериды
         } else {
             println!("[ERROR]\tRINEX file not found: {}", rinex_file);
         }
@@ -2477,13 +2490,25 @@ impl IFDataGen {
             // Создаем CNavData для загрузки эфемерид
             let mut c_nav_data = crate::json_interpreter::CNavData::default();
             
-            // Определяем включенные системы из JSON конфигурации
-            let enabled_systems = vec!["BeiDou"]; // Только BeiDou для B1C пресета
+            // Определяем включенные системы из JSON конфигурации (FreqSelect)
+            let mut enabled_systems = Vec::new();
+            if self.output_param.FreqSelect[GnssSystem::GpsSystem as usize] != 0 {
+                enabled_systems.push("GPS");
+            }
+            if self.output_param.FreqSelect[GnssSystem::GlonassSystem as usize] != 0 {
+                enabled_systems.push("GLONASS");
+            }
+            if self.output_param.FreqSelect[GnssSystem::BdsSystem as usize] != 0 {
+                enabled_systems.push("BeiDou");
+            }
+            if self.output_param.FreqSelect[GnssSystem::GalileoSystem as usize] != 0 {
+                enabled_systems.push("Galileo");
+            }
             
-            println!("[DEBUG] Using filtered RINEX loading for BeiDou: time={}-{:02}-{:02} {:02}:{:02}:{:02}, systems={:?}", 
+            println!("[DEBUG] Using filtered RINEX loading: time={}-{:02}-{:02} {:02}:{:02}:{:02}, systems={:?}", 
                 utc_time.Year, utc_time.Month, utc_time.Day, utc_time.Hour, utc_time.Minute, utc_time.Second, enabled_systems);
             
-            // Используем оптимизированную загрузку RINEX с фильтрацией BeiDou  
+            // Используем оптимизированную загрузку RINEX с фильтрацией систем из JSON  
             crate::json_interpreter::read_nav_file_filtered(
                 &mut c_nav_data, 
                 &rinex_file,
@@ -2492,7 +2517,8 @@ impl IFDataGen {
             );
             
             // Копируем загруженные эфемериды в наши данные
-            self.copy_beidou_ephemeris_from_json_nav_data(&c_nav_data);
+            self.copy_ephemeris_from_json_nav_data(&c_nav_data); // GPS эфемериды
+            self.copy_beidou_ephemeris_from_json_nav_data(&c_nav_data); // BeiDou эфемериды
             
             println!("[INFO]\tMinimal ephemeris loaded successfully");
         } else {
