@@ -674,7 +674,8 @@ pub fn read_nav_file_filtered(
     let mut total_lines_processed = 0;
     
     // Кэш лучших эфемерид по SVID для умной фильтрации (u8 -> i32)
-    let mut best_ephemeris: std::collections::HashMap<u8, (GpsEphemeris, f64)> = std::collections::HashMap::new();
+    let mut ephemeris_by_epoch: std::collections::HashMap<i32, std::collections::HashMap<u8, GpsEphemeris>> = std::collections::HashMap::new();
+    let mut available_epochs: std::collections::HashSet<i32> = std::collections::HashSet::new();
     
     // Оптимизированный RINEX парсер с фильтрацией
     loop {
@@ -727,39 +728,31 @@ pub fn read_nav_file_filtered(
                 if let Some(eph) = parse_gps_ephemeris(&line, &mut lines) {
                     gps_parsed += 1;
                     
-                    // Умная фильтрация: оставляем только лучшую эфемериду для каждого SVID
+                    // Новая логика: группируем эфемериды по эпохам времени (toe)
                     if let Some(target) = target_time {
                         if is_ephemeris_within_time_window(&eph, &target, time_window_hours) {
-                            let target_gps = utc_to_gps_time(target.clone(), false);
-                            let target_seconds = (target_gps.Week as f64) * 604800.0 + (target_gps.MilliSeconds as f64) / 1000.0;
-                            let eph_seconds = (eph.week as f64) * 604800.0 + (eph.toe as f64);
-                            let time_diff = (eph_seconds - target_seconds).abs();
+                            // Добавляем эпоху в список доступных
+                            available_epochs.insert(eph.toe);
                             
-                            // Проверяем есть ли уже эфемерида для этого SVID
-                            match best_ephemeris.get(&eph.svid) {
-                                Some((_, existing_diff)) if time_diff < *existing_diff => {
-                                    // Новая эфемерида ближе по времени - заменяем
-                                    best_ephemeris.insert(eph.svid, (eph, time_diff));
-                                }
-                                None => {
-                                    // Первая эфемерида для этого SVID
-                                    best_ephemeris.insert(eph.svid, (eph, time_diff));
-                                }
-                                _ => {
-                                    // Существующая эфемерида лучше - игнорируем новую
-                                }
-                            }
+                            // Группируем эфемериды по эпохе времени
+                            let epoch_map = ephemeris_by_epoch.entry(eph.toe).or_insert_with(std::collections::HashMap::new);
+                            epoch_map.insert(eph.svid, eph);
                         }
                     } else {
-                        // Без временной фильтрации просто берем первую
-                        if !best_ephemeris.contains_key(&eph.svid) {
-                            best_ephemeris.insert(eph.svid, (eph, 0.0));
+                        // Без временной фильтрации - просто берем первую эпоху для каждого SVID
+                        available_epochs.insert(eph.toe);
+                        let epoch_map = ephemeris_by_epoch.entry(eph.toe).or_insert_with(std::collections::HashMap::new);
+                        if !epoch_map.contains_key(&eph.svid) {
+                            epoch_map.insert(eph.svid, eph);
                         }
                     }
                     
-                    // Ранний выход: если нашли эфемериды для 30+ SVID, хватит
-                    if best_ephemeris.len() >= 30 {
-                        println!("[INFO] Early exit: found {} GPS ephemeris, stopping RINEX parsing", best_ephemeris.len());
+                    // Проверяем, достаточно ли эфемерид для раннего выхода
+                    let total_ephemeris: usize = ephemeris_by_epoch.values()
+                        .map(|epoch_map| epoch_map.len()).sum();
+                    if total_ephemeris >= 100 {
+                        println!("[INFO] Early exit: found {} GPS ephemeris across {} epochs", 
+                                total_ephemeris, available_epochs.len());
                         break;
                     }
                 }
@@ -822,10 +815,47 @@ pub fn read_nav_file_filtered(
         }
     }
     
-    // Добавляем лучшие эфемериды в nav_data
-    for (svid, (eph, _time_diff)) in best_ephemeris {
-        nav_data.add_gps_ephemeris(eph);
-        gps_accepted += 1;
+    // Выбираем единую лучшую эпоху для всех спутников
+    if let Some(target) = target_time {
+        if !available_epochs.is_empty() {
+            // Находим эпоху ближайшую к target_time
+            let target_gps = utc_to_gps_time(target.clone(), false);
+            let target_seconds = (target_gps.Week as f64) * 604800.0 + (target_gps.MilliSeconds as f64) / 1000.0;
+            
+            let mut best_epoch = 0i32;
+            let mut best_epoch_diff = f64::INFINITY;
+            
+            for &epoch in &available_epochs {
+                // toe уже в секундах GPS недели, нужно добавить неделю
+                let epoch_seconds = (target_gps.Week as f64) * 604800.0 + (epoch as f64);
+                let time_diff = (epoch_seconds - target_seconds).abs();
+                if time_diff < best_epoch_diff {
+                    best_epoch_diff = time_diff;
+                    best_epoch = epoch;
+                }
+            }
+            
+            println!("[INFO] Selected epoch: toe={} (diff={:.1}h) from {} available epochs",
+                     best_epoch, best_epoch_diff / 3600.0, available_epochs.len());
+            
+            // Добавляем все эфемериды с выбранной эпохи
+            if let Some(epoch_ephemeris) = ephemeris_by_epoch.get(&best_epoch) {
+                for (svid, eph) in epoch_ephemeris {
+                    nav_data.add_gps_ephemeris(*eph);
+                    gps_accepted += 1;
+                    println!("[DEBUG] Added GPS ephemeris for SVID {} with toe={}", svid, eph.toe);
+                }
+            }
+        }
+    } else {
+        // Без временной фильтрации - берем первую доступную эпоху
+        if let Some((&first_epoch, first_epoch_ephemeris)) = ephemeris_by_epoch.iter().next() {
+            println!("[INFO] No time filtering - using first epoch: toe={}", first_epoch);
+            for (svid, eph) in first_epoch_ephemeris {
+                nav_data.add_gps_ephemeris(*eph);
+                gps_accepted += 1;
+            }
+        }
     }
     
     println!("[DEBUG] RINEX parsing completed: {} lines processed (expected ~105000)", total_lines_processed);
