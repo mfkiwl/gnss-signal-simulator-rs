@@ -407,6 +407,16 @@ impl PrnGenerate {
     pub fn get_attribute(&self) -> Option<&PrnAttribute> {
         self.attribute.as_ref()
     }
+
+    /// Простая функция получения PRN бита по индексу (для потоковой обработки)
+    pub fn get_prn_bit(&self, chip_index: i32) -> bool {
+        if let Some(ref data_prn) = self.data_prn {
+            let idx = (chip_index as usize) % data_prn.len();
+            data_prn[idx] != 0
+        } else {
+            true // По умолчанию
+        }
+    }
 }
 
 // PRN attributes for different signals (matching C++ PrnAttributes array)

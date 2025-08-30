@@ -87,6 +87,25 @@ pub struct GnssTime {
     pub SubMilliSeconds: f64,
 }
 
+impl GnssTime {
+    pub fn add_milliseconds(&self, ms: f64) -> GnssTime {
+        let mut new_ms = self.MilliSeconds as f64 + ms;
+        let mut new_week = self.Week;
+        
+        // Handle week overflow (604800000 ms = 1 week)
+        while new_ms >= 604800000.0 {
+            new_ms -= 604800000.0;
+            new_week += 1;
+        }
+        
+        GnssTime {
+            Week: new_week,
+            MilliSeconds: new_ms as i32,
+            SubMilliSeconds: self.SubMilliSeconds,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, Default)]
 pub struct UtcTime {
     pub Year: i32,

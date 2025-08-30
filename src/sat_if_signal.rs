@@ -12,6 +12,7 @@ use crate::types::{SatelliteParam, GnssSystem, GnssTime};
 use crate::satellite_param::{get_travel_time, get_carrier_phase, get_transmit_time};
 use crate::satellite_signal::SatelliteSignal;
 use crate::constants::*;
+use std::f64::consts::PI;
 use crate::fastmath::FastMath;
 use wide::f64x4;  // SIMD векторизация для 4 элементов за раз
 use std::collections::HashMap;
@@ -190,6 +191,8 @@ pub struct SatIfSignal {
     signal_index: i32,
     svid: i32,
     pub sample_array: Vec<ComplexNumber>,
+    /// Буфер для потоковой обработки блоков данных (память-эффективно)
+    pub block_data: Option<Vec<ComplexNumber>>,
     prn_sequence: PrnGenerate,
     satellite_signal: SatelliteSignal,
     sat_param: Option<SatelliteParam>,
@@ -240,6 +243,7 @@ impl SatIfSignal {
             signal_index: sat_signal_index,
             svid: sat_id as i32,
             sample_array: vec![ComplexNumber::new(); ms_sample_number as usize],
+            block_data: None,
             prn_sequence: prn,
             satellite_signal: SatelliteSignal::new(),
             sat_param: None,
@@ -742,6 +746,75 @@ impl SatIfSignal {
         }
         
         println!("[PARALLEL] ✅ Спутник завершил полную генерацию");
+    }
+
+    /// 🚀 ПАМЯТЬ-ЭФФЕКТИВНАЯ генерация сигнала для блока времени
+    /// Генерирует только заданный блок времени, сохраняя память
+    pub fn generate_block_signal_parallel(&mut self, start_time: GnssTime, block_duration_ms: i32, samples_per_ms: usize, sample_freq: f64) {
+        let block_samples = (block_duration_ms as usize) * samples_per_ms;
+        
+        // Создаем буфер только для этого блока (не для всего файла!)
+        self.block_data = Some(vec![ComplexNumber::from_parts(0.0, 0.0); block_samples]);
+        
+        // Инициализация кэшей для этого блока
+        let total_samples = block_samples;
+        
+        // Инициализируем PRN кэш для блока
+        self.prn_cache = PrnCache::new();
+        
+        // Обработка всех миллисекунд в блоке
+        for ms_offset in 0..block_duration_ms {
+            let current_time = GnssTime {
+                Week: start_time.Week,
+                MilliSeconds: start_time.MilliSeconds + ms_offset,
+                SubMilliSeconds: start_time.SubMilliSeconds,
+            };
+            
+            // Генерируем сэмплы для этой миллисекунды в блоке
+            self.generate_samples_for_block_millisecond(current_time, ms_offset as usize, samples_per_ms);
+        }
+    }
+
+    /// Генерация сэмплов для одной миллисекунды в блоке (память-эффективно)
+    fn generate_samples_for_block_millisecond(&mut self, cur_time: GnssTime, ms_offset: usize, samples_per_ms: usize) {
+        let p_sat_param = if let Some(ref sat_param) = self.sat_param {
+            sat_param
+        } else {
+            return;
+        };
+
+        // Простые вычисления для этой миллисекунды
+        let amp = (10.0_f64.powf(p_sat_param.CN0 as f64 / 10.0 - 20.0) * 2.0 * self.sample_number as f64).sqrt();
+        let code_step = 1.023e6 / (self.sample_number as f64 * 1000.0);
+        let phase_step = 2.0 * PI * self.if_freq as f64 / (self.sample_number as f64 * 1000.0);
+        let nav_value = if self.data_signal.real >= 0.0 { 1.0 } else { -1.0 };
+        
+        // Получаем буфер блока
+        if let Some(ref mut block_data) = self.block_data {
+            let start_idx = ms_offset * samples_per_ms;
+            
+            // Генерируем сэмплы для этой миллисекунды
+            for i in 0..samples_per_ms {
+                let sample_idx = start_idx + i;
+                if sample_idx < block_data.len() {
+                    let t = i as f64;
+                    
+                    // PRN код (упрощенно)
+                    let chip_index = (t * code_step) as usize % 1023;
+                    let prn_value = if self.prn_sequence.get_prn_bit(chip_index as i32) { 1.0 } else { -1.0 };
+                    
+                    // Несущая
+                    let carrier_phase = phase_step * t;
+                    let cos_carrier = carrier_phase.cos();
+                    let sin_carrier = carrier_phase.sin();
+                    
+                    // Итоговый сигнал
+                    let signal_value = amp * nav_value * prn_value;
+                    block_data[sample_idx].real = signal_value * cos_carrier;
+                    block_data[sample_idx].imag = signal_value * sin_carrier;
+                }
+            }
+        }
     }
     
     /// Инициализация кэшей на всю длительность сигнала (вызывается один раз)

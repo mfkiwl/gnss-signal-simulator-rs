@@ -1410,9 +1410,9 @@ impl IFDataGen {
         Ok(())
     }
 
-    /// 🚀 РЕВОЛЮЦИОННАЯ ФУНКЦИЯ: Истинная параллелизация спутников
-    /// Каждый спутник работает в отдельном потоке на ВЕСЬ период времени
-    /// МАКСИМАЛЬНАЯ эффективность: отличная локальность кэша + нет переключений контекста
+    /// 🚀 РЕВОЛЮЦИОННАЯ ФУНКЦИЯ: Потоковая параллелизация спутников (ПАМЯТЬ-ЭФФЕКТИВНАЯ)
+    /// Обрабатывает данные по блокам, записывая сразу в файл
+    /// РЕШАЕТ ПРОБЛЕМУ ПАМЯТИ: Для 300s (3GB) обрабатывает по 1s блокам
     fn generate_with_true_parallelization(
         &mut self, 
         if_file: &mut BufWriter<File>,
@@ -1421,95 +1421,120 @@ impl IFDataGen {
         samples_per_ms: usize,
         start_time_gnss: GnssTime
     ) -> Result<(), Box<dyn std::error::Error>> {
-        println!("🚀 РЕВОЛЮЦИОННЫЙ РЕЖИМ: Истинная параллелизация спутников!");
+        println!("🚀 ПАМЯТЬ-ЭФФЕКТИВНЫЙ РЕЖИМ: Потоковая параллелизация!");
         println!("📊 Параметры: {} ms сигнала, {} samples/ms, {} спутников", 
                  total_duration_ms, samples_per_ms, sat_if_signals.len());
         
-        let start_generation = std::time::Instant::now();
-        let total_samples = (total_duration_ms as usize) * samples_per_ms;
+        // СТРАТЕГИЯ: Обрабатываем по блокам 1000ms (1 секунда)
+        const BLOCK_SIZE_MS: i32 = 1000;
+        let estimated_mb_total = (total_duration_ms as f64 * samples_per_ms as f64 * 2.0) / (1024.0 * 1024.0);
+        println!("🎯 Общий размер данных: {:.1} MB, обработка блоками по {} ms", estimated_mb_total, BLOCK_SIZE_MS);
         
-        // Подсчет активных спутников
+        let start_generation = std::time::Instant::now();
         let active_satellites = sat_if_signals.iter().filter(|s| s.is_some()).count();
         println!("🛰️  Активных спутников: {}", active_satellites);
         
-        // РЕВОЛЮЦИЯ! Каждый спутник работает параллельно на ВСЁ время
-        println!("🚀 Запуск параллельной генерации спутников...");
-        let generation_start = std::time::Instant::now();
+        let mut total_clipped_samples = 0i64;
+        let mut total_samples_written = 0i64;
         
-        // Используем Rayon для параллельной обработки каждого спутника
-        sat_if_signals
-            .par_iter_mut()
-            .enumerate()
-            .for_each(|(sat_idx, sat_option)| {
-                if let Some(ref mut boxed_satellite) = sat_option {
-                    println!("[SAT-{}] 🚀 Старт полной генерации", sat_idx);
-                    // Каждый спутник генерирует полный сигнал в своем потоке
-                    boxed_satellite.generate_full_signal_parallel(start_time_gnss, total_duration_ms, samples_per_ms, self.output_param.SampleFreq as f64);
-                    println!("[SAT-{}] ✅ Генерация завершена", sat_idx);
-                }
-            });
+        // ОСНОВНОЙ ЦИКЛ: Обработка по блокам
+        let num_blocks = (total_duration_ms + BLOCK_SIZE_MS - 1) / BLOCK_SIZE_MS;
         
-        let generation_duration = generation_start.elapsed();
-        println!("🚀 Параллельная генерация завершена за {:.2}ms", generation_duration.as_secs_f64() * 1000.0);
+        for block_idx in 0..num_blocks {
+            let block_start_ms = block_idx * BLOCK_SIZE_MS;
+            let block_end_ms = std::cmp::min(block_start_ms + BLOCK_SIZE_MS, total_duration_ms);
+            let block_duration_ms = block_end_ms - block_start_ms;
+            
+            println!("📦 Блок {}/{}: {} - {} ms ({} ms)", 
+                     block_idx + 1, num_blocks, block_start_ms, block_end_ms, block_duration_ms);
+            
+            let block_start_time = start_time_gnss.add_milliseconds(block_start_ms as f64);
+            
+            // РЕВОЛЮЦИЯ! Каждый спутник работает параллельно на блок времени
+            println!("🚀 Запуск параллельной генерации спутников для блока...");
+            let generation_start = std::time::Instant::now();
+            
+            // Используем Rayon для параллельной обработки каждого спутника
+            sat_if_signals
+                .par_iter_mut()
+                .enumerate()
+                .for_each(|(sat_idx, sat_option)| {
+                    if let Some(ref mut boxed_satellite) = sat_option {
+                        // Каждый спутник генерирует сигнал для этого блока времени
+                        boxed_satellite.generate_block_signal_parallel(block_start_time, block_duration_ms, samples_per_ms, self.output_param.SampleFreq as f64);
+                    }
+                });
         
-        // СУПЕРЭФФЕКТИВНОЕ накопление сигналов
-        println!("🔄 Начинаем параллельное накопление сигналов...");
-        let accumulation_start = std::time::Instant::now();
-        
-        // Создаем итоговый массив
-        let mut final_signal = vec![ComplexNumber::from_parts(0.0, 0.0); total_samples];
-        
-        // Параллельное накопление по индексам сэмплов
-        final_signal
-            .par_iter_mut()
-            .enumerate()
-            .for_each(|(sample_idx, final_sample)| {
-                // Накапливаем сигналы от всех спутников для этого сэмпла
+            let generation_duration = generation_start.elapsed();
+            println!("🚀 Генерация блока завершена за {:.2}ms", generation_duration.as_secs_f64() * 1000.0);
+            
+            // ПОТОКОВОЕ НАКОПЛЕНИЕ и запись для этого блока
+            println!("🔄 Накопляем и записываем блок сигналов...");
+            let block_samples = block_duration_ms as usize * samples_per_ms;
+            
+            // Буфер для накопления данных блока (не весь файл!)
+            let mut block_signal = vec![ComplexNumber::from_parts(0.0, 0.0); block_samples];
+            
+            // Накапливаем сигналы всех спутников для этого блока
+            for sample_idx in 0..block_samples {
                 for sat_option in sat_if_signals.iter() {
                     if let Some(ref satellite) = sat_option {
-                        if sample_idx < satellite.sample_array.len() {
-                            let sat_sample = satellite.sample_array[sample_idx];
-                            final_sample.real += sat_sample.real;
-                            final_sample.imag += sat_sample.imag;
+                        if let Some(block_data) = &satellite.block_data {
+                            if sample_idx < block_data.len() {
+                                let sat_sample = block_data[sample_idx];
+                                block_signal[sample_idx].real += sat_sample.real;
+                                block_signal[sample_idx].imag += sat_sample.imag;
+                            }
                         }
                     }
                 }
-            });
-        
-        let accumulation_duration = accumulation_start.elapsed();
-        println!("🔄 Накопление завершено за {:.2}ms", accumulation_duration.as_secs_f64() * 1000.0);
-        
-        // РЕАЛЬНАЯ ЗАПИСЬ В ФАЙЛ IQ8 формата
-        println!("💾 Записываю {} сэмплов в файл IQ8 формата...", final_signal.len());
-        let write_start = std::time::Instant::now();
-        
-        // Конвертируем ComplexNumber в IQ8 байты (I,Q,I,Q,...)
-        let mut iq8_data = Vec::with_capacity(total_samples * 2); // I + Q для каждого сэмпла
-        for sample in &final_signal {
-            // Нормализация и конвертация в 8-битные signed значения 
-            let i_scaled = (sample.real * 127.0).max(-128.0).min(127.0) as i8;
-            let q_scaled = (sample.imag * 127.0).max(-128.0).min(127.0) as i8;
-            iq8_data.push(i_scaled as u8);
-            iq8_data.push(q_scaled as u8);
+            }
+            
+            // МГНОВЕННАЯ ЗАПИСЬ блока в файл
+            let write_start = std::time::Instant::now();
+            let mut iq8_data = Vec::with_capacity(block_samples * 2);
+            let mut clipped_in_block = 0;
+            
+            for sample in &block_signal {
+                let i_scaled = (sample.real * 127.0).max(-128.0).min(127.0) as i8;
+                let q_scaled = (sample.imag * 127.0).max(-128.0).min(127.0) as i8;
+                
+                if sample.real.abs() > 1.0 || sample.imag.abs() > 1.0 {
+                    clipped_in_block += 1;
+                }
+                
+                iq8_data.push(i_scaled as u8);
+                iq8_data.push(q_scaled as u8);
+            }
+            
+            // Записываем блок в файл
+            if_file.write_all(&iq8_data)?;
+            
+            total_clipped_samples += clipped_in_block as i64;
+            total_samples_written += block_samples as i64 * 2; // I + Q
+            
+            let write_duration = write_start.elapsed();
+            println!("💾 Блок {} записан: {} MB за {:.1}ms", 
+                     block_idx + 1, iq8_data.len() as f64 / (1024.0 * 1024.0), 
+                     write_duration.as_secs_f64() * 1000.0);
         }
         
-        // Записываем в файл
-        if_file.write_all(&iq8_data)?;
+        // Финальная статистика
+        let total_duration = start_generation.elapsed();
+        println!("===============================================================================");
+        println!("                     ПОТОКОВАЯ ГЕНЕРАЦИЯ ЗАВЕРШЕНА");
+        println!("===============================================================================");
+        println!("🎯 Время генерации: {:.3}s", total_duration.as_secs_f64());
+        println!("📊 Всего сэмплов: {}", total_samples_written / 2);
+        println!("📁 Всего байт: {}", total_samples_written);
+        println!("⚡ Скорость: {:.1} MS/s", (total_samples_written / 2) as f64 / total_duration.as_secs_f64() / 1e6);
+        
+        if total_clipped_samples > 0 {
+            let clip_rate = total_clipped_samples as f64 / (total_samples_written / 2) as f64 * 100.0;
+            println!("⚠️  Клиппинг: {} сэмплов ({:.2}%)", total_clipped_samples, clip_rate);
+        }
+        
         if_file.flush()?;
-        
-        let write_duration = write_start.elapsed();
-        println!("💾 Запись завершена за {:.2}ms ({:.1} MB/s)", 
-                 write_duration.as_secs_f64() * 1000.0,
-                 iq8_data.len() as f64 / write_duration.as_secs_f64() / 1024.0 / 1024.0);
-        
-        let total_generation_time = start_generation.elapsed();
-        println!("🏆 ОБЩЕЕ ВРЕМЯ ГЕНЕРАЦИИ: {:.2}s", total_generation_time.as_secs_f64());
-        
-        println!("📊 РЕВОЛЮЦИОННЫЕ РЕЗУЛЬТАТЫ:");
-        println!("  • Обработка спутников: {:.2}ms", generation_duration.as_secs_f64() * 1000.0);
-        println!("  • Накопление сигналов: {:.2}ms", accumulation_duration.as_secs_f64() * 1000.0);
-        println!("  • Производительность: {:.1} MS/s", total_samples as f64 / total_generation_time.as_secs_f64() / 1e6);
-        
         Ok(())
     }
 
