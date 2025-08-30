@@ -661,10 +661,12 @@ impl SatIfSignal {
             let samples_per_group = 16; // AVX-512 обрабатывает 16 float32 одновременно
             let full_groups = (self.sample_number as usize) / samples_per_group;
             
-            // КРИТИЧЕСКАЯ ОПТИМИЗАЦИЯ: Подготовка данных для AVX-512
+            // ОПТИМИЗАЦИЯ ПАМЯТИ: Предаллоцированные буферы для AVX-512 (устранение аллокаций в цикле)
             let mut prn_data = vec![0.0f32; samples_per_group];
             let mut carrier_cos = vec![0.0f32; samples_per_group]; 
             let mut carrier_sin = vec![0.0f32; samples_per_group];
+            let mut output_i = vec![0.0f32; samples_per_group];
+            let mut output_q = vec![0.0f32; samples_per_group];
             
             // МЕГА-УСКОРЕНИЕ: Векторизованная обработка групп по 16 элементов
             for group in 0..full_groups {
@@ -682,8 +684,7 @@ impl SatIfSignal {
                 }
                 
                 // РЕВОЛЮЦИЯ! AVX-512 массовая обработка 16 сэмплов одновременно!
-                let mut output_i = vec![0.0f32; samples_per_group];
-                let mut output_q = vec![0.0f32; samples_per_group];
+                // Используем предаллоцированные буферы (убрали дублирование)
                 
                 unsafe {
                     // Используем наши супер-быстрые AVX-512 инструкции
@@ -716,6 +717,105 @@ impl SatIfSignal {
                 
                 self.sample_array[i].real = amp * prn_bit * cos_val * nav_value;
                 self.sample_array[i].imag = amp * prn_bit * sin_val * nav_value;
+            }
+        }
+    }
+
+    /// 🚀 РЕВОЛЮЦИОННАЯ ФУНКЦИЯ: Генерация ПОЛНОГО сигнала спутника на всё время
+    /// Каждый спутник генерирует ВСЕ миллисекунды в одном потоке для максимальной эффективности
+    pub fn generate_full_signal_parallel(&mut self, start_time: GnssTime, total_duration_ms: i32, samples_per_ms: usize, sample_freq: f64) {
+        println!("[PARALLEL] 🚀 Спутник начинает полную генерацию на {} ms", total_duration_ms);
+        
+        // Инициализация кэшей один раз на всё время (супер-эффективно!)
+        self.initialize_caches_for_duration(total_duration_ms, samples_per_ms, sample_freq);
+        
+        // Обработка всех миллисекунд подряд (отличная локальность кэша)
+        for ms_offset in 0..total_duration_ms {
+            let current_time = GnssTime {
+                Week: start_time.Week,
+                MilliSeconds: start_time.MilliSeconds + ms_offset,
+                SubMilliSeconds: start_time.SubMilliSeconds,
+            };
+            
+            // Используем уже инициализированные кэши (быстро!)
+            self.generate_samples_for_millisecond_cached(current_time, ms_offset as usize, samples_per_ms);
+        }
+        
+        println!("[PARALLEL] ✅ Спутник завершил полную генерацию");
+    }
+    
+    /// Инициализация кэшей на всю длительность сигнала (вызывается один раз)
+    fn initialize_caches_for_duration(&mut self, total_duration_ms: i32, samples_per_ms: usize, sample_freq: f64) {
+        let total_samples = (total_duration_ms as usize) * samples_per_ms;
+        
+        // Выделяем память для всего сигнала сразу (эффективнее)
+        if self.sample_array.len() < total_samples {
+            self.sample_array.resize(total_samples, ComplexNumber { real: 0.0, imag: 0.0 });
+            self.sample_number = total_samples as i32;
+        }
+        
+        // Инициализация carrier кэша на всё время
+        if self.carrier_phase_cache.is_none() {
+            let p_sat_param = if let Some(ref sat_param) = self.sat_param {
+                sat_param
+            } else {
+                return;
+            };
+            
+            let phase_step = 2.0 * std::f64::consts::PI * self.if_freq as f64 / sample_freq;
+            self.carrier_phase_cache = Some(CarrierPhaseCache::new(total_samples, phase_step));
+        }
+    }
+    
+    /// Генерация сэмплов для одной миллисекунды с использованием готовых кэшей
+    fn generate_samples_for_millisecond_cached(&mut self, cur_time: GnssTime, ms_offset: usize, samples_per_ms: usize) {
+        // Получаем параметры спутника
+        let p_sat_param = if let Some(ref sat_param) = self.sat_param {
+            sat_param
+        } else {
+            return;
+        };
+
+        // Используем уже готовые вычисления из кэша
+        let computation_cache = &self.computation_cache;
+        if computation_cache.needs_update(p_sat_param.CN0 as f64, self.sample_number) {
+            // Обновляем кэш только если нужно
+            let mut cache = computation_cache.clone();
+            cache.update(p_sat_param.CN0 as f64, self.sample_number, self.if_freq as f64, 1.023e6);
+        }
+        
+        let amp = computation_cache.cached_amp;
+        let code_step = computation_cache.cached_code_step;
+        let phase_step = computation_cache.cached_phase_step;
+        let nav_value = if self.data_signal.real >= 0.0 { 1.0 } else { -1.0 };
+        
+        let ms_offset_time = cur_time.MilliSeconds - self.signal_time.MilliSeconds;
+        let base_chip_offset = (ms_offset_time as f64) * computation_cache.cached_chip_rate;
+        
+        // Обновляем PRN кэш при необходимости
+        if let Some(data_prn) = &self.prn_sequence.data_prn {
+            if self.prn_cache.needs_update(cur_time.MilliSeconds) {
+                self.prn_cache.update_cache(data_prn, cur_time.MilliSeconds);
+            }
+        }
+        
+        // ВЫСОКОПРОИЗВОДИТЕЛЬНАЯ генерация сэмплов для миллисекунды
+        let base_sample_idx = ms_offset * samples_per_ms;
+        if let Some(ref carrier_cache) = self.carrier_phase_cache {
+            for i in 0..samples_per_ms {
+                let sample_idx = base_sample_idx + i;
+                if sample_idx < self.sample_array.len() {
+                    let chip_offset = base_chip_offset + (i as f64) * code_step;
+                    let chip_index = (chip_offset as usize) & 0x3FF; // Быстрая операция вместо %
+                    
+                    let prn_bit = self.prn_cache.get_prn_bit(chip_index);
+                    let cos_val = carrier_cache.cached_cos[sample_idx];
+                    let sin_val = carrier_cache.cached_sin[sample_idx];
+                    
+                    // Быстрое вычисление комплексного сигнала
+                    self.sample_array[sample_idx].real = amp * prn_bit * cos_val * nav_value;
+                    self.sample_array[sample_idx].imag = amp * prn_bit * sin_val * nav_value;
+                }
             }
         }
     }
