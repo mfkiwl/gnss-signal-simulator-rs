@@ -670,12 +670,16 @@ pub fn read_nav_file_filtered(
     let mut gps_parsed = 0;
     let mut gps_accepted = 0;
     let mut other_skipped = 0;
+    let mut total_lines_processed = 0;
     
     // Кэш лучших эфемерид по SVID для умной фильтрации (u8 -> i32)
     let mut best_ephemeris: std::collections::HashMap<u8, (GpsEphemeris, f64)> = std::collections::HashMap::new();
     
     // Оптимизированный RINEX парсер с фильтрацией
-    while let Some(Ok(line)) = lines.next() {
+    loop {
+        match lines.next() {
+            Some(Ok(line)) => {
+                total_lines_processed += 1;
         // Пропустить заголовок до "END OF HEADER"
         if !header_complete {
             if line.contains("END OF HEADER") {
@@ -713,6 +717,9 @@ pub fn read_nav_file_filtered(
         }
         
         let system_char = line.chars().next().unwrap_or(' ');
+        if system_char == 'C' {
+            println!("[DEBUG] Found C line at {}: {}", total_lines_processed, &line[..std::cmp::min(50, line.len())]);
+        }
         match system_char {
             'G' | ' ' if gps_enabled => {
                 // GPS эфемериды (только если GPS включена в конфиге)
@@ -764,10 +771,9 @@ pub fn read_nav_file_filtered(
             },
             'C' if beidou_enabled => {
                 // BeiDou эфемериды (только если BeiDou включена)
-                if let Some(mut eph) = parse_gps_ephemeris(&line, &mut lines) {
-                    // Конвертируем в BeiDou формат
-                    eph.toe = eph.toe - 14; // BDT отстает от GPS времени на 14 секунд
+                if let Some(eph) = parse_beidou_ephemeris(&line, &mut lines) {
                     nav_data.add_beidou_ephemeris(eph);
+                    println!("[DEBUG] Parsed BeiDou ephemeris for SVID {}", eph.svid);
                 }
             },
             'E' if galileo_enabled => {
@@ -777,14 +783,40 @@ pub fn read_nav_file_filtered(
                     nav_data.add_galileo_ephemeris(eph);
                 }
             },
-            'G' | ' ' | 'R' | 'C' | 'E' => {
-                // Система отключена в конфиге - пропускаем эфемериду
+            'G' | ' ' if !gps_enabled => {
+                // GPS отключена в конфиге - пропускаем эфемериду
                 other_skipped += 1;
-                skip_ephemeris_lines(&mut lines);
+                // ВРЕМЕННО: не вызываем skip_ephemeris_lines для диагностики
+                continue;
+            },
+            'R' if !glonass_enabled => {
+                // GLONASS отключена в конфиге - пропускаем эфемериду
+                other_skipped += 1;
+                continue;
+            },
+            'C' if !beidou_enabled => {
+                // BeiDou отключена в конфиге - пропускаем эфемериду
+                other_skipped += 1;
+                continue;
+            },
+            'E' if !galileo_enabled => {
+                // Galileo отключена в конфиге - пропускаем эфемериду
+                other_skipped += 1;
+                continue;
             },
             _ => {
                 // Неизвестный тип, пропускаем
                 continue;
+            }
+        }
+            },
+            Some(Err(e)) => {
+                println!("[WARN] Error reading line {}: {}", total_lines_processed + 1, e);
+                continue; // Продолжаем несмотря на ошибку чтения одной строки
+            },
+            None => {
+                println!("[DEBUG] End of file reached at line {}", total_lines_processed);
+                break; // Конец файла
             }
         }
     }
@@ -793,6 +825,11 @@ pub fn read_nav_file_filtered(
     for (svid, (eph, _time_diff)) in best_ephemeris {
         nav_data.add_gps_ephemeris(eph);
         gps_accepted += 1;
+    }
+    
+    println!("[DEBUG] RINEX parsing completed: {} lines processed (expected ~105000)", total_lines_processed);
+    if total_lines_processed < 50000 {
+        println!("[WARN] Parser stopped early - BeiDou data starts around line 93528");
     }
     
     println!("[INFO]\tNavigation file loaded successfully (filtered): {}", filename);

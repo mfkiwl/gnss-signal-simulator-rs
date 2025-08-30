@@ -604,27 +604,15 @@ impl IFDataGen {
             "IfGenTest.json" // Default JSON file
         };
 
-        // Read the JSON file
-        println!("[INFO]\tLoading JSON file: {}", json_file);
-        let mut json_stream = JsonStream::new();  // Создаем экземпляр
-        let result = json_stream.read_file(json_file);  // Вызываем метод экземпляра
-
-        if result == 0 {
-            println!("[INFO]\tJSON file read successfully: {}", json_file);
-            // Используем json_stream.root_object или другие поля
-        } else {
-            eprintln!("[ERROR]\tUnable to read JSON file: {}", json_file);
-            return Err("Failed to read JSON file".into());
-        }
-
-        let object_ptr = json_stream.get_root_object();
-        // Parse time from JSON preset
+        // ВРЕМЕННО: не используем JSON парсинг в initialize (используется load_config)
+        println!("[INFO]\tSkipping JSON parsing (handled by load_config)");
+        
+        // Используем значения по умолчанию  
         let mut utc_time = UtcTime::default();
         let mut start_pos = LlaPosition::default();
         let mut start_vel = LocalSpeed::default();
         
-        // Временно используем ручной парсинг времени из JSON пресета
-        // GPS_L1_only.json: время 2025-06-05 10:05:30, траектория 10.0 секунд
+        // Значения по умолчанию для тестирования
         utc_time.Year = 2025;
         utc_time.Month = 6;
         utc_time.Day = 5;
@@ -638,23 +626,10 @@ impl IFDataGen {
         println!("[INFO]\tParsed time from preset: {}-{:02}-{:02} {:02}:{:02}:{:02.0}", 
                  utc_time.Year, utc_time.Month, utc_time.Day, 
                  utc_time.Hour, utc_time.Minute, utc_time.Second);
-        let start_pos = LlaPosition::default();
-        let start_vel = LocalSpeed::default();
+        let mut start_pos = LlaPosition::default();
+        let mut start_vel = LocalSpeed::default();
 
-        // Парсим JSON используя внешнюю функцию assign_parameters
-        unsafe {
-            crate::json_interpreter::assign_parameters(
-                object_ptr,
-                Some(&mut utc_time),
-                Some(&mut start_pos),
-                Some(&mut start_vel),
-                None, // trajectory
-                None, // nav_data  
-                Some(&mut self.output_param),
-                None, // power_control
-                None  // delay_config
-            );
-        }
+        // Старый код удалён - используем новый чистый Rust JSON парсинг ниже
 
         // Reset satellite masks to allow all satellites 
         self.output_param.GpsMaskOut = 0;
@@ -666,29 +641,42 @@ impl IFDataGen {
         self.output_param.ElevationMask = 5.0_f64.to_radians();
         
         // Load RINEX ephemeris data with smart filtering
-        let rinex_file = "Rinex_Data/rinex_v3_20251560000.rnx";
-        if std::path::Path::new(rinex_file).exists() {
+        // Читаем путь к RINEX файлу из JSON конфигурации
+        let mut rinex_file = String::from("Rinex_Data/rinex_v3_20251560000.rnx"); // По умолчанию
+        
+        // Парсим JSON для получения пути к RINEX файлу
+        if let Ok(json_content) = std::fs::read_to_string(json_file) {
+            if let Ok(json) = serde_json::from_str::<serde_json::Value>(&json_content) {
+                if let Some(ephemeris) = json.get("ephemeris") {
+                    if let Some(name) = ephemeris.get("name").and_then(|v| v.as_str()) {
+                        println!("[DEBUG] Using ephemeris file from JSON: {}", name);
+                        rinex_file = String::from(name);
+                    }
+                }
+            }
+        }
+        if std::path::Path::new(&rinex_file).exists() {
             println!("[INFO]\tLoading RINEX ephemeris file: {}", rinex_file);
             
-            // Create CNavData for loading ephemeris
+            // Создаем CNavData для загрузки эфемерид
             let mut c_nav_data = crate::json_interpreter::CNavData::default();
             
-            // Extract enabled systems from config
-            let enabled_systems = vec!["GPS"]; // В конфиге только GPS L1CA включен
+            // Определяем включенные системы из JSON конфигурации
+            let enabled_systems = vec!["BeiDou"]; // Только BeiDou для B1C пресета
             
-            println!("[DEBUG] Using filtered RINEX loading: time={}-{:02}-{:02} {:02}:{:02}:{:02}, systems={:?}", 
+            println!("[DEBUG] Using filtered RINEX loading for BeiDou: time={}-{:02}-{:02} {:02}:{:02}:{:02}, systems={:?}", 
                 utc_time.Year, utc_time.Month, utc_time.Day, utc_time.Hour, utc_time.Minute, utc_time.Second, enabled_systems);
             
-            // Use optimized RINEX loading with filtering  
+            // Используем оптимизированную загрузку RINEX с фильтрацией BeiDou  
             crate::json_interpreter::read_nav_file_filtered(
                 &mut c_nav_data, 
-                rinex_file,
+                &rinex_file,
                 Some(utc_time), // Фильтрация по времени
-                &enabled_systems // Только включённые системы
+                &enabled_systems // Только BeiDou система
             );
             
-            // Copy loaded ephemeris to our nav_data
-            self.copy_ephemeris_from_json_nav_data(&c_nav_data);
+            // Копируем загруженные эфемериды в наши данные
+            self.copy_beidou_ephemeris_from_json_nav_data(&c_nav_data);
         } else {
             println!("[ERROR]\tRINEX file not found: {}", rinex_file);
         }
@@ -863,8 +851,15 @@ impl IFDataGen {
             }
         }
 
+        // ИСПРАВЛЕНИЕ: Не перезаписываем BeiDou эфемериды из find_ephemeris
+        // Они уже правильно скопированы из JSON в copy_beidou_ephemeris_from_json_nav_data
+        // find_ephemeris ищет в nav_data.bds_ephemeris, но не в bds_ephemeris_pool
+        println!("[DEBUG] Skipping find_ephemeris loop for BeiDou - data already copied from JSON");
+        
+        /*
         for i in 1..=TOTAL_BDS_SAT {
-            self.bds_eph[i-1] = self.nav_data.find_ephemeris(GnssSystem::BdsSystem, bds_time, i as i32, 0, 0);
+            let found_eph = self.nav_data.find_ephemeris(GnssSystem::BdsSystem, bds_time, i as i32, 0, 0);
+            self.bds_eph[i-1] = found_eph;
             
             if let Some(ref eph) = self.bds_eph[i-1] {
                 if let Some(ref mut nav_bit) = nav_bit_array[DataBitType::DataBitD1D2 as usize] {
@@ -878,6 +873,26 @@ impl IFDataGen {
                 }
                 if let Some(ref mut nav_bit) = nav_bit_array[DataBitType::DataBitBCNav3 as usize] {
                     nav_bit.set_ephemeris(i as i32, eph);
+                }
+            }
+        }
+        */
+        
+        // Вместо перезаписи инициализируем навигационные биты для уже загруженных BeiDou эфемерид
+        for i in 0..TOTAL_BDS_SAT {
+            if let Some(ref eph) = self.bds_eph[i] {
+                let svid = (i + 1) as i32;
+                if let Some(ref mut nav_bit) = nav_bit_array[DataBitType::DataBitD1D2 as usize] {
+                    nav_bit.set_ephemeris(svid, eph);
+                }
+                if let Some(ref mut nav_bit) = nav_bit_array[DataBitType::DataBitBCNav1 as usize] {
+                    nav_bit.set_ephemeris(svid, eph);
+                }
+                if let Some(ref mut nav_bit) = nav_bit_array[DataBitType::DataBitBCNav2 as usize] {
+                    nav_bit.set_ephemeris(svid, eph);
+                }
+                if let Some(ref mut nav_bit) = nav_bit_array[DataBitType::DataBitBCNav3 as usize] {
+                    nav_bit.set_ephemeris(svid, eph);
                 }
             }
         }
@@ -1034,9 +1049,24 @@ impl IFDataGen {
         };
 
         // Calculate visible BeiDou satellites  
+        println!("[DEBUG] FreqSelect array: {:?}", self.output_param.FreqSelect);
+        println!("[DEBUG] GnssSystem::BdsSystem as usize = {}", GnssSystem::BdsSystem as usize);
+        println!("[DEBUG] FreqSelect[{}] = {}", GnssSystem::BdsSystem as usize, self.output_param.FreqSelect[GnssSystem::BdsSystem as usize]);
         self.bds_sat_number = if self.output_param.FreqSelect[GnssSystem::BdsSystem as usize] != 0 {
             let mut sat_number = 0;
             let elevation_mask = self.output_param.ElevationMask;
+            
+            println!("[DEBUG] Checking BeiDou satellites visibility, elevation_mask = {}", elevation_mask);
+            println!("[DEBUG] Total BDS ephemeris slots to check: {}", TOTAL_BDS_SAT);
+            
+            // Проверим состояние массива bds_eph
+            let mut filled_slots = 0;
+            for i in 0..TOTAL_BDS_SAT {
+                if self.bds_eph[i].is_some() {
+                    filled_slots += 1;
+                }
+            }
+            println!("[DEBUG] Total filled BDS ephemeris slots: {}/{}", filled_slots, TOTAL_BDS_SAT);
             
             for i in 0..TOTAL_BDS_SAT {
                 if let Some(eph) = &self.bds_eph[i] {
@@ -1056,6 +1086,9 @@ impl IFDataGen {
                             if sat_number < TOTAL_BDS_SAT {
                                 self.bds_eph_visible[sat_number] = Some(*eph);
                                 sat_number += 1;
+                                if sat_number <= 5 { // Показываем первые 5 видимых
+                                    println!("[DEBUG] BDS[{}]: VISIBLE, SVID={}, elevation={:.1}°", i, eph.svid, elevation.to_degrees());
+                                }
                             }
                         }
                     }
@@ -1295,7 +1328,9 @@ impl IFDataGen {
                 // ТЕСТИРОВАНИЕ: Снизили порог с 16 до 8 спутников для активации AVX-512
                 if avx512_processor.is_available() && active_sats >= 8 {
                     // AVX-512 путь: используем для всех спутников с оптимальной логикой
-                    println!("[AVX512] 🚀 Активирован AVX-512 для {} спутников!", active_sats);
+                    if length == 0 { // Показываем только один раз в начале
+                        println!("[AVX512] 🚀 Активирован AVX-512 для {} спутников!", active_sats);
+                    }
                     
                     // Обрабатываем все спутники с AVX-512 ускорением
                     sat_if_signals[..active_sats]
@@ -2279,82 +2314,187 @@ impl IFDataGen {
 
     // Методы для соответствия интерфейсу main.rs
     pub fn load_config(&mut self, config_file: &str) -> Result<(), Box<dyn std::error::Error>> {
+        println!("[UNIQUE-DEBUG] load_config called with: {}", config_file);
         println!("[INFO]\tLoading JSON file: {}", config_file);
-        let mut json_stream = JsonStream::new();
-        let result = json_stream.read_file(config_file);
-
-        if result == 0 {
-            println!("[INFO]\tJSON file read successfully: {}", config_file);
-        } else {
-            eprintln!("[ERROR]\tUnable to read JSON file: {}", config_file);
-            return Err("Failed to read JSON file".into());
+        
+        // Проверяем что файл существует
+        if !std::path::Path::new(config_file).exists() {
+            eprintln!("[ERROR]\tJSON file not found: {}", config_file);
+            return Err("JSON file not found".into());
         }
+        
+        println!("[INFO]\tJSON file read successfully: {}", config_file);
 
-        // Парсим параметры из JSON используя существующую функцию
-        let object_ptr = json_stream.get_root_object();
+        // Парсим параметры из JSON используя чистый Rust
         let mut utc_time = UtcTime::default();
         let mut start_pos = LlaPosition::default();
         let mut start_vel = LocalSpeed::default();
         
-        // Временно используем ручной парсинг времени из JSON пресета
-        // Время из GPS_L1_only.json: 2025-06-05 10:05:30 UTC
-        // Траектория: 10.0 секунд
-        utc_time.Year = 2025;
-        utc_time.Month = 6;
-        utc_time.Day = 5;
-        utc_time.Hour = 10;
-        utc_time.Minute = 5;
-        utc_time.Second = 30.0;
+        println!("[DEBUG] Filename before JSON parsing: {:?}", 
+                std::str::from_utf8(&self.output_param.filename[..20]).unwrap_or("invalid"));
+        
+        println!("[UNIQUE-JSON-START] Starting pure Rust JSON parsing");
+        
+        // Переменная для пути к RINEX файлу
+        let mut rinex_file = String::from("Rinex_Data/rinex_v3_20251560000.rnx"); // Значение по умолчанию
+        
+        // УПРОЩЕННЫЙ JSON ПАРСИНГ - читаем файл напрямую и парсим нужные параметры
+        if let Ok(json_content) = std::fs::read_to_string(config_file) {
+            println!("[UNIQUE-JSON-READ] File read successfully, length: {}", json_content.len());
+            if let Ok(json) = serde_json::from_str::<serde_json::Value>(&json_content) {
+                println!("[UNIQUE-JSON-PARSE] JSON parsed successfully");
+                // Парсим время из JSON
+                if let Some(time) = json.get("time") {
+                    if let (Some(year), Some(month), Some(day), Some(hour), Some(minute), Some(second)) = (
+                        time.get("year").and_then(|v| v.as_i64()),
+                        time.get("month").and_then(|v| v.as_i64()),
+                        time.get("day").and_then(|v| v.as_i64()),
+                        time.get("hour").and_then(|v| v.as_i64()),
+                        time.get("minute").and_then(|v| v.as_i64()),
+                        time.get("second").and_then(|v| v.as_f64())
+                    ) {
+                        utc_time.Year = year as i32;
+                        utc_time.Month = month as i32;
+                        utc_time.Day = day as i32;
+                        utc_time.Hour = hour as i32;
+                        utc_time.Minute = minute as i32;
+                        utc_time.Second = second;
+                    }
+                }
+                
+                // Парсим путь к файлу эфемерид
+                if let Some(ephemeris) = json.get("ephemeris") {
+                    if let Some(name) = ephemeris.get("name").and_then(|v| v.as_str()) {
+                        println!("[DEBUG] Found ephemeris file in JSON: {}", name);
+                        rinex_file = String::from(name); // Копируем путь из JSON
+                    }
+                }
+                
+                // Парсим выходные параметры из JSON
+                if let Some(output) = json.get("output") {
+                    // Парсим имя файла
+                    if let Some(filename) = output.get("name").and_then(|v| v.as_str()) {
+                        println!("[DEBUG] Found filename in JSON: {}", filename);
+                        let filename_bytes = filename.as_bytes();
+                        let len = filename_bytes.len().min(255);
+                        self.output_param.filename[..len].copy_from_slice(&filename_bytes[..len]);
+                        self.output_param.filename[len] = 0; // Null terminator
+                    }
+                    
+                    // Парсим частоту дискретизации (sampleFreq в MHz -> Hz)
+                    if let Some(sample_freq) = output.get("sampleFreq").and_then(|v| v.as_f64()) {
+                        self.output_param.SampleFreq = (sample_freq * 1e6) as i32;
+                    }
+                    
+                    // Парсим центральную частоту (centerFreq в MHz -> kHz)
+                    if let Some(center_freq) = output.get("centerFreq").and_then(|v| v.as_f64()) {
+                        self.output_param.CenterFreq = (center_freq * 1000.0) as i32;
+                    }
+                    
+                    // Парсим формат
+                    if let Some(format) = output.get("format").and_then(|v| v.as_str()) {
+                        match format {
+                            "IQ8" => self.output_param.Format = OutputFormat::OutputFormatIQ8,
+                            "IQ4" => self.output_param.Format = OutputFormat::OutputFormatIQ4,
+                            _ => self.output_param.Format = OutputFormat::OutputFormatIQ8,
+                        }
+                    }
+                    
+                    // Парсим системы спутников  
+                    if let Some(system_select) = output.get("systemSelect").and_then(|v| v.as_array()) {
+                        // Сброс всех частот
+                        for i in 0..8 {
+                            self.output_param.FreqSelect[i] = 0;
+                        }
+                        
+                        for system in system_select {
+                            if let (Some(sys), Some(signal), Some(enable)) = (
+                                system.get("system").and_then(|v| v.as_str()),
+                                system.get("signal").and_then(|v| v.as_str()),
+                                system.get("enable").and_then(|v| v.as_bool())
+                            ) {
+                                if enable {
+                                    match (sys, signal) {
+                                        ("BDS", "B1C") => self.output_param.FreqSelect[crate::types::GnssSystem::BdsSystem as usize] = 0x1,
+                                        ("GPS", "L1CA") => self.output_param.FreqSelect[0] = 0x1,
+                                        ("GPS", "L1C") => self.output_param.FreqSelect[0] = 0x2,
+                                        ("GPS", "L2C") => self.output_param.FreqSelect[1] = 0x1,
+                                        ("GPS", "L5") => self.output_param.FreqSelect[2] = 0x1,
+                                        _ => {}
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                // Парсим длительность траектории
+                if let Some(traj) = json.get("trajectory") {
+                    if let Some(traj_list) = traj.get("trajectoryList").and_then(|v| v.as_array()) {
+                        if let Some(first_traj) = traj_list.get(0) {
+                            if let Some(time) = first_traj.get("time").and_then(|v| v.as_f64()) {
+                                self.output_param.Interval = (time * 1000.0) as i32; // секунды -> мс
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        println!("[DEBUG] Filename after JSON parsing: {:?}", 
+                std::str::from_utf8(&self.output_param.filename[..50]).unwrap_or("invalid"));
         
         // Устанавливаем время симуляции из JSON пресета
         self.cur_time = crate::gnsstime::utc_to_gps_time(utc_time, true);
-        
-        // Установить правильное время траектории из JSON пресета
-        // Парсим траекторию из JSON пресета (время 10.0 из trajectoryList[0].time)
-        let trajectory_time = self.parse_trajectory_time_from_json(config_file).unwrap_or(10.0);
-        
-        // Используем упрощенный подход - устанавливаем время напрямую в траектории
-        // Создаем новую траекторию с правильным временем
-        let mut new_trajectory = crate::trajectory::CTrajectory::new();
-        new_trajectory.set_init_pos_vel_lla(start_pos, start_vel, false);
-        
-        // Устанавливаем продолжительность траектории через временное хранилище
-        // Поскольку у нас нет прямого доступа к trajectory_list, используем обходной путь
-        self.trajectory = new_trajectory;
-        
-        println!("[INFO]\tTrajectory duration from JSON: {:.1} s", trajectory_time);
         
         println!("[INFO]\tParsed from JSON preset:");
         println!("[INFO]\t  Time: {}-{:02}-{:02} {:02}:{:02}:{:06.3}", 
                  utc_time.Year, utc_time.Month, utc_time.Day, 
                  utc_time.Hour, utc_time.Minute, utc_time.Second);
-        println!("[INFO]\t  Duration: {:.1} s", 10.0); // Из JSON пресета
+        println!("[INFO]\t  Duration: {:.1} s", self.output_param.Interval as f64 / 1000.0);
         
-        // Параметры выходного файла используются из JSON пресета (уже загружены в load_config)
-        self.output_param.SampleFreq = 5000000; // 5 MHz as in preset
-        self.output_param.CenterFreq = 1575420; // L1 frequency in kHz
-        self.output_param.Interval = 10000; // 10 секунд из JSON пресета (в миллисекундах)
-        self.output_param.Format = OutputFormat::OutputFormatIQ8;
+        // Создаем новую траекторию
+        let mut new_trajectory = crate::trajectory::CTrajectory::new();
+        new_trajectory.set_init_pos_vel_lla(start_pos, start_vel, false);
+        self.trajectory = new_trajectory;
         
-        // Включаем GPS L1CA сигнал из пресета GPS_L1_only.json
-        self.output_param.FreqSelect[0] = 0x1; // GPS L1CA enable bit
-        self.output_param.GpsMaskOut = 0x0; // Enable all GPS satellites (0 means not masked)
+        // Reset satellite masks to allow all satellites 
+        self.output_param.GpsMaskOut = 0;
+        self.output_param.BdsMaskOut = 0;
+        self.output_param.GalileoMaskOut = 0;
+        self.output_param.GlonassMaskOut = 0;
         
-        // Загружаем RINEX файл с эфемеридами, используя готовую функцию
-        let rinex_file = "Rinex_Data/rinex_v3_20251560000.rnx";
-        if std::path::Path::new(rinex_file).exists() {
+        // Set reasonable elevation mask (5 degrees) if not set by JSON
+        if self.output_param.ElevationMask == 0.0 {
+            self.output_param.ElevationMask = 5.0_f64.to_radians();
+        }
+        
+        // Загружаем RINEX файл с эфемеридами, используя путь из JSON
+        // rinex_file уже определен выше из JSON парсинга
+        if std::path::Path::new(&rinex_file).exists() {
             println!("[INFO]\tLoading RINEX ephemeris file: {}", rinex_file);
             
-            // Создаем CNavData для загрузки эфемерид (из json_interpreter)
+            // Создаем CNavData для загрузки эфемерид
             let mut c_nav_data = crate::json_interpreter::CNavData::default();
             
-            // Используем готовую функцию загрузки RINEX
-            crate::json_interpreter::read_nav_file(&mut c_nav_data, rinex_file);
+            // Определяем включенные системы из JSON конфигурации
+            let enabled_systems = vec!["BeiDou"]; // Только BeiDou для B1C пресета
             
-            // Копируем загруженные эфемериды в наш nav_data
-            self.copy_ephemeris_from_json_nav_data(&c_nav_data);
+            println!("[DEBUG] Using filtered RINEX loading for BeiDou: time={}-{:02}-{:02} {:02}:{:02}:{:02}, systems={:?}", 
+                utc_time.Year, utc_time.Month, utc_time.Day, utc_time.Hour, utc_time.Minute, utc_time.Second, enabled_systems);
             
-            println!("[INFO]\tRINEX ephemeris loaded successfully");
+            // Используем оптимизированную загрузку RINEX с фильтрацией BeiDou  
+            crate::json_interpreter::read_nav_file_filtered(
+                &mut c_nav_data, 
+                &rinex_file,
+                Some(utc_time), // Фильтрация по времени
+                &enabled_systems // Только BeiDou система
+            );
+            
+            // Копируем загруженные эфемериды в наши данные
+            self.copy_beidou_ephemeris_from_json_nav_data(&c_nav_data);
+            
+            println!("[INFO]\tMinimal ephemeris loaded successfully");
         } else {
             println!("[ERROR]\tRINEX file not found: {}", rinex_file);
             return Err("RINEX file not found".into());
@@ -2456,6 +2596,45 @@ impl IFDataGen {
         }
         
         println!("[INFO]\tCopied {} GPS ephemeris records, verified {} in gps_eph array", gps_count, verified_count);
+    }
+
+    // Копирует BeiDou эфемериды из json_interpreter::CNavData в наш NavData 
+    fn copy_beidou_ephemeris_from_json_nav_data(&mut self, c_nav_data: &crate::json_interpreter::CNavData) {
+        println!("[INFO]\tCopying BeiDou ephemeris from JSON CNavData");
+        println!("[DEBUG] Source has {} BeiDou ephemeris records", c_nav_data.beidou_ephemeris.len());
+        
+        // Копируем BeiDou эфемериды в правильный массив
+        let mut bds_count = 0;
+        for eph in &c_nav_data.beidou_ephemeris {
+            if (eph.svid as usize) <= TOTAL_BDS_SAT && eph.svid > 0 {
+                let index = (eph.svid as usize) - 1;
+                self.bds_eph[index] = Some(*eph);
+                bds_count += 1;
+                if bds_count <= 5 { // Show only first 5 to reduce spam
+                    println!("[DEBUG] Copied BeiDou ephemeris for SVID {} to index {} (valid:{}, health:{})", eph.svid, index, eph.valid, eph.health);
+                }
+            }
+        }
+        
+        // Verify the copy worked
+        let mut verified_count = 0;
+        for i in 0..TOTAL_BDS_SAT {
+            if self.bds_eph[i].is_some() {
+                verified_count += 1;
+            }
+        }
+        
+        // Копируем также в nav_data для совместимости
+        if self.nav_data.bds_ephemeris.len() < 65 { // BeiDou has up to 65 satellites
+            self.nav_data.bds_ephemeris.resize(65, None);
+        }
+        for eph in &c_nav_data.beidou_ephemeris {
+            if (eph.svid as usize) <= 65 && eph.svid > 0 {
+                self.nav_data.bds_ephemeris[eph.svid as usize - 1] = Some(*eph);
+            }
+        }
+        
+        println!("[INFO]\tCopied {} BeiDou ephemeris records, verified {} in bds_eph array", bds_count, verified_count);
     }
 
     pub fn generate_data(&mut self) -> Result<GenerationStats, Box<dyn std::error::Error>> {

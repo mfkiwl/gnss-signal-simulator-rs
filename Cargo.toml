@@ -7,6 +7,7 @@ edition = "2021"
 rand = "0.8"
 rayon = "1.8"
 wide = "0.7"  # SIMD векторизация
+serde_json = "1.0"  # JSON parsing
 # МАКСИМАЛЬНОЕ АППАРАТНОЕ УСКОРЕНИЕ: GPU + AVX-512  
 cudarc = { version = "0.11", features = ["f16", "cuda-12050"], optional = true }
 

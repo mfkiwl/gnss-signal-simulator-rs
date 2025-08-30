@@ -356,7 +356,7 @@ pub struct OutputParam {
     pub Interval: i32,
     pub SampleFreq: i32,
     pub CenterFreq: i32,
-    pub FreqSelect: [u32; 4],
+    pub FreqSelect: [u32; 8], // Увеличиваем для поддержки BDS и других систем
 }
 
 impl Default for OutputParam {
@@ -373,7 +373,7 @@ impl Default for OutputParam {
             Interval: 0,
             SampleFreq: 0,
             CenterFreq: 0,
-            FreqSelect: [0; 4],
+            FreqSelect: [0; 8],
         }
     }
 }

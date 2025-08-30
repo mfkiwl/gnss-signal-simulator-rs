@@ -33,16 +33,16 @@
 	},
 	"ephemeris": {
 		"type": "RINEX",
-		"name": "EphData/rinex_v3_20251560000.rnx"
+		"name": "Rinex_Data/rinex_v3_20251560000.rnx"
 	},
 	"output": {
 		"type": "IFdata",
 		"format": "IQ8",
 		"sampleFreq": 5.0,
 		"centerFreq": 1575.42,
-		"name": "generated_files/BDS_B1C_only_5min.C8",
+		"name": "generated_files/BDS_B1C_only_test.C8",
 		"config": {
-			"elevationMask": 5
+			"elevationMask": 0
 		},
 		"systemSelect": [
 			{
