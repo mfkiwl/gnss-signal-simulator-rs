@@ -1216,6 +1216,7 @@ impl IFDataGen {
         if std::env::var("GNSS_PARALLEL_MODE").unwrap_or_default() == "true" {
             let signals_owned = std::mem::take(sat_if_signals);
             return self.generate_with_true_parallelization(
+                if_file,
                 signals_owned, 
                 total_duration_ms,
                 samples_per_ms,
@@ -1414,6 +1415,7 @@ impl IFDataGen {
     /// МАКСИМАЛЬНАЯ эффективность: отличная локальность кэша + нет переключений контекста
     fn generate_with_true_parallelization(
         &mut self, 
+        if_file: &mut BufWriter<File>,
         mut sat_if_signals: Vec<Option<Box<SatIfSignal>>>, 
         total_duration_ms: i32,
         samples_per_ms: usize,
@@ -1477,8 +1479,28 @@ impl IFDataGen {
         let accumulation_duration = accumulation_start.elapsed();
         println!("🔄 Накопление завершено за {:.2}ms", accumulation_duration.as_secs_f64() * 1000.0);
         
-        // Простейшая запись (временная реализация)
-        println!("💾 Генерация завершена! (запись в файл пропущена для демонстрации)");
+        // РЕАЛЬНАЯ ЗАПИСЬ В ФАЙЛ IQ8 формата
+        println!("💾 Записываю {} сэмплов в файл IQ8 формата...", final_signal.len());
+        let write_start = std::time::Instant::now();
+        
+        // Конвертируем ComplexNumber в IQ8 байты (I,Q,I,Q,...)
+        let mut iq8_data = Vec::with_capacity(total_samples * 2); // I + Q для каждого сэмпла
+        for sample in &final_signal {
+            // Нормализация и конвертация в 8-битные signed значения 
+            let i_scaled = (sample.real * 127.0).max(-128.0).min(127.0) as i8;
+            let q_scaled = (sample.imag * 127.0).max(-128.0).min(127.0) as i8;
+            iq8_data.push(i_scaled as u8);
+            iq8_data.push(q_scaled as u8);
+        }
+        
+        // Записываем в файл
+        if_file.write_all(&iq8_data)?;
+        if_file.flush()?;
+        
+        let write_duration = write_start.elapsed();
+        println!("💾 Запись завершена за {:.2}ms ({:.1} MB/s)", 
+                 write_duration.as_secs_f64() * 1000.0,
+                 iq8_data.len() as f64 / write_duration.as_secs_f64() / 1024.0 / 1024.0);
         
         let total_generation_time = start_generation.elapsed();
         println!("🏆 ОБЩЕЕ ВРЕМЯ ГЕНЕРАЦИИ: {:.2}s", total_generation_time.as_secs_f64());
