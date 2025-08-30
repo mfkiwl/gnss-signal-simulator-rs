@@ -663,8 +663,9 @@ pub fn read_nav_file_filtered(
         return;
     }
     
-    // Временные рамки для фильтрации (±2 часа от целевого времени)
-    let time_window_hours = 2.0;
+    // Временные рамки для фильтрации (±3 часа от целевого времени)
+    // GPS эфемериды обновляются каждые 2 часа, поэтому 3.0h - оптимальное окно
+    let time_window_hours = 3.0;
     
     // Счетчики для статистики фильтрации
     let mut gps_parsed = 0;
@@ -849,17 +850,34 @@ pub fn read_nav_file(nav_data: &mut CNavData, filename: &str) {
 
 /// Проверяет попадает ли эфемерида в временное окно
 fn is_ephemeris_within_time_window(eph: &GpsEphemeris, target_time: &UtcTime, window_hours: f64) -> bool {
+    // Отладочный вывод исходного времени
+    if eph.svid == 1 { // Только для первого спутника чтобы не спамить
+        println!("[DEBUG_TIME_DETAIL] Target UTC: {}-{:02}-{:02} {:02}:{:02}:{:02}", 
+            target_time.Year, target_time.Month, target_time.Day, 
+            target_time.Hour, target_time.Minute, target_time.Second as i32);
+        println!("[DEBUG_TIME_DETAIL] Eph SVID {}: week={}, toe={}", eph.svid, eph.week, eph.toe);
+    }
+    
     // Простая проверка по toe (time of ephemeris) в секундах GPS недели
     let target_gps = utc_to_gps_time(*target_time, false);
     let target_seconds = (target_gps.Week as f64) * 604800.0 + (target_gps.MilliSeconds as f64) / 1000.0;
     let eph_seconds = (eph.week as f64) * 604800.0 + (eph.toe as f64);
     
+    if eph.svid == 1 { // Отладочный вывод конвертированного времени
+        println!("[DEBUG_TIME_DETAIL] Target GPS: week={}, ms={}, seconds={:.1}", 
+            target_gps.Week, target_gps.MilliSeconds, target_seconds);
+        println!("[DEBUG_TIME_DETAIL] Eph GPS seconds: {:.1}", eph_seconds);
+    }
+    
     let time_diff_hours = (eph_seconds - target_seconds).abs() / 3600.0;
     let within_window = time_diff_hours <= window_hours;
     
-    // Отладочная информация для первых нескольких эфемерид
+    // Отладочная информация для эфемерид
     if !within_window {
         println!("[DEBUG_TIME] SVID {}: eph_time={:.1}h, target_time={:.1}h, diff={:.1}h > window={:.1}h - REJECTED",
+            eph.svid, eph_seconds/3600.0, target_seconds/3600.0, time_diff_hours, window_hours);
+    } else {
+        println!("[DEBUG_TIME] SVID {}: eph_time={:.1}h, target_time={:.1}h, diff={:.1}h <= window={:.1}h - ACCEPTED",
             eph.svid, eph_seconds/3600.0, target_seconds/3600.0, time_diff_hours, window_hours);
     }
     

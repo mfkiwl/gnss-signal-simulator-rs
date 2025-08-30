@@ -31,7 +31,7 @@ pub mod gnavbit;
 pub mod gnsstime;
 pub mod ifdatagen;
 pub mod types;
-pub mod json_interpreter;
+pub mod json_interpreter; // Восстановлено для RINEX парсинга
 pub mod json_parser;
 pub mod l5cnavbit;
 pub mod lnavbit;
@@ -77,7 +77,7 @@ pub use cnavbit::*;
 pub use cnav2bit::*;
 pub use complex_number::*;
 pub use coordinate::*;
-pub use json_interpreter::*;
+// ВРЕМЕННО ОТКЛЮЧЕНО: pub use json_interpreter::*;
 pub use json_parser::*;
 pub use l5cnavbit::*;
 pub use lnavbit::*;
