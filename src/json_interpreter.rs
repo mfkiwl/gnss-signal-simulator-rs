@@ -670,12 +670,16 @@ pub fn read_nav_file_filtered(
     // Счетчики для статистики фильтрации
     let mut gps_parsed = 0;
     let mut gps_accepted = 0;
+    let mut beidou_parsed = 0;
+    let mut beidou_accepted = 0;
     let mut other_skipped = 0;
     let mut total_lines_processed = 0;
     
-    // Кэш лучших эфемерид по SVID для умной фильтрации (u8 -> i32)
-    let mut ephemeris_by_epoch: std::collections::HashMap<i32, std::collections::HashMap<u8, GpsEphemeris>> = std::collections::HashMap::new();
-    let mut available_epochs: std::collections::HashSet<i32> = std::collections::HashSet::new();
+    // Кэш эфемерид по эпохам для GPS и BeiDou
+    let mut gps_ephemeris_by_epoch: std::collections::HashMap<i32, std::collections::HashMap<u8, GpsEphemeris>> = std::collections::HashMap::new();
+    let mut gps_available_epochs: std::collections::HashSet<i32> = std::collections::HashSet::new();
+    let mut beidou_ephemeris_by_epoch: std::collections::HashMap<i32, std::collections::HashMap<u8, GpsEphemeris>> = std::collections::HashMap::new();
+    let mut beidou_available_epochs: std::collections::HashSet<i32> = std::collections::HashSet::new();
     
     // Оптимизированный RINEX парсер с фильтрацией
     loop {
@@ -728,31 +732,33 @@ pub fn read_nav_file_filtered(
                 if let Some(eph) = parse_gps_ephemeris(&line, &mut lines) {
                     gps_parsed += 1;
                     
-                    // Новая логика: группируем эфемериды по эпохам времени (toe)
+                    // GPS логика: группируем эфемериды по эпохам времени (toe)
                     if let Some(target) = target_time {
                         if is_ephemeris_within_time_window(&eph, &target, time_window_hours) {
                             // Добавляем эпоху в список доступных
-                            available_epochs.insert(eph.toe);
+                            gps_available_epochs.insert(eph.toe);
                             
                             // Группируем эфемериды по эпохе времени
-                            let epoch_map = ephemeris_by_epoch.entry(eph.toe).or_insert_with(std::collections::HashMap::new);
+                            let epoch_map = gps_ephemeris_by_epoch.entry(eph.toe).or_insert_with(std::collections::HashMap::new);
                             epoch_map.insert(eph.svid, eph);
                         }
                     } else {
                         // Без временной фильтрации - просто берем первую эпоху для каждого SVID
-                        available_epochs.insert(eph.toe);
-                        let epoch_map = ephemeris_by_epoch.entry(eph.toe).or_insert_with(std::collections::HashMap::new);
+                        gps_available_epochs.insert(eph.toe);
+                        let epoch_map = gps_ephemeris_by_epoch.entry(eph.toe).or_insert_with(std::collections::HashMap::new);
                         if !epoch_map.contains_key(&eph.svid) {
                             epoch_map.insert(eph.svid, eph);
                         }
                     }
                     
-                    // Проверяем, достаточно ли эфемерид для раннего выхода
-                    let total_ephemeris: usize = ephemeris_by_epoch.values()
+                    // Для мультисистемной генерации - не прерываем парсинг рано!
+                    // BeiDou данные находятся в конце файла (~строка 93528)
+                    let total_ephemeris: usize = gps_ephemeris_by_epoch.values()
                         .map(|epoch_map| epoch_map.len()).sum();
-                    if total_ephemeris >= 100 {
-                        println!("[INFO] Early exit: found {} GPS ephemeris across {} epochs", 
-                                total_ephemeris, available_epochs.len());
+                    if total_ephemeris >= 100 && enabled_systems.len() == 1 && enabled_systems.contains(&"GPS") {
+                        // Раннее завершение только для GPS-only конфигурации
+                        println!("[INFO] GPS-only early exit: found {} GPS ephemeris across {} epochs", 
+                                total_ephemeris, gps_available_epochs.len());
                         break;
                     }
                 }
@@ -766,8 +772,13 @@ pub fn read_nav_file_filtered(
             'C' if beidou_enabled => {
                 // BeiDou эфемериды (только если BeiDou включена)
                 if let Some(eph) = parse_beidou_ephemeris(&line, &mut lines) {
-                    nav_data.add_beidou_ephemeris(eph);
-                    println!("[DEBUG] Parsed BeiDou ephemeris for SVID {}", eph.svid);
+                    // Добавляем в группу по эпохе
+                    let epoch_key = eph.toe as i32;
+                    beidou_ephemeris_by_epoch.entry(epoch_key).or_insert_with(std::collections::HashMap::new).insert(eph.svid, eph);
+                    beidou_available_epochs.insert(epoch_key);
+                    beidou_parsed += 1;
+                    
+                    println!("[DEBUG] Parsed BeiDou ephemeris for SVID {} with toe={}", eph.svid, eph.toe);
                 }
             },
             'E' if galileo_enabled => {
@@ -815,9 +826,14 @@ pub fn read_nav_file_filtered(
         }
     }
     
-    // Выбираем единую лучшую эпоху для всех спутников
+    // Выбираем единую лучшую эпоху для всех спутников (GPS + BeiDou)
     if let Some(target) = target_time {
-        if !available_epochs.is_empty() {
+        // Объединяем все доступные эпохи GPS и BeiDou
+        let mut all_available_epochs: std::collections::HashSet<i32> = std::collections::HashSet::new();
+        all_available_epochs.extend(&gps_available_epochs);
+        all_available_epochs.extend(&beidou_available_epochs);
+        
+        if !all_available_epochs.is_empty() {
             // Находим эпоху ближайшую к target_time
             let target_gps = utc_to_gps_time(target.clone(), false);
             let target_seconds = (target_gps.Week as f64) * 604800.0 + (target_gps.MilliSeconds as f64) / 1000.0;
@@ -825,7 +841,7 @@ pub fn read_nav_file_filtered(
             let mut best_epoch = 0i32;
             let mut best_epoch_diff = f64::INFINITY;
             
-            for &epoch in &available_epochs {
+            for &epoch in &all_available_epochs {
                 // toe уже в секундах GPS недели, нужно добавить неделю
                 let epoch_seconds = (target_gps.Week as f64) * 604800.0 + (epoch as f64);
                 let time_diff = (epoch_seconds - target_seconds).abs();
@@ -835,25 +851,54 @@ pub fn read_nav_file_filtered(
                 }
             }
             
-            println!("[INFO] Selected epoch: toe={} (diff={:.1}h) from {} available epochs",
-                     best_epoch, best_epoch_diff / 3600.0, available_epochs.len());
+            println!("[INFO] Selected unified epoch: toe={} (diff={:.1}h) from {} GPS epochs and {} BeiDou epochs",
+                     best_epoch, best_epoch_diff / 3600.0, gps_available_epochs.len(), beidou_available_epochs.len());
             
-            // Добавляем все эфемериды с выбранной эпохи
-            if let Some(epoch_ephemeris) = ephemeris_by_epoch.get(&best_epoch) {
+            // Добавляем все GPS эфемериды с выбранной эпохи
+            if let Some(epoch_ephemeris) = gps_ephemeris_by_epoch.get(&best_epoch) {
                 for (svid, eph) in epoch_ephemeris {
                     nav_data.add_gps_ephemeris(*eph);
                     gps_accepted += 1;
                     println!("[DEBUG] Added GPS ephemeris for SVID {} with toe={}", svid, eph.toe);
                 }
             }
+            
+            // Добавляем все BeiDou эфемериды с выбранной эпохи
+            if let Some(epoch_ephemeris) = beidou_ephemeris_by_epoch.get(&best_epoch) {
+                for (svid, eph) in epoch_ephemeris {
+                    nav_data.add_beidou_ephemeris(*eph);
+                    beidou_accepted += 1;
+                    println!("[DEBUG] Added BeiDou ephemeris for SVID {} with toe={}", svid, eph.toe);
+                }
+            }
         }
     } else {
         // Без временной фильтрации - берем первую доступную эпоху
-        if let Some((&first_epoch, first_epoch_ephemeris)) = ephemeris_by_epoch.iter().next() {
-            println!("[INFO] No time filtering - using first epoch: toe={}", first_epoch);
+        let mut selected_epoch: Option<i32> = None;
+        
+        // Приоритет GPS если доступна
+        if let Some((&first_epoch, first_epoch_ephemeris)) = gps_ephemeris_by_epoch.iter().next() {
+            selected_epoch = Some(first_epoch);
+            println!("[INFO] No time filtering - using first GPS epoch: toe={}", first_epoch);
             for (svid, eph) in first_epoch_ephemeris {
                 nav_data.add_gps_ephemeris(*eph);
                 gps_accepted += 1;
+            }
+        }
+        
+        // Добавляем BeiDou с той же эпохи если есть, иначе с первой доступной
+        if let Some(epoch) = selected_epoch {
+            if let Some(epoch_ephemeris) = beidou_ephemeris_by_epoch.get(&epoch) {
+                for (svid, eph) in epoch_ephemeris {
+                    nav_data.add_beidou_ephemeris(*eph);
+                    beidou_accepted += 1;
+                }
+            }
+        } else if let Some((&first_epoch, first_epoch_ephemeris)) = beidou_ephemeris_by_epoch.iter().next() {
+            println!("[INFO] No time filtering - using first BeiDou epoch: toe={}", first_epoch);
+            for (svid, eph) in first_epoch_ephemeris {
+                nav_data.add_beidou_ephemeris(*eph);
+                beidou_accepted += 1;
             }
         }
     }
@@ -864,11 +909,15 @@ pub fn read_nav_file_filtered(
     }
     
     println!("[INFO]\tNavigation file loaded successfully (filtered): {}", filename);
-    println!("[INFO]\tSmart filtering results: GPS parsed={}, accepted={} unique SVIDs, other systems skipped={}", 
-        gps_parsed, gps_accepted, other_skipped);
+    println!("[INFO]\tUnified epoch filtering results: GPS parsed={}, accepted={}, BeiDou parsed={}, accepted={}, other systems skipped={}", 
+        gps_parsed, gps_accepted, beidou_parsed, beidou_accepted, other_skipped);
     
     if gps_enabled && gps_accepted == 0 {
         println!("[WARN]\tNo GPS ephemeris accepted after filtering - check time window");
+    }
+    
+    if beidou_enabled && beidou_accepted == 0 {
+        println!("[WARN]\tNo BeiDou ephemeris accepted after filtering - check time window");
     }
 }
 

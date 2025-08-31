@@ -1,6 +1,6 @@
 {
 	"version": 1.0,
-	"description": "GPS+BDS+GAL L1 bands (without B1I) - 5 MHz - 3 minutes",
+	"description": "GPS+BDS+GAL L1 bands (without B1I) - 5 MHz",
 	"time": {
 		"type": "UTC",
 		"year": 2025,
@@ -27,7 +27,7 @@
 		"trajectoryList": [
 			{
 				"type": "Const",
-				"time": 180.0
+				"time": 10.0
 			}
 		]
 	},
@@ -40,7 +40,7 @@
 		"format": "IQ8",
 		"sampleFreq": 5.0,
 		"centerFreq": 1575.42,
-		"name": "generated_files/GPS_BDS_GAL_L1_5MHz_3min.C8",
+		"name": "generated_files/GPS_BDS_GAL_L1_5MHz.C8",
 		"config": {
 			"elevationMask": 5
 		},
