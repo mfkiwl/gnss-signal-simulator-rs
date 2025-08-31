@@ -688,8 +688,9 @@ impl IFDataGen {
             );
             
             // Копируем загруженные эфемериды в наши данные
-            self.copy_ephemeris_from_json_nav_data(&c_nav_data); // GPS эфемериды
-            self.copy_beidou_ephemeris_from_json_nav_data(&c_nav_data); // BeiDou эфемериды
+            self.copy_ephemeris_from_json_nav_data(&c_nav_data, utc_time); // GPS эфемериды
+            self.copy_beidou_ephemeris_from_json_nav_data(&c_nav_data, utc_time); // BeiDou эфемериды
+            self.copy_galileo_ephemeris_from_json_nav_data(&c_nav_data, utc_time); // Galileo эфемериды
         } else {
             println!("[ERROR]\tRINEX file not found: {}", rinex_file);
         }
@@ -876,15 +877,14 @@ impl IFDataGen {
             }
         }
 
-        for i in 1..=TOTAL_GAL_SAT {
-            self.gal_eph[i-1] = self.nav_data.find_ephemeris(GnssSystem::GalileoSystem, self.cur_time, i as i32, 0, 0);
-            
-            if let Some(ref eph) = self.gal_eph[i-1] {
+        // Настройка навигационных битов для Galileo (эфемериды уже скопированы в copy_galileo_ephemeris_from_json_nav_data)
+        for i in 0..TOTAL_GAL_SAT {
+            if let Some(ref eph) = self.gal_eph[i] {
                 if let Some(ref mut nav_bit) = nav_bit_array[DataBitType::DataBitINav as usize] {
-                    nav_bit.set_ephemeris(i as i32, eph);
+                    nav_bit.set_ephemeris((i + 1) as i32, eph); // SVID starts from 1
                 }
                 if let Some(ref mut nav_bit) = nav_bit_array[DataBitType::DataBitFNav as usize] {
-                    nav_bit.set_ephemeris(i as i32, eph);
+                    nav_bit.set_ephemeris((i + 1) as i32, eph); // SVID starts from 1  
                 }
             }
         }
@@ -993,8 +993,11 @@ impl IFDataGen {
                     
                     // Calculate satellite position
                     let transmit_time = (self.cur_time.MilliSeconds as f64) / 1000.0;
-                    println!("[DEBUG] Satellite {} transmit_time: {}", i, transmit_time);
-                    if let Some(sat_pos) = self.gps_sat_pos_speed_eph(GnssSystem::GpsSystem, transmit_time, eph) {
+                    let mut sat_pos = KinematicInfo::default();
+                    let mut eph_mut = *eph; // Копируем эфемериды для мутабельности
+                    let delta_t_gps = transmit_time - eph.toe as f64;
+                    println!("[DEBUG] GPS{:02} - toe={}, transmit_time={}, delta_t={:.1}h", i+1, eph.toe, transmit_time, delta_t_gps / 3600.0);
+                    if crate::coordinate::gps_sat_pos_speed_eph(GnssSystem::GpsSystem, transmit_time, &mut eph_mut, &mut sat_pos, None) {
                         println!("[DEBUG] Satellite {} position: ({:.1}, {:.1}, {:.1})", i, sat_pos.x, sat_pos.y, sat_pos.z);
                         
                         // Calculate elevation and azimuth
@@ -1062,7 +1065,9 @@ impl IFDataGen {
                     
                     let transmit_time = (self.cur_time.MilliSeconds as f64) / 1000.0;
                     println!("[DEBUG] Checking BeiDou SVID {} at time {}", eph.svid, transmit_time);
-                    if let Some(sat_pos) = self.gps_sat_pos_speed_eph(GnssSystem::BdsSystem, transmit_time, eph) {
+                    let mut sat_pos = KinematicInfo::default();
+                    let mut eph_mut = *eph; // Копируем эфемериды для мутабельности
+                    if crate::coordinate::gps_sat_pos_speed_eph(GnssSystem::BdsSystem, transmit_time, &mut eph_mut, &mut sat_pos, None) {
                         println!("[DEBUG] BeiDou sat pos calculated: ({:.1}, {:.1}, {:.1})", sat_pos.x, sat_pos.y, sat_pos.z);
                         let (elevation, _azimuth) = self.sat_el_az(cur_pos, sat_pos);
                         
@@ -1114,7 +1119,13 @@ impl IFDataGen {
                     }
                     
                     let transmit_time = (self.cur_time.MilliSeconds as f64) / 1000.0;
-                    if let Some(sat_pos) = self.gps_sat_pos_speed_eph(GnssSystem::GalileoSystem, transmit_time, eph) {
+                    let mut sat_pos = KinematicInfo::default();
+                    let mut eph_mut = *eph; // Копируем эфемериды для мутабельности
+                    let delta_t = transmit_time - eph.toe as f64;
+                    println!("[DEBUG] GAL{:02} - toe={}, transmit_time={}, delta_t={:.1}h", i+1, eph.toe, transmit_time, delta_t / 3600.0);
+                    let pos_calc_success = crate::coordinate::gps_sat_pos_speed_eph(GnssSystem::GalileoSystem, transmit_time, &mut eph_mut, &mut sat_pos, None);
+                    println!("[DEBUG] GAL{:02} - pos_calc_success={}, sat_pos=({:.1}, {:.1}, {:.1})", i+1, pos_calc_success, sat_pos.x, sat_pos.y, sat_pos.z);
+                    if pos_calc_success {
                         let (elevation, azimuth) = self.sat_el_az(cur_pos, sat_pos);
                         println!("[DEBUG] GAL{:02} - elevation={:.1}°, azimuth={:.1}°", i+1, elevation.to_degrees(), azimuth.to_degrees());
                         
@@ -2623,8 +2634,9 @@ impl IFDataGen {
             );
             
             // Копируем загруженные эфемериды в наши данные
-            self.copy_ephemeris_from_json_nav_data(&c_nav_data); // GPS эфемериды
-            self.copy_beidou_ephemeris_from_json_nav_data(&c_nav_data); // BeiDou эфемериды
+            self.copy_ephemeris_from_json_nav_data(&c_nav_data, utc_time); // GPS эфемериды
+            self.copy_beidou_ephemeris_from_json_nav_data(&c_nav_data, utc_time); // BeiDou эфемериды
+            self.copy_galileo_ephemeris_from_json_nav_data(&c_nav_data, utc_time); // Galileo эфемериды
             
             println!("[INFO]\tMinimal ephemeris loaded successfully");
         } else {
@@ -2692,24 +2704,37 @@ impl IFDataGen {
     }
     
     // Копирует эфемериды из json_interpreter::CNavData в наш NavData 
-    fn copy_ephemeris_from_json_nav_data(&mut self, c_nav_data: &crate::json_interpreter::CNavData) {
+    fn copy_ephemeris_from_json_nav_data(&mut self, c_nav_data: &crate::json_interpreter::CNavData, utc_time: UtcTime) {
         println!("[INFO]\tCopying ephemeris from JSON CNavData");
         println!("[DEBUG] Source has {} GPS ephemeris records", c_nav_data.gps_ephemeris.len());
         
-        // Копируем GPS эфемериды в правильный массив
-        let mut gps_count = 0;
-        for eph in &c_nav_data.gps_ephemeris {
-            if (eph.svid as usize) <= TOTAL_GPS_SAT && eph.svid > 0 {
-                let index = (eph.svid as usize) - 1;
-                self.gps_eph[index] = Some(*eph);
-                gps_count += 1;
-                if gps_count <= 5 { // Show only first 5 to reduce spam
-                    println!("[DEBUG] Copied GPS ephemeris for SVID {} to index {} (valid:{}, health:{})", eph.svid, index, eph.valid, eph.health);
+        // Преобразуем UTC время из пресета в GPS время для выбора ближайших эфемерид
+        let target_gps_time = utc_to_gps_time(utc_time, false);
+        let target_time = (target_gps_time.MilliSeconds as f64) / 1000.0;
+        
+        // Выбираем лучшие эфемериды по времени для каждого SVID
+        for svid in 1..=TOTAL_GPS_SAT {
+            let mut best_eph: Option<GpsEphemeris> = None;
+            let mut best_time_diff = f64::INFINITY;
+            
+            for eph in &c_nav_data.gps_ephemeris {
+                if eph.svid == svid as u8 {
+                    let time_diff = (target_time - eph.toe as f64).abs();
+                    if time_diff < best_time_diff {
+                        best_time_diff = time_diff;
+                        best_eph = Some(*eph);
+                    }
                 }
+            }
+            
+            if let Some(eph) = best_eph {
+                let index = (svid as usize) - 1;
+                self.gps_eph[index] = Some(eph);
+                println!("[DEBUG] GPS{:02} - Selected ephemeris with toe={}, time_diff={:.1}h", svid, eph.toe, best_time_diff / 3600.0);
             }
         }
         
-        // Verify the copy worked
+        // Подсчитываем количество скопированных эфемерид
         let mut verified_count = 0;
         for i in 0..TOTAL_GPS_SAT {
             if self.gps_eph[i].is_some() {
@@ -2727,28 +2752,41 @@ impl IFDataGen {
             }
         }
         
-        println!("[INFO]\tCopied {} GPS ephemeris records, verified {} in gps_eph array", gps_count, verified_count);
+        println!("[INFO]\tSelected {} GPS ephemeris records using time-based algorithm", verified_count);
     }
 
     // Копирует BeiDou эфемериды из json_interpreter::CNavData в наш NavData 
-    fn copy_beidou_ephemeris_from_json_nav_data(&mut self, c_nav_data: &crate::json_interpreter::CNavData) {
+    fn copy_beidou_ephemeris_from_json_nav_data(&mut self, c_nav_data: &crate::json_interpreter::CNavData, utc_time: UtcTime) {
         println!("[INFO]\tCopying BeiDou ephemeris from JSON CNavData");
         println!("[DEBUG] Source has {} BeiDou ephemeris records", c_nav_data.beidou_ephemeris.len());
         
-        // Копируем BeiDou эфемериды в правильный массив
-        let mut bds_count = 0;
-        for eph in &c_nav_data.beidou_ephemeris {
-            if (eph.svid as usize) <= TOTAL_BDS_SAT && eph.svid > 0 {
-                let index = (eph.svid as usize) - 1;
-                self.bds_eph[index] = Some(*eph);
-                bds_count += 1;
-                if bds_count <= 5 { // Show only first 5 to reduce spam
-                    println!("[DEBUG] Copied BeiDou ephemeris for SVID {} to index {} (valid:{}, health:{})", eph.svid, index, eph.valid, eph.health);
+        // Преобразуем UTC время из пресета в GPS время для выбора ближайших эфемерид
+        let target_gps_time = utc_to_gps_time(utc_time, false);
+        let target_time = (target_gps_time.MilliSeconds as f64) / 1000.0;
+        
+        // Выбираем лучшие эфемериды по времени для каждого SVID
+        for svid in 1..=TOTAL_BDS_SAT {
+            let mut best_eph: Option<GpsEphemeris> = None;
+            let mut best_time_diff = f64::INFINITY;
+            
+            for eph in &c_nav_data.beidou_ephemeris {
+                if eph.svid == svid as u8 {
+                    let time_diff = (target_time - eph.toe as f64).abs();
+                    if time_diff < best_time_diff {
+                        best_time_diff = time_diff;
+                        best_eph = Some(*eph);
+                    }
                 }
+            }
+            
+            if let Some(eph) = best_eph {
+                let index = (svid as usize) - 1;
+                self.bds_eph[index] = Some(eph);
+                println!("[DEBUG] BDS{:02} - Selected ephemeris with toe={}, time_diff={:.1}h", svid, eph.toe, best_time_diff / 3600.0);
             }
         }
         
-        // Verify the copy worked
+        // Подсчитываем количество скопированных эфемерид
         let mut verified_count = 0;
         for i in 0..TOTAL_BDS_SAT {
             if self.bds_eph[i].is_some() {
@@ -2766,7 +2804,66 @@ impl IFDataGen {
             }
         }
         
-        println!("[INFO]\tCopied {} BeiDou ephemeris records, verified {} in bds_eph array", bds_count, verified_count);
+        println!("[INFO]\tSelected {} BeiDou ephemeris records using time-based algorithm", verified_count);
+    }
+
+    fn copy_galileo_ephemeris_from_json_nav_data(&mut self, c_nav_data: &crate::json_interpreter::CNavData, utc_time: UtcTime) {
+        println!("[INFO]\tCopying Galileo ephemeris from JSON CNavData");
+        println!("[DEBUG] Source has {} Galileo ephemeris records", c_nav_data.galileo_ephemeris.len());
+        
+        // Преобразуем UTC время из пресета в GPS время для выбора ближайших эфемерид
+        let target_gps_time = utc_to_gps_time(utc_time, false);
+        let target_time = (target_gps_time.MilliSeconds as f64) / 1000.0;
+        println!("[DEBUG] Target time from preset UTC {}-{:02}-{:02} {:02}:{:02}:{:02} -> GPS time: {}", 
+            utc_time.Year, utc_time.Month, utc_time.Day, utc_time.Hour, utc_time.Minute, utc_time.Second, target_time);
+        
+        // Выбираем лучшие эфемериды по времени для каждого SVID
+        let mut gal_count = 0;
+        for svid in 1..=TOTAL_GAL_SAT {
+            let mut best_eph: Option<GpsEphemeris> = None;
+            let mut best_time_diff = f64::INFINITY;
+            
+            // Ищем эфемериды с минимальным временным расстоянием
+            for eph in &c_nav_data.galileo_ephemeris {
+                if eph.svid == svid as u8 {
+                    let time_diff = (target_time - eph.toe as f64).abs();
+                    if time_diff < best_time_diff {
+                        best_time_diff = time_diff;
+                        best_eph = Some(*eph);
+                    }
+                }
+            }
+            
+            if let Some(eph) = best_eph {
+                let index = (svid as usize) - 1;
+                self.gal_eph[index] = Some(eph);
+                gal_count += 1;
+                if gal_count <= 5 { // Show only first 5 to reduce spam
+                    println!("[DEBUG] Selected best Galileo ephemeris for SVID {} - toe={}, time_diff={:.1}h (valid:{}, health:{})", 
+                        svid, eph.toe, best_time_diff / 3600.0, eph.valid, eph.health);
+                }
+            }
+        }
+        
+        // Verify the copy worked
+        let mut verified_count = 0;
+        for i in 0..TOTAL_GAL_SAT {
+            if self.gal_eph[i].is_some() {
+                verified_count += 1;
+            }
+        }
+        
+        // Копируем также в nav_data для совместимости
+        if self.nav_data.gal_ephemeris.len() < TOTAL_GAL_SAT {
+            self.nav_data.gal_ephemeris.resize(TOTAL_GAL_SAT, None);
+        }
+        for eph in &c_nav_data.galileo_ephemeris {
+            if (eph.svid as usize) <= TOTAL_GAL_SAT && eph.svid > 0 {
+                self.nav_data.gal_ephemeris[eph.svid as usize - 1] = Some(*eph);
+            }
+        }
+        
+        println!("[INFO]\tCopied {} Galileo ephemeris records, verified {} in gal_eph array", gal_count, verified_count);
     }
 
     pub fn generate_data(&mut self) -> Result<GenerationStats, Box<dyn std::error::Error>> {
@@ -2855,86 +2952,7 @@ impl IFDataGen {
     }
 
     // Satellite position calculation functions based on C implementation
-    fn gps_sat_pos_speed_eph(&self, system: GnssSystem, transmit_time: f64, eph: &GpsEphemeris) -> Option<KinematicInfo> {
-        
-        
-        // Calculate time difference
-        let mut delta_t = transmit_time - eph.toe as f64;
-        
-        // Protection for time ring back at week end
-        if delta_t > 302400.0 {
-            delta_t -= 604800.0;
-        } else if delta_t < -302400.0 {
-            delta_t += 604800.0;
-        }
-        
-        // Mean motion
-        let sqrt_a = eph.sqrtA;
-        let a = sqrt_a * sqrt_a;
-        let n0 = (EARTH_GM / (a * a * a)).sqrt();
-        let n = n0 + eph.delta_n as f64;
-        
-        // Mean anomaly
-        let mk = eph.M0 as f64 + n * delta_t;
-        
-        // Eccentric anomaly - iterative solution
-        let mut ek = mk;
-        for _ in 0..10 {
-            let ek1 = mk + (eph.ecc as f64) * crate::fastmath::FastMath::fast_sin(ek);
-            if (ek1 - ek).abs() < 1e-12 {
-                ek = ek1;
-                break;
-            }
-            ek = ek1;
-        }
-        
-        // УСКОРЕНИЕ: FastMath для True anomaly
-        let sin_ek = crate::fastmath::FastMath::fast_sin(ek);
-        let cos_ek = crate::fastmath::FastMath::fast_cos(ek);
-        let ecc = eph.ecc as f64;
-        
-        let phi = ((1.0 - ecc * ecc).sqrt() * sin_ek / (1.0 - ecc * cos_ek)).atan2(
-            (cos_ek - ecc) / (1.0 - ecc * cos_ek)
-        );
-        
-        // Argument of latitude
-        let uk = phi + eph.w as f64;
-        
-        // УСКОРЕНИЕ: FastMath для Second harmonic perturbations
-        let sin_2u = crate::fastmath::FastMath::fast_sin(2.0 * uk);
-        let cos_2u = crate::fastmath::FastMath::fast_cos(2.0 * uk);
-        
-        let duk = eph.cus as f64 * sin_2u + eph.cuc as f64 * cos_2u;
-        let drk = eph.crs as f64 * sin_2u + eph.crc as f64 * cos_2u;
-        let dik = eph.cis as f64 * sin_2u + eph.cic as f64 * cos_2u;
-        
-        // Corrected argument of latitude, radius and inclination
-        let uk_corrected = uk + duk;
-        let rk = a * (1.0 - ecc * cos_ek) + drk;
-        let ik = eph.i0 as f64 + eph.idot as f64 * delta_t + dik;
-        
-        // УСКОРЕНИЕ: FastMath для Positions in orbital plane
-        let xp = rk * crate::fastmath::FastMath::fast_cos(uk_corrected);
-        let yp = rk * crate::fastmath::FastMath::fast_sin(uk_corrected);
-        
-        // Corrected longitude of ascending node
-        let omega_k = eph.omega0 as f64 + (eph.omega_dot as f64 - WGS_OMEGDOTE) * delta_t - WGS_OMEGDOTE * eph.toe as f64;
-        
-        // УСКОРЕНИЕ: FastMath для Earth-fixed coordinates - критично для производительности!
-        let sin_omega = crate::fastmath::FastMath::fast_sin(omega_k);
-        let cos_omega = crate::fastmath::FastMath::fast_cos(omega_k);
-        let sin_i = crate::fastmath::FastMath::fast_sin(ik);
-        let cos_i = crate::fastmath::FastMath::fast_cos(ik);
-        
-        let x = xp * cos_omega - yp * cos_i * sin_omega;
-        let y = xp * sin_omega + yp * cos_i * cos_omega;
-        let z = yp * sin_i;
-        
-        Some(KinematicInfo {
-            x, y, z,
-            vx: 0.0, vy: 0.0, vz: 0.0, // Velocities not needed for visibility calculation
-        })
-    }
+    // Убрана неработающая функция gps_sat_pos_speed_eph - используется crate::coordinate::gps_sat_pos_speed_eph
 
     fn glonass_sat_pos_speed_eph(&self, transmit_time: f64, eph: &GlonassEphemeris) -> Option<KinematicInfo> {
         // Simplified GLONASS position calculation
