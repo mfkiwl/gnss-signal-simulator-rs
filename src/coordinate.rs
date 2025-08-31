@@ -348,16 +348,19 @@ pub fn ecef_to_lla(ecef_pos: &KinematicInfo) -> LlaPosition {
 
 /// Convert LLA to ECEF coordinates
 pub fn lla_to_ecef(lla_pos: &LlaPosition) -> KinematicInfo {
+    // Removed debug coordinates output
     let n = WGS_AXIS_A / (1.0 - WGS_E1_SQR * lla_pos.lat.sin() * lla_pos.lat.sin()).sqrt();
     
-    KinematicInfo {
+    let result = KinematicInfo {
         x: (n + lla_pos.alt) * lla_pos.lat.cos() * lla_pos.lon.cos(),
         y: (n + lla_pos.alt) * lla_pos.lat.cos() * lla_pos.lon.sin(),
         z: (n * (1.0 - WGS_E1_SQR) + lla_pos.alt) * lla_pos.lat.sin(),
         vx: 0.0,
         vy: 0.0,
         vz: 0.0,
-    }
+    };
+    // Removed debug ECEF result output
+    result
 }
 
 /// Calculate conversion matrix from ECEF position

@@ -12,6 +12,12 @@ pub struct Avx512Accelerator {
     initialized: bool,
 }
 
+impl Default for Avx512Accelerator {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Avx512Accelerator {
     /// Создать новый AVX-512 ускоритель
     pub fn new() -> Self {
@@ -242,6 +248,12 @@ impl Avx512Accelerator {
 
 /// Безопасная обертка для использования AVX-512 оптимизаций
 pub struct SafeAvx512Processor;
+
+impl Default for SafeAvx512Processor {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl SafeAvx512Processor {
     pub fn new() -> Self {

@@ -34,7 +34,10 @@ Core types are defined in `src/types.rs` including:
 
 - `GnssTime`, `UtcTime`, `GlonassTime` for time representation
 - `AlmanacType`, `GnssSystem` enums for system identification
-- Various ephemeris and almanac structures
+- **GPS ephemeris**: `GpsEphemeris` structure for GPS navigation data
+- **BeiDou ephemeris**: `BeiDouEphemeris` specialized structure with RINEX 3.04 compliant fields
+- **GLONASS ephemeris**: `GlonassEphemeris` for Russian GNSS system
+- Various almanac structures for different GNSS systems
 
 ### Configuration and Constants
 
@@ -48,19 +51,79 @@ The project uses minimal dependencies (only `rand` crate) and implements most fu
 The project now supports simultaneous multi-system signal generation with mathematically correct ephemeris synchronization:
 
 ### Supported GNSS Systems
+
 - **GPS L1CA**: Legacy civilian signal (1575.42 MHz)
-- **BeiDou B1C**: Modern civilian signal (1575.42 MHz) 
-- **Multi-system**: Simultaneous GPS + BeiDou generation
+- **BeiDou B1C**: Modern civilian signal (1575.42 MHz)  
+- **Galileo E1**: European civilian signal (1575.42 MHz)
+- **Multi-system**: Simultaneous GPS + BeiDou + Galileo generation
 
 ### Unified Epoch Algorithm
+
 A critical feature ensuring navigational correctness by forcing all satellites to use ephemeris data from the same time epoch (toe). This prevents mathematical inconsistencies that would occur if different satellites used ephemeris from different time periods.
 
+### RINEX 3.04 BeiDou Support
+
+- **Dedicated BeiDou Structure**: Specialized `BeiDouEphemeris` structure for proper RINEX 3.04 parsing
+- **BeiDou-specific fields**: AODE, AODC, TGD1, TGD2, satellite type identification
+- **Full constellation**: Support for GEO, IGSO, MEO satellites (SVID 1-63)
+- **CGCS2000 coordinate system**: Native BeiDou coordinate reference frame
+- **Backward compatibility**: Conversion methods for legacy GPS-based code
+
+### Galileo E1 Support
+
+- **Full RINEX 3.04 Galileo parsing**: Native support for Galileo ephemeris data
+- **GST time system**: Galileo System Time support with GPS time synchronization
+- **I/NAV navigation message**: Proper Galileo E1 signal generation
+- **European constellation**: Complete support for Galileo satellite constellation
+
+### Time System Corrections
+
+**CRITICAL BUG FIXES (August 2025):**
+
+- **UTC to GPS Time Conversion**: Fixed incorrect GLONASS time epoch reference in `src/gnsstime.rs:97`
+  - **Issue**: `utc_to_gps_time` was using `utc_to_glonass_time` with 1992 epoch instead of correct 1996 epoch
+  - **Fix**: Restored original `utc_to_glonass_time` usage for proper GPS week calculation
+  - **Impact**: Corrected 4-year time offset causing all satellites to appear below horizon
+
+- **BeiDou Time System**: Proper BDT to GPS time conversion with 1356-week offset
+  - **BDT Epoch**: January 1, 2006 vs GPS epoch January 6, 1980
+  - **Correction**: Added `BDT_TO_GPS_WEEK_OFFSET = 1356` weeks for temporal filtering
+
+- **Temporal Filtering**: 3-hour time window filtering for ephemeris selection
+  - **GPS**: Uses GPS time directly from RINEX (Week 2369 for June 2025)  
+  - **BeiDou**: BDT time corrected to GPS time for unified filtering
+  - **Galileo**: GST time synchronized with GPS time for consistency
+
 ### Available Presets
+
 - `presets/GPS_L1_only.json` - GPS L1CA only generation
-- `presets/GPS_L1CA_BDS_B1C_dual.json` - Simultaneous GPS + BeiDou generation
+- `presets/GPS_BDS_GAL_triple_system.json` - Triple system: GPS + BeiDou + Galileo generation
 - Other multi-system configurations available
 
+### Current Status
+
+**Ephemeris Processing**: ✅ Working correctly
+- GPS: 30 satellites loaded from 7 epochs
+- BeiDou: 295 satellites loaded from 6 epochs  
+- Galileo: 1534 satellites loaded from 36 epochs
+
+**Time Synchronization**: ✅ Fixed
+- Correct UTC to GPS time conversion (2025-06-05 → GPS Week 2369)
+- Proper BeiDou BDT time correction
+- Unified temporal filtering across all GNSS systems
+
+**Satellite Visibility**: ❌ Issue remains
+- All satellites show 0° elevation (below horizon)
+- Problem likely in satellite position calculation or elevation computation
+- Ephemeris data is loaded correctly, but position/visibility calculations need debugging
+
 ### Performance Features
+
 - **Parallel Mode**: Enable with `GNSS_PARALLEL_MODE=true` environment variable
-- **High Performance**: Optimized Rayon-based parallel processing 
+- **High Performance**: Optimized Rayon-based parallel processing
 - **Unified Output**: All systems generated into single IF data file
+
+### Known Issues
+
+1. **Satellite Visibility Calculation**: Despite correct ephemeris loading and time synchronization, all satellites appear below horizon (0 visible satellites for all systems)
+2. **Position Calculation**: Need to investigate satellite position computation algorithms in elevation/azimuth calculation

@@ -32,6 +32,12 @@ pub struct PrnCache {
     is_valid: bool,
 }
 
+impl Default for PrnCache {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl PrnCache {
     pub fn new() -> Self {
         Self {
@@ -108,6 +114,12 @@ pub struct ComputationCache {
     pub last_sample_number: i32,
     /// Флаг валидности кэша
     pub is_valid: bool,
+}
+
+impl Default for ComputationCache {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl ComputationCache {
@@ -974,13 +986,13 @@ impl SatIfSignal {
                 
                 // РЕВОЛЮЦИЯ! Используем готовые cos/sin из кэша вместо пересчёта!
                 let cos_vals = f64x4::new([
-                    carrier_cache.cached_cos[base_idx + 0],
+                    carrier_cache.cached_cos[base_idx],
                     carrier_cache.cached_cos[base_idx + 1],
                     carrier_cache.cached_cos[base_idx + 2],
                     carrier_cache.cached_cos[base_idx + 3],
                 ]);
                 let sin_vals = f64x4::new([
-                    carrier_cache.cached_sin[base_idx + 0],
+                    carrier_cache.cached_sin[base_idx],
                     carrier_cache.cached_sin[base_idx + 1],
                     carrier_cache.cached_sin[base_idx + 2],
                     carrier_cache.cached_sin[base_idx + 3],

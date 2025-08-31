@@ -538,6 +538,7 @@ pub struct IFDataGen {
     pub nav_data: NavData,
     pub output_param: OutputParam,
     pub cur_time: GnssTime,
+    pub start_pos: LlaPosition,
     
     // ЭКСТРЕМАЛЬНАЯ АППАРАТНАЯ ОПТИМИЗАЦИЯ
     #[cfg(feature = "gpu")]
@@ -591,6 +592,7 @@ impl IFDataGen {
             nav_data: NavData::new(),
             output_param: OutputParam::default(),
             cur_time: GnssTime::default(),
+            start_pos: LlaPosition::default(),
             
             // ЭКСТРЕМАЛЬНАЯ ИНИЦИАЛИЗАЦИЯ: CPU+GPU гибридное ускорение
             #[cfg(feature = "gpu")]
@@ -2445,7 +2447,7 @@ impl IFDataGen {
 
         // Парсим параметры из JSON используя чистый Rust
         let mut utc_time = UtcTime::default();
-        let start_pos = LlaPosition::default();
+        let mut start_pos = LlaPosition::default();
         let start_vel = LocalSpeed::default();
         
         println!("[DEBUG] Filename before JSON parsing: {:?}", 
@@ -2456,7 +2458,7 @@ impl IFDataGen {
         // Переменная для пути к RINEX файлу
         let mut rinex_file = String::from("Rinex_Data/rinex_v3_20251560000.rnx"); // Значение по умолчанию
         
-        // УПРОЩЕННЫЙ JSON ПАРСИНГ - читаем файл напрямую и парсим нужные параметры
+        // УПРОЩЕННЫЙ JSON ПАРСИНГ - читаем файл напрямую и парсим нужные параметры  
         if let Ok(json_content) = std::fs::read_to_string(config_file) {
             println!("[UNIQUE-JSON-READ] File read successfully, length: {}", json_content.len());
             if let Ok(json) = serde_json::from_str::<serde_json::Value>(&json_content) {
@@ -2477,6 +2479,26 @@ impl IFDataGen {
                         utc_time.Hour = hour as i32;
                         utc_time.Minute = minute as i32;
                         utc_time.Second = second;
+                    }
+                }
+                
+                // Парсим координаты из initPosition
+                if let Some(trajectory) = json.get("trajectory") {
+                    if let Some(init_pos) = trajectory.get("initPosition") {
+                        if let (Some(longitude), Some(latitude), Some(altitude)) = (
+                            init_pos.get("longitude").and_then(|v| v.as_f64()),
+                            init_pos.get("latitude").and_then(|v| v.as_f64()),
+                            init_pos.get("altitude").and_then(|v| v.as_f64())
+                        ) {
+                            start_pos.lon = longitude.to_radians();
+                            start_pos.lat = latitude.to_radians();
+                            start_pos.alt = altitude;
+                            println!("[INFO] Parsed position from JSON: lat={:.6}°, lon={:.6}°, alt={:.1}m", 
+                                     latitude, longitude, altitude);
+                            
+                            // Сохраняем координаты в структуре
+                            self.start_pos = start_pos;
+                        }
                     }
                 }
                 
@@ -2760,7 +2782,7 @@ impl IFDataGen {
     /// 2. Для каждого SVID (1-32) поиск эфемериды с минимальной разностью |target_time - toe|
     /// 3. Выбор единственной "лучшей" эфемериды на спутник для обеспечения консистентности
     fn copy_ephemeris_from_json_nav_data(&mut self, c_nav_data: &crate::json_interpreter::CNavData, utc_time: UtcTime) {
-        println!("[INFO]\tCopying ephemeris from JSON CNavData");
+        println!("[INFO]\tCopying GPS ephemeris from JSON CNavData");
         println!("[DEBUG] Source has {} GPS ephemeris records", c_nav_data.gps_ephemeris.len());
         
         // Критическое преобразование: UTC время из пресета -> GPS время для сравнения с toe (time of ephemeris)
@@ -2915,8 +2937,6 @@ impl IFDataGen {
         // Критически важно: все GNSS системы используют одинаковую временную базу для сравнения
         let target_gps_time = utc_to_gps_time(utc_time, false);
         let target_time = (target_gps_time.MilliSeconds as f64) / 1000.0; // Эталонное время в секундах GPS
-        println!("[DEBUG] Target time from preset UTC {}-{:02}-{:02} {:02}:{:02}:{:02} -> GPS time: {}", 
-            utc_time.Year, utc_time.Month, utc_time.Day, utc_time.Hour, utc_time.Minute, utc_time.Second, target_time);
         
         // Реализация унифицированного алгоритма выбора с расширенной статистикой
         let mut gal_count = 0;                                // Счетчик успешно выбранных эфемерид
@@ -2986,11 +3006,7 @@ impl IFDataGen {
                 Second: 30.0
             }
         });
-        let start_pos = LlaPosition {
-            lon: -114.2847_f64.to_radians(),
-            lat: 48.4928_f64.to_radians(),
-            alt: 100.0
-        };
+        let start_pos = self.start_pos;
         let start_vel = LocalSpeed::default();
         let glonass_time = utc_to_glonass_time_corrected(utc_time);
         let bds_time = utc_to_bds_time(utc_time);

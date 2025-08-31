@@ -15,9 +15,9 @@
 		"initPosition": {
 			"type": "LLA",
 			"format": "d",
-			"longitude": -114.2847,
-			"latitude": 48.4928,
-			"altitude": 100.0
+			"longitude": -87.39,
+			"latitude": 41.54,
+			"altitude": 30.0
 		},
 		"initVelocity": {
 			"type": "SCU",

@@ -264,7 +264,12 @@ impl INavBit {
             even_part[i/2] = (even_part[i/2] << 4) + self.gal_convolution_encode(&mut conv_encode_bits, &mut encode_word);
             bit_count += 2;
             if (bit_count % 32) == 0 {
-                encode_word = encode_data[(bit_count >> 5) as usize];
+                let index = (bit_count >> 5) as usize;
+                if index < encode_data.len() {
+                    encode_word = encode_data[index];
+                } else {
+                    encode_word = 0; // Используем 0 для индексов вне границ
+                }
             }
         }
         encode_word = 0; // append 6 zeros as tail
@@ -280,7 +285,12 @@ impl INavBit {
             odd_part[i/2] = (odd_part[i/2] << 4) + self.gal_convolution_encode(&mut conv_encode_bits, &mut encode_word);
             bit_count += 2;
             if (bit_count % 32) == 0 {
-                encode_word = encode_data[(bit_count >> 5) as usize];
+                let index = (bit_count >> 5) as usize;
+                if index < encode_data.len() {
+                    encode_word = encode_data[index];
+                } else {
+                    encode_word = 0; // Используем 0 для индексов вне границ
+                }
             }
         }
         encode_word = crc_result << 8;
