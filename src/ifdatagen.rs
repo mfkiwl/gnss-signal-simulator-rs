@@ -1450,8 +1450,8 @@ impl IFDataGen {
         
         println!("[INFO]\tStarting main generation loop...");
         
-        // РЕВОЛЮЦИОННЫЙ РЕЖИМ: Истинная параллелизация спутников
-        if std::env::var("GNSS_PARALLEL_MODE").unwrap_or_default() == "true" {
+        // РЕВОЛЮЦИОННЫЙ РЕЖИМ: Истинная параллелизация спутников (включен по умолчанию)
+        if std::env::var("GNSS_PARALLEL_MODE").unwrap_or("true".to_string()) == "true" {
             let signals_owned = std::mem::take(sat_if_signals);
             return self.generate_with_true_parallelization(
                 if_file,
