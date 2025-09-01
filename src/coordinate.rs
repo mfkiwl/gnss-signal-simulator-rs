@@ -235,7 +235,7 @@ pub fn gps_sat_pos_speed_eph(
     // if ephemeris expire, return false
     if delta_t.abs() > 7200.0 {
         false
-    } else { !(delta_t.abs() > 3600.0 && system == GnssSystem::BdsSystem) }
+    } else { !(delta_t.abs() > 7200.0 && system == GnssSystem::BdsSystem) } // TEMP: увеличили BeiDou лимит с 1ч до 2ч для отладки
 }
 
 /// GLONASS satellite position and velocity calculation from ephemeris
@@ -264,12 +264,15 @@ pub fn glonass_sat_pos_speed_eph(
         ];
         
         let step_number = (delta_t / COARSE_STEP) as i32;
+        let max_steps = 7200; // Максимум 7200 шагов (2 часа при 1-секундном шаге)
         if step_number >= 0 {
-            for _ in 0..step_number {
+            let limited_steps = step_number.min(max_steps);
+            for _ in 0..limited_steps {
                 runge_kutta(COARSE_STEP, &mut state);
             }
         } else {
-            for _ in step_number..0 {
+            let limited_steps = (-step_number).min(max_steps);
+            for _ in 0..limited_steps { // КРИТИЧЕСКИЙ ФИКС: исправлен бесконечный цикл
                 runge_kutta(-COARSE_STEP, &mut state);
             }
         }

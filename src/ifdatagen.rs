@@ -1148,10 +1148,13 @@ impl IFDataGen {
                     
                     // КРИТИЧЕСКИЙ ФИКС: BeiDou transmit_time должно быть в секундах недели (как GPS)
                     let transmit_time = (self.cur_time.Week as f64) * 604800.0 + (self.cur_time.MilliSeconds as f64) / 1000.0;
-                    println!("[DEBUG] Checking BeiDou SVID {} at time {} (week {})", eph.svid, transmit_time, self.cur_time.Week);
                     let mut sat_pos = KinematicInfo::default();
                     let mut eph_mut = *eph; // Копируем эфемериды для мутабельности
-                    if crate::coordinate::gps_sat_pos_speed_eph(GnssSystem::BdsSystem, transmit_time, &mut eph_mut, &mut sat_pos, None) {
+                    let pos_calc_success = crate::coordinate::gps_sat_pos_speed_eph(GnssSystem::BdsSystem, transmit_time, &mut eph_mut, &mut sat_pos, None);
+                    if i < 5 { // Логируем только первые 5 для отладки
+                        println!("[DEBUG] BDS{:02} toe={}, transmit_time={}, delta_t={:.1}h", eph.svid, eph.toe, transmit_time, (transmit_time - eph.toe as f64) / 3600.0);
+                    }
+                    if pos_calc_success {
                         println!("[DEBUG] BeiDou sat pos calculated: ({:.1}, {:.1}, {:.1})", sat_pos.x, sat_pos.y, sat_pos.z);
                         let mut elevation = 0.0;
                         let mut azimuth = 0.0;
