@@ -308,6 +308,62 @@ impl BeiDouEphemeris {
             Ek_dot: self.Ek_dot,
         }
     }
+    
+    /// Создаёт BeiDouEphemeris из GpsEphemeris (обратная конвертация)
+    pub fn from_gps_ephemeris(gps: &GpsEphemeris) -> Self {
+        BeiDouEphemeris {
+            ura: gps.ura,
+            iodc: gps.iodc,
+            iode: gps.iode,
+            svid: gps.svid,
+            source: gps.source,
+            valid: gps.valid,
+            flag: gps.flag,
+            health: gps.health,
+            toe: gps.toe,
+            toc: gps.toc,
+            top: gps.top,
+            week: gps.week,
+            M0: gps.M0,
+            delta_n: gps.delta_n,
+            delta_n_dot: gps.delta_n_dot,
+            ecc: gps.ecc,
+            sqrtA: gps.sqrtA,
+            axis_dot: gps.axis_dot,
+            omega0: gps.omega0,
+            i0: gps.i0,
+            w: gps.w,
+            omega_dot: gps.omega_dot,
+            idot: gps.idot,
+            cuc: gps.cuc,
+            cus: gps.cus,
+            crc: gps.crc,
+            crs: gps.crs,
+            cic: gps.cic,
+            cis: gps.cis,
+            af0: gps.af0,
+            af1: gps.af1,
+            af2: gps.af2,
+            tgd1: gps.tgd,       // GPS TGD -> BeiDou TGD1
+            tgd2: gps.tgd2,      // TGD2 сохраняется
+            tgd_b1cp: if gps.tgd_ext.len() > 0 { gps.tgd_ext[0] } else { 0.0 },
+            tgd_b2ap: if gps.tgd_ext.len() > 1 { gps.tgd_ext[1] } else { 0.0 },
+            tgd_b2bp: if gps.tgd_ext.len() > 2 { gps.tgd_ext[2] } else { 0.0 },
+            axis: gps.axis,
+            n: gps.n,
+            root_ecc: gps.root_ecc,
+            omega_t: gps.omega_t,
+            omega_delta: gps.omega_delta,
+            Ek: gps.Ek,
+            Ek_dot: gps.Ek_dot,
+            aode: 0,             // Значения по умолчанию для BeiDou-специфичных полей
+            aodc: 0,
+            sat_type: 0,
+            integrity_flag: 0,
+            urai: 0,
+            weekh: 0,
+        }
+    }
 }
 
 // BeiDou satellite type definitions 

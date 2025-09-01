@@ -26,7 +26,8 @@ use crate::types::*;
 use crate::powercontrol::SignalPower;
 use crate::utc_to_gps_time;
 use crate::{JsonObject, CPowerControl};
-use crate::{lla_to_ecef, gps_time_to_utc, bds_time_to_utc, glonass_time_to_utc, speed_ecef_to_local, ecef_to_lla};
+use crate::{lla_to_ecef, gps_time_to_utc, bds_time_to_utc, glonass_time_to_utc, speed_ecef_to_local, ecef_to_lla, WGS_OMEGDOTE};
+use crate::constants::CGCS2000_OMEGDOTE;
 use crate::types::{GpsEphemeris, BeiDouEphemeris, GlonassEphemeris, GpsAlmanac, GlonassAlmanac, UtcParam};
 use crate::constants::EARTH_GM;
 
@@ -2140,11 +2141,11 @@ where
     eph.n = (EARTH_GM / (eph.axis * eph.axis * eph.axis)).sqrt() + eph.delta_n;
     eph.root_ecc = (1.0 - eph.ecc * eph.ecc).sqrt();
     
-    // КРИТИЧЕСКИЙ ФИКС: Устанавливаем omega_t = omega0 (RAAN на эпохе toe)
-    // В GPS системе omega_t это Right Ascension of Ascending Node на момент toe
-    eph.omega_t = eph.omega0;
-    // omega_delta это уже omega_dot из данных
-    eph.omega_delta = eph.omega_dot;
+    // КРИТИЧЕСКИЙ ФИКС: Как в C версии - учитываем WGS_OMEGDOTE при инициализации!
+    // C версия: Eph->omega_t = Eph->omega0 - WGS_OMEGDOTE * Eph->toe;
+    // C версия: Eph->omega_delta = Eph->omega_dot - WGS_OMEGDOTE;
+    eph.omega_t = eph.omega0 - WGS_OMEGDOTE * (eph.toe as f64);
+    eph.omega_delta = eph.omega_dot - WGS_OMEGDOTE;
     
     eph.valid = 1;
     eph.flag = 1;
@@ -2429,8 +2430,9 @@ where
         axis: gps_eph.axis,
         n: gps_eph.n,
         root_ecc: gps_eph.root_ecc,
-        omega_t: gps_eph.omega_t,
-        omega_delta: gps_eph.omega_delta,
+        // BeiDou использует CGCS2000_OMEGDOTE вместо WGS_OMEGDOTE
+        omega_t: gps_eph.omega0 - CGCS2000_OMEGDOTE * (gps_eph.toe as f64),
+        omega_delta: gps_eph.omega_dot - CGCS2000_OMEGDOTE,
         Ek: gps_eph.Ek,
         Ek_dot: gps_eph.Ek_dot,
     };
@@ -2519,9 +2521,9 @@ where
     eph.n = (EARTH_GM / (eph.axis * eph.axis * eph.axis)).sqrt() + eph.delta_n;
     eph.root_ecc = (1.0 - eph.ecc * eph.ecc).sqrt();
     
-    // КРИТИЧЕСКИЙ ФИКС: Устанавливаем omega_t = omega0 (RAAN на эпохе toe)
-    eph.omega_t = eph.omega0;
-    eph.omega_delta = eph.omega_dot;
+    // КРИТИЧЕСКИЙ ФИКС: Как в C версии - учитываем WGS_OMEGDOTE при инициализации для Galileo!
+    eph.omega_t = eph.omega0 - WGS_OMEGDOTE * (eph.toe as f64);
+    eph.omega_delta = eph.omega_dot - WGS_OMEGDOTE;
     
     eph.valid = 1;
     eph.flag = 1;

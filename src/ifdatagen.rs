@@ -987,6 +987,27 @@ impl IFDataGen {
         println!("[INFO]\tCalculating visible satellites at position ({:.1}, {:.1}, {:.1})", 
                  cur_pos.x, cur_pos.y, cur_pos.z);
         
+        // ОТЛАДКА: Вызываем функцию проверки позиций эталонных спутников
+        // Конвертируем BDS эфемериды в массив BeiDouEphemeris
+        let mut beidou_eph_array: [Option<BeiDouEphemeris>; 64] = [None; 64];
+        for i in 0..64 {
+            if i < self.bds_eph.len() {
+                if let Some(gps_eph) = &self.bds_eph[i] {
+                    // Конвертируем GpsEphemeris обратно в BeiDouEphemeris для отладки
+                    let bds_eph = BeiDouEphemeris::from_gps_ephemeris(gps_eph);
+                    beidou_eph_array[i] = Some(bds_eph);
+                }
+            }
+        }
+        
+        crate::debug_positions::debug_satellite_positions(
+            &self.gps_eph,
+            &beidou_eph_array,
+            &self.gal_eph,
+            &self.cur_time,
+            &cur_pos,
+        );
+        
         // Debug: check if we have ephemeris before calculating visibility
         let mut total_gps_eph = 0;
         for i in 0..TOTAL_GPS_SAT {
@@ -1001,8 +1022,8 @@ impl IFDataGen {
             let mut sat_number = 0;
             let elevation_mask = self.output_param.ElevationMask;
             
-            // transmit_time в полных секундах от начала GPS эпохи для функции gps_sat_pos_speed_eph
-            let transmit_time = (self.cur_time.Week as f64) * 604800.0 + (self.cur_time.MilliSeconds as f64) / 1000.0;
+            // КАК В C ВЕРСИИ: передаем только секунды недели, не полное время
+            let transmit_time = (self.cur_time.MilliSeconds as f64) / 1000.0;
             
             println!("[DEBUG] GPS Visibility Analysis:");
             println!("[DEBUG] Current GPS time: Week={}, MS={}, Seconds={:.1}", 
@@ -1032,8 +1053,8 @@ impl IFDataGen {
                     }
                     
                     // Calculate satellite position
-                    // transmit_time в полных секундах от начала GPS эпохи для функции gps_sat_pos_speed_eph
-            let transmit_time = (self.cur_time.Week as f64) * 604800.0 + (self.cur_time.MilliSeconds as f64) / 1000.0;
+                    // КАК В C ВЕРСИИ: передаем только секунды недели, не полное время
+            let transmit_time = (self.cur_time.MilliSeconds as f64) / 1000.0;
                     let mut sat_pos = KinematicInfo::default();
                     let mut eph_mut = *eph; // Копируем эфемериды для мутабельности
                     // Для отладочного вывода используем секунды недели
@@ -1051,6 +1072,29 @@ impl IFDataGen {
                         let mut elevation = 0.0;
                         let mut azimuth = 0.0;
                         crate::coordinate::sat_el_az_from_positions(&cur_pos, &sat_pos, &mut elevation, &mut azimuth);
+                        // Специальная отладка для GPS 13 и 27
+                        if i == 12 || i == 26 {  // GPS 13 (индекс 12) и GPS 27 (индекс 26)
+                            let dx = sat_pos.x - cur_pos.x;
+                            let dy = sat_pos.y - cur_pos.y;
+                            let dz = sat_pos.z - cur_pos.z;
+                            let r = (dx*dx + dy*dy + dz*dz).sqrt();
+                            println!("[GPS{:02}-DEBUG] Delta: ({:.1}, {:.1}, {:.1}), Range: {:.1}", 
+                                     i+1, dx, dy, dz, r);
+                            println!("[GPS{:02}-DEBUG] LOS: ({:.4}, {:.4}, {:.4})", 
+                                     i+1, dx/r, dy/r, dz/r);
+                            // Вычислим азимут вручную
+                            let rcv_lla = crate::coordinate::ecef_to_lla(&cur_pos);
+                            let lat = rcv_lla.lat;
+                            let lon = rcv_lla.lon;
+                            let los_e = -(dx/r) * lon.sin() + (dy/r) * lon.cos();
+                            let los_n = -(dx/r) * lat.sin() * lon.cos() - (dy/r) * lat.sin() * lon.sin() + (dz/r) * lat.cos();
+                            let manual_az = los_e.atan2(los_n);
+                            let manual_az_deg = if manual_az < 0.0 { manual_az + 2.0*std::f64::consts::PI } else { manual_az };
+                            println!("[GPS{:02}-DEBUG] Manual calc: E={:.4}, N={:.4}, Az={:.1}°", 
+                                     i+1, los_e, los_n, manual_az_deg.to_degrees());
+                            println!("[GPS{:02}-DEBUG] Function returned: Elevation: {:.1}°, Azimuth: {:.1}°", 
+                                     i+1, elevation.to_degrees(), azimuth.to_degrees());
+                        }
                         println!("[DEBUG] Satellite {} elevation: {:.1}°, azimuth: {:.1}°, mask: {:.1}°", 
                                  i, elevation.to_degrees(), azimuth.to_degrees(), elevation_mask.to_degrees());
                         
@@ -1081,8 +1125,8 @@ impl IFDataGen {
                 
                 for j in 0..sat_number {
                     if let Some(eph) = &self.gps_eph_visible[j] {
-                        // transmit_time в полных секундах от начала GPS эпохи для функции gps_sat_pos_speed_eph
-            let transmit_time = (self.cur_time.Week as f64) * 604800.0 + (self.cur_time.MilliSeconds as f64) / 1000.0;
+                        // КАК В C ВЕРСИИ: передаем только секунды недели, не полное время
+            let transmit_time = (self.cur_time.MilliSeconds as f64) / 1000.0;
                         let mut sat_pos_vel = KinematicInfo::default();
                         let mut eph_mut = *eph;
                         
@@ -1151,8 +1195,8 @@ impl IFDataGen {
                         continue;
                     }
                     
-                    // КРИТИЧЕСКИЙ ФИКС: BeiDou transmit_time должно быть в секундах недели (как GPS)
-                    let transmit_time = (self.cur_time.Week as f64) * 604800.0 + (self.cur_time.MilliSeconds as f64) / 1000.0;
+                    // КАК В C ВЕРСИИ: передаем только секунды недели для BeiDou
+                    let transmit_time = (self.cur_time.MilliSeconds as f64) / 1000.0;
                     let mut sat_pos = KinematicInfo::default();
                     let mut eph_mut = *eph; // Копируем эфемериды для мутабельности
                     let pos_calc_success = crate::coordinate::gps_sat_pos_speed_eph(GnssSystem::BdsSystem, transmit_time, &mut eph_mut, &mut sat_pos, None);
@@ -1189,8 +1233,8 @@ impl IFDataGen {
                 
                 for j in 0..sat_number {
                     if let Some(eph) = &self.bds_eph_visible[j] {
-                        // КРИТИЧЕСКИЙ ФИКС: BeiDou transmit_time должно быть в секундах недели (как GPS)
-                        let transmit_time = (self.cur_time.Week as f64) * 604800.0 + (self.cur_time.MilliSeconds as f64) / 1000.0;
+                        // КАК В C ВЕРСИИ: передаем только секунды недели для BeiDou
+                        let transmit_time = (self.cur_time.MilliSeconds as f64) / 1000.0;
                         let mut sat_pos_vel = KinematicInfo::default();
                         let mut eph_mut = *eph;
                         
@@ -1255,8 +1299,8 @@ impl IFDataGen {
                         continue;
                     }
                     
-                    // КРИТИЧЕСКИЙ ФИКС: Galileo transmit_time должно быть в секундах недели (как GPS)
-                    let transmit_time = (self.cur_time.Week as f64) * 604800.0 + (self.cur_time.MilliSeconds as f64) / 1000.0;
+                    // КАК В C ВЕРСИИ: передаем только секунды недели для Galileo
+                    let transmit_time = (self.cur_time.MilliSeconds as f64) / 1000.0;
                     let mut sat_pos = KinematicInfo::default();
                     let mut eph_mut = *eph; // Копируем эфемериды для мутабельности
                     // Для отладочного вывода используем секунды недели
@@ -1299,8 +1343,8 @@ impl IFDataGen {
                 
                 for j in 0..sat_number {
                     if let Some(eph) = &self.gal_eph_visible[j] {
-                        // КРИТИЧЕСКИЙ ФИКС: Galileo transmit_time должно быть в секундах недели (как GPS)
-                        let transmit_time = (self.cur_time.Week as f64) * 604800.0 + (self.cur_time.MilliSeconds as f64) / 1000.0;
+                        // КАК В C ВЕРСИИ: передаем только секунды недели для Galileo
+                        let transmit_time = (self.cur_time.MilliSeconds as f64) / 1000.0;
                         let mut sat_pos_vel = KinematicInfo::default();
                         let mut eph_mut = *eph;
                         
@@ -2249,9 +2293,8 @@ impl IFDataGen {
                 // Вычисляем позицию спутника в текущий момент времени
                 let mut sat_pos_vel = KinematicInfo::default();
                 
-                // Используем функцию расчета позиции спутника из satellite_param
-                // Преобразуем время в секунды GPS
-                let gps_time_seconds = (cur_time.Week as f64) * 604800.0 + (cur_time.MilliSeconds as f64) / 1000.0;
+                // КАК В C ВЕРСИИ: передаем только секунды недели  
+                let gps_time_seconds = (cur_time.MilliSeconds as f64) / 1000.0;
                 
                 // Вызов функции расчета позиции спутника (упрощенный)
                 // В полной реализации: gps_sat_pos_speed_eph(system, gps_time_seconds, ephemeris, &mut sat_pos_vel)

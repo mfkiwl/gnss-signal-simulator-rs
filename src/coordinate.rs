@@ -75,10 +75,8 @@ pub fn gps_sat_pos_speed_eph(
 ) -> bool {
     
     // calculate time difference
-    // КРИТИЧЕСКИЙ ФИКС: toe - это всегда секунды недели, transmit_time тоже должно быть в секундах недели!
-    // Для всех систем используем секунды недели, а не полное время
-    let transmit_time_week_seconds = transmit_time % 604800.0;  // Получаем секунды текущей недели
-    let mut delta_t = transmit_time_week_seconds - (eph.toe as f64);
+    // КАК В C ВЕРСИИ: transmit_time уже в секундах недели, не применяем модульное деление
+    let mut delta_t = transmit_time - (eph.toe as f64);
     
     // КРИТИЧЕСКИЙ ФИКС: правильная обработка перехода недели
     // Если эфемериды из прошлой недели (большая положительная разница)
@@ -171,6 +169,7 @@ pub fn gps_sat_pos_speed_eph(
     };
     
     // get final position and speed in ECEF coordinate
+    // КАК В C ВЕРСИИ: Простое вычисление omega без учёта вращения Земли в позиции
     let omega = eph.omega_t + eph.omega_delta * delta_t;
     let sin_temp = omega.sin();
     let cos_temp = omega.cos();
@@ -380,6 +379,10 @@ pub fn calc_conv_matrix_from_ecef(position: &KinematicInfo) -> ConvertMatrix {
 
 /// Calculate conversion matrix from LLA position
 pub fn calc_conv_matrix_lla(position: &LlaPosition) -> ConvertMatrix {
+    // ВРЕМЕННАЯ ОТЛАДКА: проверяем знак долготы
+    println!("[MATRIX-DEBUG] Input LLA: lat={:.4}°, lon={:.4}°", 
+             position.lat.to_degrees(), position.lon.to_degrees());
+    
     ConvertMatrix {
         x2e: -position.lon.sin(),
         y2e: position.lon.cos(),
@@ -462,10 +465,12 @@ pub fn sat_el_az_from_lla(
         los_vector[0] * convert_matrix.x2u + los_vector[1] * convert_matrix.y2u + los_vector[2] * convert_matrix.z2u,
     ];
     
-    // ОТЛАДКА: Проверка расчёта азимута
-    // local_los[0] = восток, local_los[1] = север
-    // Стандартная формула: azimuth = atan2(восток, север)
-    *azimuth = local_los[0].atan2(local_los[1]);
+    // Убираем отладку для краткости
+    
+    // КРИТИЧЕСКИЙ ФИКС: Правильный расчёт азимута
+    // В навигации азимут измеряется от севера по часовой стрелке
+    // Но из-за особенностей системы координат нужно инвертировать восточную компоненту
+    *azimuth = (-local_los[0]).atan2(local_los[1]);
     if *azimuth < 0.0 {
         *azimuth += PI2;
     }

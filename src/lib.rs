@@ -24,6 +24,7 @@ pub mod bcnav3bit;
 pub mod bcnavbit;
 pub mod crc24q;
 pub mod d1d2navbit;
+pub mod debug_positions;
 pub mod fastmath;
 pub mod fnavbit;
 // pub mod fnavbit_backup;
