@@ -1146,8 +1146,9 @@ impl IFDataGen {
                         continue;
                     }
                     
-                    let transmit_time = (self.cur_time.MilliSeconds as f64) / 1000.0;
-                    println!("[DEBUG] Checking BeiDou SVID {} at time {}", eph.svid, transmit_time);
+                    // КРИТИЧЕСКИЙ ФИКС: BeiDou transmit_time должно быть в секундах недели (как GPS)
+                    let transmit_time = (self.cur_time.Week as f64) * 604800.0 + (self.cur_time.MilliSeconds as f64) / 1000.0;
+                    println!("[DEBUG] Checking BeiDou SVID {} at time {} (week {})", eph.svid, transmit_time, self.cur_time.Week);
                     let mut sat_pos = KinematicInfo::default();
                     let mut eph_mut = *eph; // Копируем эфемериды для мутабельности
                     if crate::coordinate::gps_sat_pos_speed_eph(GnssSystem::BdsSystem, transmit_time, &mut eph_mut, &mut sat_pos, None) {
@@ -1177,7 +1178,8 @@ impl IFDataGen {
                 
                 for j in 0..sat_number {
                     if let Some(eph) = &self.bds_eph_visible[j] {
-                        let transmit_time = (self.cur_time.MilliSeconds as f64) / 1000.0;
+                        // КРИТИЧЕСКИЙ ФИКС: BeiDou transmit_time должно быть в секундах недели (как GPS)
+                        let transmit_time = (self.cur_time.Week as f64) * 604800.0 + (self.cur_time.MilliSeconds as f64) / 1000.0;
                         let mut sat_pos_vel = KinematicInfo::default();
                         let mut eph_mut = *eph;
                         
@@ -1242,7 +1244,8 @@ impl IFDataGen {
                         continue;
                     }
                     
-                    let transmit_time = (self.cur_time.MilliSeconds as f64) / 1000.0;
+                    // КРИТИЧЕСКИЙ ФИКС: Galileo transmit_time должно быть в секундах недели (как GPS)
+                    let transmit_time = (self.cur_time.Week as f64) * 604800.0 + (self.cur_time.MilliSeconds as f64) / 1000.0;
                     let mut sat_pos = KinematicInfo::default();
                     let mut eph_mut = *eph; // Копируем эфемериды для мутабельности
                     let delta_t = transmit_time - eph.toe as f64;
@@ -1283,7 +1286,8 @@ impl IFDataGen {
                 
                 for j in 0..sat_number {
                     if let Some(eph) = &self.gal_eph_visible[j] {
-                        let transmit_time = (self.cur_time.MilliSeconds as f64) / 1000.0;
+                        // КРИТИЧЕСКИЙ ФИКС: Galileo transmit_time должно быть в секундах недели (как GPS)
+                        let transmit_time = (self.cur_time.Week as f64) * 604800.0 + (self.cur_time.MilliSeconds as f64) / 1000.0;
                         let mut sat_pos_vel = KinematicInfo::default();
                         let mut eph_mut = *eph;
                         
