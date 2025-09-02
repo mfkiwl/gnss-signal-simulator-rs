@@ -1738,18 +1738,44 @@ impl IFDataGen {
         let active_satellites = sat_if_signals.iter().filter(|s| s.is_some()).count();
         println!("🛰️  Активных спутников: {}", active_satellites);
         
-        // ========== ОПТИМИЗИРОВАННАЯ AGC СИСТЕМА ==========
-        // Поскольку амплитуды спутников уже безопасны (0.05), AGC работает как тонкая настройка
-        let mut agc_gain = 1.0; // Начинаем с единичного усиления, спутники уже имеют безопасные амплитуды
+        // ========== ИНТЕЛЛЕКТУАЛЬНАЯ AGC СИСТЕМА ==========
+        // Рассчитываем правильный начальный коэффициент на основе реального количества активных спутников
+        
+        // МАТЕМАТИЧЕСКАЯ МОДЕЛЬ:
+        // Одиночный спутник: амплитуда ≈ 10^((CN0-3000)/1000) / sqrt(sample_rate)
+        // CN0 = 47 dB-Hz = 4700 (×100), sample_rate = 2048000
+        // Одиночная амплитуда = 10^(1.7) / sqrt(2048000) ≈ 0.035
+        
+        let cn0_scaled = self.power_control.init_cn0 * 100.0;  // 4700
+        let single_sat_amplitude = 10.0_f64.powf((cn0_scaled - 3000.0) / 1000.0) / (samples_per_ms as f64).sqrt();
+        
+        // При когерентном сложении N спутников: суммарная_амплитуда = N × одиночная_амплитуда
+        let total_expected_amplitude = active_satellites as f64 * single_sat_amplitude;
+        
+        // Целевая амплитуда для безопасной работы без клиппинга (70% от максимума = 0.7)
+        let target_amplitude = 0.7;
+        let initial_agc_gain = if total_expected_amplitude > 0.0 {
+            target_amplitude / total_expected_amplitude
+        } else {
+            1.0
+        };
+        
+        let mut agc_gain = initial_agc_gain.max(0.01).min(1.0); // Ограничиваем диапазон [0.01, 1.0]
         let mut total_clipped_samples = 0i64;
         let mut total_samples_written = 0i64;
         let mut agc_samples_for_stats = 0i64; // Отдельные счетчики для AGC
         let mut agc_clipped_for_stats = 0i64;
         
-        println!("🎚️  AGC: Начальный коэффициент: {:.3} (спутники оптимизированы: 0.0667 × 15 ≈ 1.0)", agc_gain);
+        println!("🎚️  AGC: Начальный коэффициент: {:.3} (спутников: {}, ожидаемая амплитуда: {:.3}, целевая: {:.1})", 
+                 agc_gain, active_satellites, total_expected_amplitude, target_amplitude);
+        println!("📊 AGC: Одиночный спутник: CN0={:.1} dB-Hz → амплитуда {:.4}", 
+                 self.power_control.init_cn0, single_sat_amplitude);
         
         // ОСНОВНОЙ ЦИКЛ: Обработка по блокам
         let num_blocks = (total_duration_ms + BLOCK_SIZE_MS - 1) / BLOCK_SIZE_MS;
+        
+        // ========== АДАПТИВНАЯ КАЛИБРОВКА AGC ПО ПЕРВОМУ БЛОКУ ==========
+        let mut calibration_done = false;
         
         for block_idx in 0..num_blocks {
             let block_start_ms = block_idx * BLOCK_SIZE_MS;
@@ -1804,6 +1830,37 @@ impl IFDataGen {
                 }
             }
             
+            // ========== ПРЕДВАРИТЕЛЬНАЯ КАЛИБРОВКА AGC НА ПЕРВОМ БЛОКЕ ==========
+            if !calibration_done && block_idx == 0 {
+                // Анализ реальной амплитуды сигнала для точной калибровки
+                let mut max_amplitude = 0.0f64;
+                let mut amplitude_sum = 0.0f64;
+                let calibration_samples = block_signal.len().min(1000); // Анализируем первые 1000 отсчетов
+                
+                for sample in &block_signal[..calibration_samples] {
+                    let amplitude = (sample.real * sample.real + sample.imag * sample.imag).sqrt();
+                    max_amplitude = max_amplitude.max(amplitude);
+                    amplitude_sum += amplitude;
+                }
+                
+                let avg_amplitude = amplitude_sum / calibration_samples as f64;
+                let calibrated_gain = if max_amplitude > 0.0 {
+                    (target_amplitude / max_amplitude).min(1.0).max(0.001)
+                } else {
+                    agc_gain
+                };
+                
+                if (calibrated_gain - agc_gain).abs() > 0.1 {
+                    println!("🔧 КАЛИБРОВКА AGC: Реальная макс. амплитуда: {:.3}, средняя: {:.3}", 
+                             max_amplitude, avg_amplitude);
+                    println!("🔧 AGC скорректирован: {:.3} → {:.3} (изменение {:.1}%)", 
+                             agc_gain, calibrated_gain, (calibrated_gain - agc_gain) / agc_gain * 100.0);
+                    agc_gain = calibrated_gain;
+                }
+                
+                calibration_done = true;
+            }
+
             // МГНОВЕННАЯ ЗАПИСЬ блока в файл
             let write_start = std::time::Instant::now();
             let mut iq8_data = Vec::with_capacity(block_samples * 2);
@@ -1831,25 +1888,50 @@ impl IFDataGen {
             agc_clipped_for_stats += clipped_in_block as i64;
             agc_samples_for_stats += block_samples as i64 * 2; // I + Q
             
-            // ========== АДАПТИВНЫЙ AGC КАЖДЫЕ 100ms ==========
-            if (block_start_ms % 100) == 0 && block_start_ms > 0 {
+            // ========== ИНТЕЛЛЕКТУАЛЬНЫЙ АДАПТИВНЫЙ AGC ==========
+            // Проверяем каждый блок (1000ms) для быстрой реакции на критический клиппинг
+            if agc_samples_for_stats > 0 {
                 let agc_clipping_rate = agc_clipped_for_stats as f64 / agc_samples_for_stats as f64;
-                if agc_clipping_rate > 0.01 {
-                    // Если клиппинг больше 1%
-                    agc_gain *= 0.95; // Уменьшаем усиление на 5%
-                    println!("[AGC] 🎚️  Клиппинг {:.2}%, уменьшаем усиление до {:.3}", agc_clipping_rate * 100.0, agc_gain);
-                    agc_clipped_for_stats = 0; // Сбрасываем статистику
+                
+                // КРИТИЧЕСКИЙ КЛИППИНГ: Немедленное агрессивное снижение
+                if agc_clipping_rate > 0.5 {
+                    // При клиппинге >50% - экстренное снижение на 30%
+                    agc_gain *= 0.7;
+                    println!("[AGC] 🔥 КРИТИЧЕСКИЙ клиппинг {:.1}%! Экстренное снижение до {:.3}", 
+                             agc_clipping_rate * 100.0, agc_gain);
+                    agc_clipped_for_stats = 0;
                     agc_samples_for_stats = 0;
-                } else if agc_clipping_rate < 0.001 && agc_gain < 1.0 {
-                    // Если клиппинг меньше 0.1%
-                    agc_gain *= 1.02; // Увеличиваем усиление на 2%
+                } else if agc_clipping_rate > 0.2 {
+                    // При клиппинге >20% - быстрое снижение на 20%
+                    agc_gain *= 0.8;
+                    println!("[AGC] ⚡ ВЫСОКИЙ клиппинг {:.1}%! Быстрое снижение до {:.3}", 
+                             agc_clipping_rate * 100.0, agc_gain);
+                    agc_clipped_for_stats = 0;
+                    agc_samples_for_stats = 0;
+                } else if agc_clipping_rate > 0.05 {
+                    // При клиппинге >5% - умеренное снижение на 10%
+                    agc_gain *= 0.9;
+                    println!("[AGC] ⚠️  УМЕРЕННЫЙ клиппинг {:.1}%! Снижение до {:.3}", 
+                             agc_clipping_rate * 100.0, agc_gain);
+                    agc_clipped_for_stats = 0;
+                    agc_samples_for_stats = 0;
+                } else if agc_clipping_rate > 0.01 {
+                    // При клиппинге >1% - мягкое снижение на 5%
+                    agc_gain *= 0.95;
+                    println!("[AGC] 🎚️  Клиппинг {:.2}%, мягкое снижение до {:.3}", 
+                             agc_clipping_rate * 100.0, agc_gain);
+                } else if agc_clipping_rate < 0.001 && agc_gain < 0.8 && (block_start_ms % 500) == 0 {
+                    // Медленное восстановление только раз в 500ms при очень низком клиппинге
+                    agc_gain *= 1.05; // Более медленное восстановление на 5%
                     if agc_gain > 1.0 {
                         agc_gain = 1.0;
                     }
-                    println!("[AGC] 🎚️  Клиппинг {:.2}%, увеличиваем усиление до {:.3}", agc_clipping_rate * 100.0, agc_gain);
-                    agc_clipped_for_stats = 0; // Сбрасываем статистику
-                    agc_samples_for_stats = 0;
+                    println!("[AGC] 📈 Клиппинг {:.3}%, медленное восстановление до {:.3}", 
+                             agc_clipping_rate * 100.0, agc_gain);
                 }
+                
+                // Ограничиваем AGC в безопасном диапазоне
+                agc_gain = agc_gain.max(0.001).min(1.0);
             }
             
             let write_duration = write_start.elapsed();
