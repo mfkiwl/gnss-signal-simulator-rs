@@ -30,7 +30,6 @@ use std::f64::consts::PI;
 // Constants
 const INVALID_TOA: u8 = 255; // valid range of toa is 0~147
 const A_REF: f64 = 26559710.0;
-const OMEGA_DOT_REF: f64 = -2.6e-9;
 const NORMINAL_I0: f64 = 0.942_477_796_076_937_9;
 
 // Count number of set bits in a byte

@@ -446,9 +446,9 @@ pub fn ecef_to_lla(ecef_pos: &KinematicInfo) -> LlaPosition {
     // λ = atan2(Y, X) - 4-квадрантная арктангенс функция
     let lon = ecef_pos.y.atan2(ecef_pos.x);
     
-    /// Шаг 4: Вычисление высоты над эллипсоидом
-    /// N(φ) = a / √(1 - e²·sin²φ) - радиус кривизны в приме вертикала
-    /// h = p/cosφ - N(φ) - эллипсоидальная высота
+    // Шаг 4: Вычисление высоты над эллипсоидом
+    // N(φ) = a / √(1 - e²·sin²φ) - радиус кривизны в приме вертикала
+    // h = p/cosφ - N(φ) - эллипсоидальная высота
     let n = WGS_AXIS_A / (1.0 - WGS_E1_SQR * lat.sin() * lat.sin()).sqrt(); // Радиус кривизны N(φ)
     let alt = p / lat.cos() - n; // Высота над WGS84 эллипсоидом
     
@@ -471,19 +471,19 @@ pub fn ecef_to_lla(ecef_pos: &KinematicInfo) -> LlaPosition {
 /// 
 /// **Особенность:** Скорость анулируется (статичное преобразование)
 pub fn lla_to_ecef(lla_pos: &LlaPosition) -> KinematicInfo {
-    /// Вычисление радиуса кривизны в приме вертикала
-    /// N(φ) = a / √(1 - e² · sin²(φ)) - основное соотношение для WGS84
+    // Вычисление радиуса кривизны в приме вертикала
+    // N(φ) = a / √(1 - e² · sin²(φ)) - основное соотношение для WGS84
     let n = WGS_AXIS_A / (1.0 - WGS_E1_SQR * lla_pos.lat.sin() * lla_pos.lat.sin()).sqrt();
     
-    /// Прямое применение формул WGS84 для преобразования:
+    // Прямое применение формул WGS84 для преобразования:
     let result = KinematicInfo {
-        /// X = (N + h) · cos(φ) · cos(λ)
+        // X = (N + h) · cos(φ) · cos(λ)
         x: (n + lla_pos.alt) * lla_pos.lat.cos() * lla_pos.lon.cos(),
-        /// Y = (N + h) · cos(φ) · sin(λ)
+        // Y = (N + h) · cos(φ) · sin(λ)
         y: (n + lla_pos.alt) * lla_pos.lat.cos() * lla_pos.lon.sin(),
-        /// Z = (N(1-e²) + h) · sin(φ) - учитываем сжатие Земли
+        // Z = (N(1-e²) + h) · sin(φ) - учитываем сжатие Земли
         z: (n * (1.0 - WGS_E1_SQR) + lla_pos.alt) * lla_pos.lat.sin(),
-        /// Скорость = 0 (статичное преобразование только позиции)
+        // Скорость = 0 (статичное преобразование только позиции)
         vx: 0.0,
         vy: 0.0,
         vz: 0.0,
@@ -518,18 +518,18 @@ pub fn calc_conv_matrix_lla(position: &LlaPosition) -> ConvertMatrix {
     println!("[MATRIX-DEBUG] Input LLA: lat={:.4}°, lon={:.4}°", 
              position.lat.to_degrees(), position.lon.to_degrees());
     
-    /// Коэффициенты матрицы преобразования ECEF → ENU:
+    // Коэффициенты матрицы преобразования ECEF → ENU:
     ConvertMatrix {
-        /// Направление East (Восток): перпендикулярно меридиану
+        // Направление East (Восток): перпендикулярно меридиану
         x2e: -position.lon.sin(),  // -sin(λ) - компонента X для East
         y2e: position.lon.cos(),   // cos(λ) - компонента Y для East
         
-        /// Направление North (Север): по меридиану, касательно к эллипсоиду
+        // Направление North (Север): по меридиану, касательно к эллипсоиду
         x2n: -position.lat.sin() * position.lon.cos(), // -sin(φ)cos(λ)
         y2n: -position.lat.sin() * position.lon.sin(), // -sin(φ)sin(λ)
         z2n: position.lat.cos(),                        // cos(φ)
         
-        /// Направление Up (Вверх): по нормали к эллипсоиду
+        // Направление Up (Вверх): по нормали к эллипсоиду
         x2u: position.lat.cos() * position.lon.cos(),  // cos(φ)cos(λ)
         y2u: position.lat.cos() * position.lon.sin(),  // cos(φ)sin(λ)
         z2u: position.lat.sin(),                        // sin(φ)

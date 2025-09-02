@@ -28,13 +28,7 @@
 use crate::types::*;
 
 // Constants
-const GPS_A_REF: f64 = 26559710.0;
 
-// BCH TOI table
-const BCH_TOI_TABLE: [u32; 8] = [
-    0x00000000, 0x00000000, 0x00000000, 0x00000000,
-    0x00000000, 0x00000000, 0x00000000, 0x00000000
-];
 
 // L1C Matrix Generator for Subframe 2
 pub const L1C_MATRIX_GEN2: [u32; 38] = [

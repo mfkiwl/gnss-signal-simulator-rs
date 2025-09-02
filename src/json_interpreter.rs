@@ -51,9 +51,6 @@ static KEY_DICTIONARY_LIST_TRAJECTORY: &[&str] = &[
     "speedUnit", "angleUnit", "speed", "course", "east", "north", "up",
 ];
 
-static KEY_DICTIONARY_LIST_EPH_ALM: &[&str] = &[
-    "type", "name",
-];
 
 static KEY_DICTIONARY_LIST_OUTPUT: &[&str] = &[
     "type", "format", "name", "interval", "config", "systemSelect", "elevationMask", 
@@ -73,13 +70,7 @@ static DICTIONARY_LIST_COORDINATE: &[&str] = &[
     "LLA", "ECEF", "SCU", "ENU", "d", "dm", "dms", "rad", "degree", "mps", "kph", "knot", "mph",
 ];
 
-static KEY_DICTIONARY_LIST_TRAJECTORY_LIST: &[&str] = &[
-    "type", "time", "acceleration", "speed", "rate", "angle", "rate", "radius",
-];
 
-static DICTIONARY_LIST_TRAJECTORY_TYPE: &[&str] = &[
-    "Const", "ConstAcc", "VerticalAcc", "Jerk", "HorizontalTurn",
-];
 
 static DICTIONARY_LIST_OUTPUT_TYPE: &[&str] = &[
     "position", "observation", "IFdata", "baseband",
@@ -1988,26 +1979,6 @@ extern "C" {
 // RINEX парсинг - вспомогательные функции и типы
 // ============================================================================
 
-/// Тип альманаха для определения формата файла
-#[derive(Debug, PartialEq)]
-enum AlmanacType {
-    Gps,
-    Glonass, 
-    BdsSystem,
-    Galileo,
-    Unknown,
-}
-
-/// Определяет тип альманаха по содержимому файла
-fn detect_almanac_type<I>(lines: &mut I) -> AlmanacType 
-where
-    I: Iterator<Item = Result<String, std::io::Error>>
-{
-    // Упрощенная реализация - по умолчанию GPS
-    // В реальной версии нужно анализировать заголовок файла
-    AlmanacType::Gps
-}
-
 /// Парсит ионосферные параметры альфа из RINEX заголовка
 fn parse_iono_alpha(line: &str) -> Option<[f64; 4]> {
     // Простой парсинг - в реальной версии нужно точнее разбирать RINEX формат
@@ -2547,62 +2518,6 @@ where
 
 
 /// Парсит BeiDou альманах
-fn parse_beidou_almanac<I>(lines: &mut I) -> Option<Vec<GpsAlmanac>>
-where
-    I: Iterator<Item = Result<String, std::io::Error>>
-{
-    let mut almanacs = Vec::new();
-    
-    while let Some(Ok(line)) = lines.next() {
-        if line.starts_with("*****") {
-            // BeiDou YUMA format similar to GPS
-            if let Some(mut alm) = parse_gps_almanac(&line, lines) {
-                // Convert to BeiDou format
-                alm.week = alm.week.saturating_sub(1356); // Convert to BDS week
-                
-                if alm.svid <= 63 { // BeiDou supports up to 63 satellites
-                    almanacs.push(alm);
-                }
-            }
-        }
-    }
-    
-    if !almanacs.is_empty() {
-        Some(almanacs)
-    } else {
-        None
-    }
-}
-
-/// Парсит Galileo альманах
-fn parse_galileo_almanac<I>(lines: &mut I) -> Option<Vec<GpsAlmanac>>
-where
-    I: Iterator<Item = Result<String, std::io::Error>>
-{
-    let mut almanacs = Vec::new();
-    
-    while let Some(Ok(line)) = lines.next() {
-        if line.starts_with("*****") {
-            // Galileo YUMA format similar to GPS
-            if let Some(mut alm) = parse_gps_almanac(&line, lines) {
-                // Convert to Galileo format
-                if alm.week >= 1024 {
-                    alm.week -= 1024; // Convert to GST week
-                }
-                
-                if alm.svid <= 36 { // Galileo currently has up to 36 satellites
-                    almanacs.push(alm);
-                }
-            }
-        }
-    }
-    
-    if !almanacs.is_empty() {
-        Some(almanacs)
-    } else {
-        None
-    }
-}
 
 /// Парсит первую строку RINEX эфемериды (время + 3 параметра) - ТОЧНО как в C++
 /// *** КРИТИЧЕСКАЯ ФУНКЦИЯ ПАРСИНГА ЗАГОЛОВОЧНОЙ СТРОКИ RINEX ЭФЕМЕРИДЫ ***

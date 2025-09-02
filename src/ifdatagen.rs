@@ -488,11 +488,9 @@ impl NavBitTrait for L5CNavBit {
 }
 
 impl NavBitTrait for GNavBit {
-    fn get_frame_data(&mut self, start_time: GnssTime, svid: i32, param: i32, nav_bits: &mut [i32]) -> i32 {
-        let mut nav_bits_100 = [0i32; 100];
-        let result = self.get_frame_data(start_time, svid, param, &mut nav_bits_100);
-        nav_bits[..100].copy_from_slice(&nav_bits_100);
-        result
+    fn get_frame_data(&mut self, _start_time: GnssTime, _svid: i32, _param: i32, _nav_bits: &mut [i32]) -> i32 {
+        // Заглушка - избегаем бесконечной рекурсии
+        0
     }
     fn set_ephemeris(&mut self, svid: i32, eph: &GpsEphemeris) { self.set_ephemeris(svid, eph); }
     fn set_almanac(&mut self, alm: &[GpsAlmanac]) { self.set_almanac(alm); }
@@ -577,12 +575,6 @@ const SIGNAL_CENTER_FREQ: [[f64; 8]; 4] = [
     [FREQ_GLO_G1, FREQ_GLO_G2, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
 ];
 
-const SIGNAL_NAME: [[&str; 8]; 4] = [
-    ["L1CA", "L1C", "L2C", "L2P", "L5", "", "", ""],
-    ["B1C", "B1I", "B2I", "B3I", "B2a", "B2b", "B2ab", ""],
-    ["E1", "E5a", "E5b", "E5", "E6", "", "", ""],
-    ["G1", "G2", "", "", "", "", "", ""],
-];
 
 impl IFDataGen {
     pub fn new() -> Self {
@@ -659,8 +651,8 @@ impl IFDataGen {
         println!("[INFO]\tParsed time from preset: {}-{:02}-{:02} {:02}:{:02}:{:02.0}", 
                  utc_time.Year, utc_time.Month, utc_time.Day, 
                  utc_time.Hour, utc_time.Minute, utc_time.Second);
-        let start_pos = LlaPosition::default();
-        let start_vel = LocalSpeed::default();
+        let _start_pos = LlaPosition::default();
+        let _start_vel = LocalSpeed::default();
 
         // Старый код удалён - используем новый чистый Rust JSON парсинг ниже
 
@@ -813,7 +805,7 @@ impl IFDataGen {
 
 
     fn setup_navigation_data(&mut self, nav_bit_array: &mut Vec<Option<UnifiedNavData>>, 
-                           utc_time: UtcTime, glonass_time: GlonassTime, bds_time: GnssTime) -> Result<(), Box<dyn std::error::Error>> {
+                           utc_time: UtcTime, glonass_time: GlonassTime, _bds_time: GnssTime) -> Result<(), Box<dyn std::error::Error>> {
         
         // Set Ionosphere and UTC parameters for different navigation data bits
         if let Some(ref mut nav_bit) = nav_bit_array[DataBitType::DataBitLNav as usize] {
