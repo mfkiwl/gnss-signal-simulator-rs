@@ -2053,13 +2053,26 @@ fn parse_rinex3_iono_beta(line: &str) -> Option<[f64; 4]> {
     }
 }
 
-/// Парсит GPS эфемериды из RINEX формата
+/// Парсит GPS эфемериды из RINEX 3.04 формата
+/// 
+/// Парсинг выполняется согласно спецификации RINEX 3.04 для GPS LNAV сообщений.
+/// Функция читает 8 строк данных:
+/// - Строка 1: SVID, время эпохи (toc), часовые корректировки af0, af1, af2
+/// - Строки 2-8: Орбитальные параметры (28 значений)
+/// 
+/// # Параметры
+/// - `line`: Первая строка с заголовком эфемерид
+/// - `lines`: Итератор для чтения последующих строк
+/// 
+/// # Возвращает
+/// - `Some(GpsEphemeris)` при успешном парсинге
+/// - `None` при ошибке или неполных данных
 fn parse_gps_ephemeris<I>(line: &str, lines: &mut I) -> Option<GpsEphemeris>
 where
     I: Iterator<Item = Result<String, std::io::Error>>
 {
     let mut eph = GpsEphemeris::default();
-    let mut data = [0.0f64; 32]; // Массив для всех данных эфемерид
+    let mut data = [0.0f64; 32]; // Массив для 32 параметров RINEX эфемерид
     
     // Парсим первую строку используя точную логику C++
     let svid = read_contents_time(line, &mut data[0..3])?;
@@ -2338,7 +2351,25 @@ where
     Some(alm)
 }
 
-/// Парсит BeiDou эфемериды из RINEX формата в специализированную структуру BeiDouEphemeris
+/// Парсит BeiDou эфемериды из RINEX 3.04 формата
+/// 
+/// Специализированный парсер для системы BeiDou (Compass), учитывающий специфику
+/// китайской GNSS системы. Использует базовый GPS парсер с последующим преобразованием
+/// в BeiDou-специфическую структуру.
+/// 
+/// Особенности BeiDou RINEX:
+/// - AODE (Age of Data Ephemeris) соответствует IODE
+/// - AODC (Age of Data Clock) - младшие 8 бит IODC  
+/// - TGD1/TGD2 - групповые задержки для разных частот
+/// - Система координат CGCS2000 (аналог WGS84)
+/// 
+/// # Параметры
+/// - `line`: Первая строка с заголовком BeiDou эфемерид
+/// - `lines`: Итератор для чтения данных эфемерид
+/// 
+/// # Возвращает
+/// - `Some(BeiDouEphemeris)` при успешном парсинге
+/// - `None` при ошибке парсинга или неполных данных
 fn parse_beidou_ephemeris<I>(line: &str, lines: &mut I) -> Option<BeiDouEphemeris>
 where
     I: Iterator<Item = Result<String, std::io::Error>>
@@ -2440,13 +2471,32 @@ fn determine_beidou_satellite_type(svid: u8) -> u8 {
     }
 }
 
-/// Парсит Galileo эфемериды из RINEX формата
+/// Парсит Galileo эфемериды из RINEX 3.04 формата
+/// 
+/// Специализированный парсер для европейской системы Galileo.
+/// Отличается от GPS парсера количеством строк данных (6 вместо 7)
+/// и специфическими параметрами навигационного сообщения I/NAV.
+/// 
+/// Особенности Galileo RINEX:
+/// - 6 строк данных (24 параметра) вместо 7 строк GPS (28 параметров)
+/// - BGD (Background Group Delay) вместо TGD
+/// - SISA (Signal-In-Space Accuracy) вместо URA
+/// - IODnav (Issue Of Data Navigation) для контроля целостности
+/// - Система времени GST (Galileo System Time)
+/// 
+/// # Параметры
+/// - `line`: Первая строка с заголовком Galileo эфемерид
+/// - `lines`: Итератор для чтения данных эфемерид
+/// 
+/// # Возвращает
+/// - `Some(GalileoEphemeris)` при успешном парсинге
+/// - `None` при ошибке парсинга или неполных данных
 fn parse_galileo_ephemeris<I>(line: &str, lines: &mut I) -> Option<GalileoEphemeris>
 where
     I: Iterator<Item = Result<String, std::io::Error>>
 {
     let mut eph = GpsEphemeris::default();
-    let mut data = [0.0f64; 28]; // Массив для Galileo данных (меньше чем GPS)
+    let mut data = [0.0f64; 28]; // Массив для Galileo данных (6 строк × 4 параметра + 4 начальных)
     
     // Парсим первую строку используя точную логику C++
     let svid = read_contents_time(line, &mut data[0..3])?;

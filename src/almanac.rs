@@ -25,6 +25,18 @@ use crate::types::*;
 use crate::gnsstime::{utc_to_glonass_time, utc_to_galileo_time};
 use crate::coordinate::{glonass_sat_pos_speed_eph, gps_sat_pos_speed_eph};
 
+/// Определяет тип альманаха по первой строке файла
+/// 
+/// Анализирует формат данных для различных GNSS систем:
+/// - GPS: строки начинаются с '*' (стандартный формат SEM)
+/// - Galileo: строки начинаются с '<' (XML формат)  
+/// - ГЛОНАСС: определяется по формату даты XX.XX.XXXX
+/// 
+/// # Параметры
+/// - `file`: Открытый файл для чтения
+/// 
+/// # Возвращает
+/// Тип альманаха или AlmanacUnknown при ошибке определения
 pub fn check_almanac_type(file: &mut File) -> AlmanacType {
     let mut reader = BufReader::new(file);
     let mut line = String::new();
@@ -34,17 +46,18 @@ pub fn check_almanac_type(file: &mut File) -> AlmanacType {
     }
 
     if line.starts_with('*') {
-        AlmanacType::AlmanacGps
+        AlmanacType::AlmanacGps  // Формат SEM для GPS
     } else if line.starts_with('<') {
-        AlmanacType::AlmanacGalileo
+        AlmanacType::AlmanacGalileo  // XML формат для Galileo
     } else {
-        // Check second parameter
+        // Проверяем формат ГЛОНАСС по второму параметру (дате)
         let parts: Vec<&str> = line.split_whitespace().collect();
         if parts.len() < 2 {
             return AlmanacType::AlmanacUnknown;
         }
         
         let second_param = parts[1];
+        // ГЛОНАСС дата имеет формат DD.MM.YYYY
         if second_param.len() >= 6 && second_param.chars().nth(2) == Some('.') && 
            second_param.chars().nth(5) == Some('.') {
             AlmanacType::AlmanacGlonass
@@ -54,6 +67,18 @@ pub fn check_almanac_type(file: &mut File) -> AlmanacType {
     }
 }
 
+/// Читает GPS альманах из файла формата SEM
+/// 
+/// Парсит файл альманаха GPS в стандартном формате SEM (Satellite Ephemeris Message).
+/// Каждая запись спутника начинается со строки, содержащей '*'.
+/// Альманах содержит упрощенные орбитальные параметры для долгосрочного планирования.
+/// 
+/// # Параметры  
+/// - `file`: Файл альманаха для чтения
+/// - `almanac`: Массив для хранения альманахов (32 спутника GPS)
+/// 
+/// # Возвращает
+/// Количество успешно прочитанных альманахов спутников
 pub fn read_almanac_gps(mut file: File, almanac: &mut [GpsAlmanac; 32]) -> i32 {
     let mut reader = BufReader::new(&mut file);
     let mut line = String::new();
