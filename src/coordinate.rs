@@ -174,40 +174,120 @@ pub fn gps_sat_pos_speed_eph(
     rk += drk;
     ik += dik;
     
-    // calculate derivatives of r(k) and u(k)
+    // ========== ВЫЧИСЛЕНИЕ ПРОИЗВОДНЫХ (СКОРОСТИ) ОРБИТАЛЬНЫХ ПАРАМЕТРОВ ==========
+    // 
+    // НЕОБХОДИМОСТЬ: Для расчета доплеровского сдвига частоты и компенсации
+    // эффекта Саньяк-Ферма необходима временная производная всех орбитальных параметров.
+    //
+    // ОСНОВНЫЕ ФОРМУЛЫ ДЛЯ ПРОИЗВОДНЫХ:
+    //
+    // 1. Производная эксцентрической аномалии:
+    //    Ė̇ = (n + α) / (1 - e·cos(E))
+    //    где: n - среднее движение, α - корр. ср. движения
+    //
+    // 2. Производная аргумента широты:
+    //    u̇ = Ė̇ · √(1-e²) / (1 - e·cos(E))
+    //
+    // 3. Производная радиального расстояния:
+    //    ṙ = a·e·sin(E)·Ė̇ + ȧ·(1 - e·cos(E))
+    //    где: ȧ - скорость изменения большой полуоси
+    
+    // Скорость изменения эксцентрической аномалии (рад/сек)
     eph.Ek_dot = (eph.n + alpha) / ek1;
+    
+    // Скорость изменения аргумента широты (рад/сек)
     let mut uk_dot = eph.Ek_dot * eph.root_ecc / ek1;
+    
+    // Удвоенная скорость аргумента широты (для пертурб. коррекций)
     let phi_dot = uk_dot * 2.0;
+    
+    // Скорость изменения радиального расстояния (м/сек)
+    // Первый слагаемый: от эксцентриситета (a·e·sin(E)·Ė̇)
+    // Второй слагаемый: от изменения большой полуоси (ȧ)
     let mut rk_dot = eph.axis * eph.ecc * ek.sin() * eph.Ek_dot + eph.axis_dot * ek1;
+    
+    // СКОРОСТИ ПЕРТУРБАЦИОННЫХ КОРРЕКЦИЙ 2-ГО ПОРЯДКА:
+    // 
+    // Производные гармонических коррекций по формулам:
+    // d/dt[C·cos(2φ) + S·sin(2φ)] = 2φ̇·[S·cos(2φ) - C·sin(2φ)]
+    
+    // Скорость изм. радиальн. коррекции: δṙ = Crs·cos(2φ) - Crc·sin(2φ)
     let drk_dot = ((eph.crs * cos_temp) - (eph.crc * sin_temp)) * phi_dot;
+    
+    // Скорость изм. коррекции аргумента широты: δu̇ = Cus·cos(2φ) - Cuc·sin(2φ)
     let duk_dot = ((eph.cus * cos_temp) - (eph.cuc * sin_temp)) * phi_dot;
+    
+    // Скорость изм. коррекции наклонения: δi̇ = Cis·cos(2φ) - Cic·sin(2φ)
     let dik_dot = ((eph.cis * cos_temp) - (eph.cic * sin_temp)) * phi_dot;
     rk_dot += drk_dot;
     uk_dot += duk_dot;
     let ik_dot = eph.idot + dik_dot;
     
-    // calculate intermediate variables for acceleration
+    // ========== ВЫЧИСЛЕНИЕ УСКОРЕНИЙ (ВТОРЫЕ ПРОИЗВОДНЫЕ) ==========
+    // 
+    // НАЗНАЧЕНИЕ: Вычисление ускорений спутника для:
+    // - Компенсации релятивистских эффектов
+    // - Учета сил тяжести и солнечного давления
+    // - Повышенной точности позиционирования
+    // 
+    // МАТЕМАТИЧЕСКИЕ ОСНОВЫ:
+    // Ускорение - вторая производная положения по времени:
+    // ¨r = d²r/dt², u¨ = d²u/dt², i¨ = d²i/dt²
     let (rk_dot2, uk_dot2, ik_dot2) = if acc.is_some() {
+        // Вторая производная эксцентрической аномалии:
+        // ¨E = -(Ė̇² · e · sin(E)) / (1 - e·cos(E))
         let ek_dot2 = -eph.Ek_dot * eph.Ek_dot * eph.ecc * ek.sin() / ek1;
+        
+        // Вторая производная удвоенного аргумента широты:
+        // ¨2φ = 2 · ¨E · √(1-e²) / (1 - e·cos(E))
         let phi_dot2 = 2.0 * ek_dot2 * eph.root_ecc / ek1;
-        let alpha_acc = 2.0 * phi_dot2 / phi_dot; // phi_dot2/phi_dot
-        let beta = phi_dot * phi_dot; // 4*phi_dot^2
+        
+        // Коэффициенты для сокращения вычислений:
+        let alpha_acc = 2.0 * phi_dot2 / phi_dot; // Отношение второй к первой производной
+        let beta = phi_dot * phi_dot; // Квадрат первой производной (4φ̇²)
+        
+        // Ускорение радиального расстояния:
+        // ¨r = a·e·[¨E·sin(E) + Ė̇²·cos(E)] + α·δṙ̇ - β·δr
         let rk_dot2 = eph.axis * eph.ecc * (ek.sin() * ek_dot2 + ek.cos() * eph.Ek_dot * eph.Ek_dot)
             + alpha_acc * drk_dot - beta * drk;
+            
+        // Ускорение аргумента широты:
+        // u¨ = ¨2φ + α·δu̇ - β·δu
         let uk_dot2 = phi_dot2 + alpha_acc * duk_dot - beta * duk;
+        
+        // Ускорение наклонения орбиты:
+        // i¨ = α·δi̇ - β·δi
         let ik_dot2 = alpha_acc * dik_dot - beta * dik;
+        
         (rk_dot2, uk_dot2, ik_dot2)
     } else {
+        // Если ускорения не требуются, возвращаем нули
         (0.0, 0.0, 0.0)
     };
     
-    // calculate Xp and Yp and corresponding derivatives
-    let sin_temp = uk.sin();
-    let cos_temp = uk.cos();
-    let xp = rk * cos_temp;
-    let yp = rk * sin_temp;
-    let xp_dot = rk_dot * cos_temp - yp * uk_dot;
-    let yp_dot = rk_dot * sin_temp + xp * uk_dot;
+    // ========== ПЕРЕХОД В ОРБИТАЛЬНУЮ ПЛОСКОСТЬ ==========
+    // 
+    // Преобразование полярных орбитальных координат (r, u) в декартовы координаты
+    // орбитальной плоскости (Xp, Yp).
+    // 
+    // ПОЛЯРНЫЕ → ДЕКАРТОВЫ КООРДИНАТЫ:
+    // Xp = r · cos(u) - положение по оси X в орбитальной плоскости
+    // Yp = r · sin(u) - положение по оси Y в орбитальной плоскости
+    // 
+    // ПРОИЗВОДНЫЕ (скорости):
+    // Xṗp = ṙ̇ · cos(u) - r · sin(u) · u̇ = ṙ̇ · cos(u) - Yp · u̇
+    // Yṗp = ṙ̇ · sin(u) + r · cos(u) · u̇ = ṙ̇ · sin(u) + Xp · u̇
+    
+    let sin_temp = uk.sin();      // sin(аргумент широты)
+    let cos_temp = uk.cos();      // cos(аргумент широты)
+    
+    // Положение в орбитальной плоскости (метры)
+    let xp = rk * cos_temp;       // Xp - координата по направлению к перигею
+    let yp = rk * sin_temp;       // Yp - координата перпендикулярно Xp
+    
+    // Скорость в орбитальной плоскости (м/сек)
+    let xp_dot = rk_dot * cos_temp - yp * uk_dot;  // dXp/dt
+    let yp_dot = rk_dot * sin_temp + xp * uk_dot;  // dYp/dt
     
     // calculate intermediate variables for acceleration
     let (xp_dot2, yp_dot2) = if acc.is_some() {
@@ -263,24 +343,53 @@ pub fn gps_sat_pos_speed_eph(
         acc_array[2] = (yp_dot2 - yp * ik_dot * ik_dot) * phi_sin + (yp * ik_dot2 + 2.0 * yp_dot * ik_dot) * phi_cos;
     }
     
-    // BDS GEO satellite special handling
+    // ========== СПЕЦИАЛЬНАЯ ОБРАБОТКА BeiDou GEO СПУТНИКОВ ==========
+    // 
+    // НАЗНАЧЕНИЕ: Особая обработка геостационарных спутников BeiDou (C01-C05)
+    // 
+    // ОСОБЕННОСТИ GEO ОРБИТ:
+    // - Геостационарная орбита на высоте ~35786 км
+    // - Орбитальный период 24 часа (синхрон с вращением Земли)
+    // - Требует специальных координатных преобразований
+    // 
+    // МАТЕМАТИЧЕСКИЕ ОПЕРАЦИИ:
+    // 1. Поворот на -5° вокруг оси X (согласно BDS-SIS-ICD)
+    // 2. Поворот на угол CGCS2000_OMEGDOTE * Δt (компенсация вращения Земли)
+    // 3. Компенсация вращения Земли в скорости
+    //
+    // ИСТОЧНИК: BeiDou Navigation Satellite System Signal In Space Interface Control Document
+    //          (BDS-SIS-ICD), Version 2.1, Section 5.3.1.5
     if system == GnssSystem::BdsSystem && eph.svid <= 5 {
-        // first rotate -5 degree
-        let yp_temp = pos_vel.y * COS_5 - pos_vel.z * SIN_5; // rotated y
-        pos_vel.z = pos_vel.z * COS_5 + pos_vel.y * SIN_5; // rotated z
-        let yp_dot_temp = pos_vel.vy * COS_5 - pos_vel.vz * SIN_5; // rotated vy
-        pos_vel.vz = pos_vel.vz * COS_5 + pos_vel.vy * SIN_5; // rotated vz
+        // ШАГ 1: ПОВОРОТ НА -5° ВОКРУГ ОСИ X
+        // Матрица поворота Rx(-5°) применяется к Y и Z компонентам:
+        // | Y' |   |  cos(-5°)  -sin(-5°) | | Y |   |  cos(5°)   sin(5°) | | Y |
+        // | Z' | = |  sin(-5°)   cos(-5°) | | Z | = | -sin(5°)   cos(5°) | | Z |
         
-        // rotate delta_t * CGCS2000_OMEGDOTE
-        let omega_rot = CGCS2000_OMEGDOTE * delta_t;
+        // Сохраняем временные значения для последующих преобразований
+        let yp_temp = pos_vel.y * COS_5 - pos_vel.z * SIN_5;      // Y' (повернутая Y-координата)
+        pos_vel.z = pos_vel.z * COS_5 + pos_vel.y * SIN_5;        // Z' (повернутая Z-координата)
+        let yp_dot_temp = pos_vel.vy * COS_5 - pos_vel.vz * SIN_5; // VY' (повернутая Y-скорость)
+        pos_vel.vz = pos_vel.vz * COS_5 + pos_vel.vy * SIN_5;      // VZ' (повернутая Z-скорость)
+        
+        // ШАГ 2: ПОВОРОТ НА УГОЛ CGCS2000_OMEGDOTE * Δt ВОКРУГ ОСИ Z
+        // Компенсация вращения системы координат CGCS2000 относительно WGS84
+        // CGCS2000_OMEGDOTE = 7.2921150e-5 рад/с (скорость вращения Земли)
+        let omega_rot = CGCS2000_OMEGDOTE * delta_t;  // Угол поворота за время Δt
         let sin_temp = omega_rot.sin();
         let cos_temp = omega_rot.cos();
-        pos_vel.y = yp_temp * cos_temp - pos_vel.x * sin_temp;
-        pos_vel.x = pos_vel.x * cos_temp + yp_temp * sin_temp;
-        pos_vel.vy = yp_dot_temp * cos_temp - pos_vel.vx * sin_temp;
-        pos_vel.vx = pos_vel.vx * cos_temp + yp_dot_temp * sin_temp;
         
-        // earth rotate compensation on velocity
+        // Матрица поворота Rz(ωΔt) применяется к X и Y компонентам:
+        // | X' |   | cos(ωΔt)  -sin(ωΔt) | | X |
+        // | Y' | = | sin(ωΔt)   cos(ωΔt) | | Y |
+        pos_vel.y = yp_temp * cos_temp - pos_vel.x * sin_temp;    // Y'' (окончательная Y)
+        pos_vel.x = pos_vel.x * cos_temp + yp_temp * sin_temp;     // X'' (окончательная X)
+        pos_vel.vy = yp_dot_temp * cos_temp - pos_vel.vx * sin_temp; // VY'' (окончательная VY)
+        pos_vel.vx = pos_vel.vx * cos_temp + yp_dot_temp * sin_temp; // VX'' (окончательная VX)
+        
+        // ШАГ 3: КОМПЕНСАЦИЯ ВРАЩЕНИЯ ЗЕМЛИ В СКОРОСТИ
+        // Учитываем эффект вращения Земли на относительную скорость спутника:
+        // V₁' = V₁ + Y · ωₑ  (кориолисова поправка по X)
+        // V₂' = V₂ - X · ωₑ  (кориолисова поправка по Y)
         pos_vel.vx += pos_vel.y * CGCS2000_OMEGDOTE;
         pos_vel.vy -= pos_vel.x * CGCS2000_OMEGDOTE;
         
@@ -387,6 +496,9 @@ pub fn glonass_sat_pos_speed_eph(
     // CIS to CTS(PZ-90) conversion
     cis_to_cts(&eph.PosVelT, delta_t, pos_vel, acc);
     
+    // УСПЕШНОЕ ЗАВЕРШЕНИЕ ВЫЧИСЛЕНИЙ
+    // Возвращаем true, что означает успешный расчет позиции и скорости спутника
+    // Полученные координаты в pos_vel готовы для использования в навигационных вычислениях
     true
 }
 

@@ -29,23 +29,58 @@
 
 use crate::types::*;
 
+/// Кумулятивные дни по месяцам для обычного (365-дневного) года
+/// Используется для быстрого преобразования даты (MM/DD) в день года (DOY)
+/// 
+/// Пример: DAYS_ACC[2] = 59 означает, что 1 марта = 59-й день обычного года
+/// (январь: 31 день + февраль: 28 дней = 59 дней)
 static DAYS_ACC: [i32; 12] = [0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334];
 
+/// Таблица времени введения високосных секунд в GPS времени (секунды от GPS эпохи)
+/// 
+/// Этот массив содержит моменты введения каждой високосной секунды в UTC.
+/// Високосные секунды вводятся для компенсации замедления вращения Земли.
+/// 
+/// **Ключевые даты:**
+/// - 1981-07-01: первая високосная секунда после GPS эпохи
+/// - 2017-01-01: последняя високосная секунда на данный момент
+/// - Общая разница: GPS опережает UTC на 18 секунд (к 2025 г.)
+/// 
+/// ИСТОЧНИК: IERS (International Earth Rotation and Reference Systems Service)
+///          Bulletin C - Earth Orientation Parameters
 static INSERT_TIME: [u32; 18] = [
-    46828800, 78364801, 109900802, 173059203, 252028804, 315187205,
-    346723206, 393984007, 425520008, 457056009, 504489610, 551750411,
-    599184012, 820108813, 914803214, 1025136015, 1119744016, 1167264017
+    46828800, 78364801, 109900802, 173059203, 252028804, 315187205,  // 1981-1985
+    346723206, 393984007, 425520008, 457056009, 504489610, 551750411, // 1986-1991
+    599184012, 820108813, 914803214, 1025136015, 1119744016, 1167264017 // 1992-2017
 ];
 
 pub struct GnssTimeConverter;
 
 impl GnssTimeConverter {
+    /// Определяет количество високосных секунд для заданного времени GPS
+    /// 
+    /// # Параметры
+    /// * `seconds` - Количество секунд от GPS эпохи (6 января 1980)
+    /// 
+    /// # Возвращает
+    /// Кортеж (leap_seconds_count, is_at_leap_second):
+    /// * `leap_seconds_count` - Количество вставленных високосных секунд
+    /// * `is_at_leap_second` - true, если время приходится на момент введения високосной секунды
+    /// 
+    /// # Пример
+    /// ```ignore
+    /// let (leap_count, at_leap) = GnssTimeConverter::get_leap_second(1167264017);
+    /// // На 1 января 2017 года: leap_count = 18, at_leap = true
+    /// ```
     pub fn get_leap_second(seconds: u32) -> (i32, bool) {
+        // Последовательно сравниваем с таблицей високосных секунд
         for (i, &insert_time) in INSERT_TIME.iter().enumerate() {
             if seconds <= insert_time {
+                // Нашли первый момент вставки, который >= заданного времени
                 return (i as i32, seconds == insert_time);
             }
         }
+        // Если время после последней високосной секунды
         (INSERT_TIME.len() as i32, false)
     }
 
@@ -411,39 +446,54 @@ impl GnssTimeConverter {
     }
 }
 
-// Convenience functions for global access
+// ========== ГЛОБАЛЬНЫЕ УДОБНЫЕ ФУНКЦИИ ==========
+// 
+// Предоставляют упрощенный интерфейс для преобразования между различными
+// системами времени без необходимости создания экземпляра GnssTimeConverter.
+// Эти функции используются в основном коде системы для синхронизации
+// различных ГНСС систем к общему временному базису.
+
+/// Преобразование GPS времени в UTC с опциональным учетом високосных секунд
 pub fn gps_time_to_utc(gnss_time: GnssTime, use_leap_second: bool) -> UtcTime {
     GnssTimeConverter::gps_time_to_utc(gnss_time, use_leap_second)
 }
 
+/// Преобразование UTC в GPS время с опциональным учетом високосных секунд
 pub fn utc_to_gps_time(utc_time: UtcTime, use_leap_second: bool) -> GnssTime {
     GnssTimeConverter::utc_to_gps_time(utc_time, use_leap_second)
 }
 
+/// Преобразование ГЛОНАСС времени в UTC (с автоматическим учетом часового пояса Москвы)
 pub fn glonass_time_to_utc(glonass_time: GlonassTime) -> UtcTime {
     GnssTimeConverter::glonass_time_to_utc(glonass_time)
 }
 
+/// Преобразование UTC в ГЛОНАСС время (оригинальная версия)
 pub fn utc_to_glonass_time(utc_time: UtcTime) -> GlonassTime {
     GnssTimeConverter::utc_to_glonass_time(utc_time)
 }
 
+/// Преобразование UTC в ГЛОНАСС время (скорректированная версия)
 pub fn utc_to_glonass_time_corrected(utc_time: UtcTime) -> GlonassTime {
     GnssTimeConverter::utc_to_glonass_time_corrected(utc_time)
 }
 
+/// Преобразование UTC в BeiDou Time (BDT) с учетом 1356-недельного оффсета
 pub fn utc_to_bds_time(utc_time: UtcTime) -> GnssTime {
     GnssTimeConverter::utc_to_bds_time(utc_time)
 }
 
+/// Преобразование UTC в Galileo System Time (GST) с учетом 1024-недельного оффсета
 pub fn utc_to_galileo_time(utc_time: UtcTime) -> GnssTime {
     GnssTimeConverter::utc_to_galileo_time(utc_time)
 }
 
+/// Преобразование BeiDou Time (BDT) обратно в UTC
 pub fn bds_time_to_utc(gnss_time: GnssTime) -> UtcTime {
     GnssTimeConverter::bds_time_to_utc(gnss_time)
 }
 
+/// Преобразование Galileo System Time (GST) обратно в UTC
 pub fn galileo_time_to_utc(gnss_time: GnssTime) -> UtcTime {
     GnssTimeConverter::galileo_time_to_utc(gnss_time)
 }
