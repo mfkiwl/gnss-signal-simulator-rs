@@ -837,7 +837,7 @@ impl IFDataGen {
         // NOTE: Do not overwrite gps_eph array that was loaded from RINEX!
         for i in 1..=TOTAL_GPS_SAT {
             // Use already loaded ephemeris instead of searching (which returns None)
-            // self.gps_eph[i-1] = self.nav_data.find_ephemeris(GnssSystem::GpsSystem, self.cur_time, i as i32, 0, 0);
+            self.gps_eph[i-1] = self.nav_data.find_ephemeris(GnssSystem::GpsSystem, self.cur_time, i as i32, 0, 0);
             
             // For L1CA/L1C/L2C/L5, all can use the same ephemeris data
             if let Some(ref eph) = self.gps_eph[i-1] {
@@ -2810,7 +2810,7 @@ impl IFDataGen {
 
     // Методы для соответствия интерфейсу main.rs
     pub fn load_config(&mut self, config_file: &str) -> Result<(), Box<dyn std::error::Error>> {
-        println!("[UNIQUE-DEBUG] load_config called with: {}", config_file);
+        // println!("[UNIQUE-DEBUG] load_config called with: {}", config_file);
         println!("[INFO]\tLoading JSON file: {}", config_file);
         
         // Сохраняем путь к config файлу
@@ -2832,16 +2832,16 @@ impl IFDataGen {
         println!("[DEBUG] Filename before JSON parsing: {:?}", 
                 std::str::from_utf8(&self.output_param.filename[..20]).unwrap_or("invalid"));
         
-        println!("[UNIQUE-JSON-START] Starting pure Rust JSON parsing");
+        // println!("[UNIQUE-JSON-START] Starting pure Rust JSON parsing");
         
         // Переменная для пути к RINEX файлу
         let mut rinex_file = String::from("Rinex_Data/rinex_v3_20251560000.rnx"); // Значение по умолчанию
         
         // УПРОЩЕННЫЙ JSON ПАРСИНГ - читаем файл напрямую и парсим нужные параметры  
         if let Ok(json_content) = std::fs::read_to_string(config_file) {
-            println!("[UNIQUE-JSON-READ] File read successfully, length: {}", json_content.len());
+            // println!("[UNIQUE-JSON-READ] File read successfully, length: {}", json_content.len());
             if let Ok(json) = serde_json::from_str::<serde_json::Value>(&json_content) {
-                println!("[UNIQUE-JSON-PARSE] JSON parsed successfully");
+                // println!("[UNIQUE-JSON-PARSE] JSON parsed successfully");
                 // Парсим время из JSON
                 if let Some(time) = json.get("time") {
                     if let (Some(year), Some(month), Some(day), Some(hour), Some(minute), Some(second)) = (
@@ -3125,24 +3125,34 @@ impl IFDataGen {
     }
 
     pub fn initialize(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        println!("[DEBUG] Starting initialize()...");
+        
         // Инициализация уже выполнена при загрузке конфигурации
         // Здесь только базовая настройка системы
         self.trajectory.reset_trajectory_time();
         
+        println!("[DEBUG] Initializing CN0 for GPS satellites...");
         // Инициализируем CN0 для спутников
         for i in 0..TOTAL_GPS_SAT {
             self.gps_sat_param[i].CN0 = (self.power_control.init_cn0 * 100.0 + 0.5) as i32;
         }
+        
+        println!("[DEBUG] Initializing CN0 for BeiDou satellites...");
         for i in 0..TOTAL_BDS_SAT {
             self.bds_sat_param[i].CN0 = (self.power_control.init_cn0 * 100.0 + 0.5) as i32;
         }
+        
+        println!("[DEBUG] Initializing CN0 for Galileo satellites...");
         for i in 0..TOTAL_GAL_SAT {
             self.gal_sat_param[i].CN0 = (self.power_control.init_cn0 * 100.0 + 0.5) as i32;
         }
+        
+        println!("[DEBUG] Initializing CN0 for GLONASS satellites...");
         for i in 0..TOTAL_GLO_SAT {
             self.glo_sat_param[i].CN0 = (self.power_control.init_cn0 * 100.0 + 0.5) as i32;
         }
         
+        println!("[DEBUG] initialize() completed successfully");
         Ok(())
     }
     
@@ -3373,6 +3383,8 @@ impl IFDataGen {
     }
 
     pub fn generate_data(&mut self) -> Result<GenerationStats, Box<dyn std::error::Error>> {
+        println!("[DEBUG] Starting generate_data()...");
+        
         // Используем стандартные данные пока не реализованы get методы
         let utc_time = self.parse_utc_time_from_json("presets/GPS_L1_only.json").unwrap_or_else(|| {
             println!("[WARNING]\tFailed to parse time from JSON, using default time");

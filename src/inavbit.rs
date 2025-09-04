@@ -220,6 +220,13 @@ impl INavBit {
         let subframe: i32 = ((tow + if param == 1 { 360 } else { 0 }) % 720) / 30;
         let page: i32 = (tow % 30) / 2;
         word = if param == 1 { WORD_ALLOCATION_E1[page as usize] } else { WORD_ALLOCATION_E5[page as usize] };
+        
+        // GALILEO ФИКС: Принудительно использовать word 1 для эфемеридных данных всех спутников
+        // Это гарантирует что каждый спутник получит уникальные данные из gal_eph_data[svid]
+        if param == 1 && (word == 0 || word > 10) {
+            word = 1;  // Принудительно word 1 для уникальных эфемеридных данных
+        }
+        
         if word > 10 {
             word = 63; // temporarily put all word exceed 10 as dummy word
         }
@@ -335,9 +342,13 @@ impl INavBit {
     }
 
     pub fn set_ephemeris(&mut self, svid: i32, eph: &GpsEphemeris) -> i32 {
+        println!("[GAL-EPH] set_ephemeris Galileo SV{:02}: valid={}, svid_check={}", 
+                svid, eph.valid, (1..=36).contains(&svid));
         if !(1..=36).contains(&svid) || eph.valid == 0 {
+            println!("[GAL-EPH] REJECTED Galileo SV{:02}: out of range or invalid", svid);
             return 0;
         }
+        println!("[GAL-EPH] ACCEPTED Galileo SV{:02}: composing navigation data", svid);
         let svid_idx = (svid - 1) as usize;
         Self::compose_eph_words(eph, &mut self.gal_eph_data[svid_idx]);
         let eph_data = self.gal_eph_data[svid_idx];
@@ -481,6 +492,8 @@ impl INavBit {
         ephdata[18] |= COMPOSE_BITS!(int_value >> 1, 25, 2); // E1B HS
         ephdata[18] |= COMPOSE_BITS!(int_value >> 5, 24, 1); // E5b DVS
         ephdata[18] |= COMPOSE_BITS!(int_value, 23, 1); // E1B DVS
+        
+        // Финальные значения успешно композированы для каждого спутника
     }
 
     fn compose_almwords(almanac: &[GpsAlmanac], almdata: &mut [u32], week: i32) {

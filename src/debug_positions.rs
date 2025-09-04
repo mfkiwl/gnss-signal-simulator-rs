@@ -29,7 +29,8 @@ pub fn debug_satellite_positions(
     
     println!("\n--- GPS спутники (эталон из C: {:?}) ---", c_version_gps);
     
-    let transmit_time = (cur_time.Week as f64) * 604800.0 + (cur_time.MilliSeconds as f64) / 1000.0;
+    // ИСПРАВЛЕНИЕ: используем только секунды недели, а не полное время
+    let transmit_time_week_secs = (cur_time.MilliSeconds as f64) / 1000.0;
     let elevation_mask = 5.0_f64.to_radians();
     
     for svid in &c_version_gps {
@@ -52,7 +53,8 @@ pub fn debug_satellite_positions(
                 println!("  [GPS01 DEBUG] delta_t={:.1} сек ({:.2} часов)", delta_t, delta_t/3600.0);
             }
             
-            if gps_sat_pos_speed_eph(GnssSystem::GpsSystem, transmit_time, &mut eph_mut, &mut sat_pos, None) {
+            // ИСПРАВЛЕНО: передаём только секунды недели, а не полное время
+            if gps_sat_pos_speed_eph(GnssSystem::GpsSystem, transmit_time_week_secs, &mut eph_mut, &mut sat_pos, None) {
                 let mut elevation = 0.0;
                 let mut azimuth = 0.0;
                 sat_el_az_from_positions(receiver_pos, &sat_pos, &mut elevation, &mut azimuth);
@@ -92,10 +94,10 @@ pub fn debug_satellite_positions(
             // Конвертируем BeiDouEphemeris в GpsEphemeris для расчёта
             let mut gps_eph = eph.to_gps_ephemeris();
             
-            // BeiDou использует BDT время
-            let bdt_transmit_time = transmit_time - 1356.0 * 604800.0; // BDT offset
+            // BeiDou использует BDT время - передаём только секунды недели
+            // Эфемериды уже в GPS времени после конверсии в RINEX
             
-            if gps_sat_pos_speed_eph(GnssSystem::BdsSystem, bdt_transmit_time, &mut gps_eph, &mut sat_pos, None) {
+            if gps_sat_pos_speed_eph(GnssSystem::BdsSystem, transmit_time_week_secs, &mut gps_eph, &mut sat_pos, None) {
                 let mut elevation = 0.0;
                 let mut azimuth = 0.0;
                 sat_el_az_from_positions(receiver_pos, &sat_pos, &mut elevation, &mut azimuth);
@@ -134,7 +136,7 @@ pub fn debug_satellite_positions(
             let mut sat_pos = KinematicInfo::default();
             let mut eph_mut = *eph;
             
-            if gps_sat_pos_speed_eph(GnssSystem::GalileoSystem, transmit_time, &mut eph_mut, &mut sat_pos, None) {
+            if gps_sat_pos_speed_eph(GnssSystem::GalileoSystem, transmit_time_week_secs, &mut eph_mut, &mut sat_pos, None) {
                 let mut elevation = 0.0;
                 let mut azimuth = 0.0;
                 sat_el_az_from_positions(receiver_pos, &sat_pos, &mut elevation, &mut azimuth);

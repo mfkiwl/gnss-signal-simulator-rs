@@ -251,7 +251,10 @@ impl SatelliteSignal {
                 GnssSystem::BdsSystem => 63,
                 GnssSystem::GalileoSystem => 36,
                 GnssSystem::GlonassSystem => 24,
-                _ => 32,
+                GnssSystem::SbasSystem => 39,  // SBAS PRN 120-158 (39 satellites)
+                GnssSystem::QzssSystem => 10,  // QZSS PRN 193-202 (10 satellites)  
+                GnssSystem::NavICSystem => 14, // NavIC PRN 1-14 (14 satellites)
+                GnssSystem::GpsSystem => 32,
             };
             if let Some(nav_data) = &mut self.nav_data {
                 if self.svid > 0 && self.svid <= max_svid {
@@ -259,6 +262,41 @@ impl SatelliteSignal {
                                      (self.sat_system == GnssSystem::GalileoSystem && self.sat_signal == crate::SIGNAL_INDEX_E1 as i32) { 1 } else { 0 };
                     let mut data_bits_i32 = [0; 4096];
                     nav_data.get_frame_data(transmit_time, self.svid, param, &mut data_bits_i32);
+                    
+                    // DEBUG: Проверка навигационных данных
+                    let non_zero_count = data_bits_i32.iter().filter(|&&x| x != 0).count();
+                    let system_name = match self.sat_system {
+                        GnssSystem::GpsSystem => "GPS",
+                        GnssSystem::BdsSystem => "BDS",
+                        GnssSystem::GalileoSystem => "GAL",
+                        GnssSystem::GlonassSystem => "GLO",
+                        GnssSystem::SbasSystem => "SBAS",
+                        GnssSystem::QzssSystem => "QZSS",
+                        GnssSystem::NavICSystem => "NavIC",
+                    };
+                    
+                    // Проверяем навигационные данные каждого спутника 
+                    static mut DEBUG_COUNTER: i32 = 0;
+                    let should_debug = unsafe {
+                        DEBUG_COUNTER += 1;
+                        DEBUG_COUNTER <= 50 // показываем первые 50 вызовов
+                    };
+                    
+                    if should_debug { // показываем для диагностики проблемы
+                        println!("[NAV] {} SV{:02} кадр {}: {} битов/4096 ({:.1}%)", 
+                                system_name, self.svid, self.current_frame, non_zero_count, 
+                                (non_zero_count as f32 / 4096.0) * 100.0);
+                        if non_zero_count > 0 {
+                            let first_10 = (0..10).map(|i| if data_bits_i32[i] != 0 { "1" } else { "0" }).collect::<String>();
+                            // IODC младшие биты должны быть в word 5 subframe 1 (~150 биты)
+                            let iodc_bits = (120..130).map(|i| if data_bits_i32.get(i).copied().unwrap_or(0) != 0 { "1" } else { "0" }).collect::<String>();
+                            let late_bits = (200..210).map(|i| if data_bits_i32.get(i).copied().unwrap_or(0) != 0 { "1" } else { "0" }).collect::<String>();
+                            println!("      Первые биты: {} | IODC область(120-130): {} | Поздние биты(200-210): {}", first_10, iodc_bits, late_bits);
+                        } else {
+                            println!("      ⚠️ НЕТ НАВИГАЦИОННЫХ ДАННЫХ!");
+                        }
+                    }
+                    
                     for i in 0..4096 {
                         self.data_bits[i] = data_bits_i32[i] as u8;
                     }

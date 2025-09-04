@@ -89,6 +89,11 @@ pub fn gps_sat_pos_speed_eph(
     pos_vel: &mut KinematicInfo,
     mut acc: Option<&mut [f64; 3]>,
 ) -> bool {
+    // Отладка входных параметров
+    if eph.svid == 1 {  // Только для первого спутника для уменьшения вывода
+        println!("[GPS_POS_DEBUG] Input: transmit_time={}, toe={}, svid={}", 
+                 transmit_time, eph.toe, eph.svid);
+    }
     
     // calculate time difference
     // КАК В C ВЕРСИИ: transmit_time уже в секундах недели, не применяем модульное деление
@@ -410,8 +415,11 @@ pub fn gps_sat_pos_speed_eph(
     
     // if ephemeris expire, return false
     if delta_t.abs() > 7200.0 {
+        println!("[GPS_POS_DEBUG] Ephemeris expired: delta_t = {} > 7200", delta_t);
         false
-    } else { !(delta_t.abs() > 7200.0 && system == GnssSystem::BdsSystem) } // TEMP: увеличили BeiDou лимит с 1ч до 2ч для отладки
+    } else { 
+        true // Упрощаем логику - просто возвращаем true если delta_t в пределах нормы
+    }
 }
 
 /// GLONASS satellite position and velocity calculation from ephemeris

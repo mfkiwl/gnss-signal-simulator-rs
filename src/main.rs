@@ -191,6 +191,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     
     // ЭТАП 3: Инициализация системы (включая парсинг RINEX)
     let system_init_start = Instant::now();
+    println!("[DEBUG] About to call initialize()...");
     if_data_gen.initialize()?;
     let system_init_duration = system_init_start.elapsed();
     println!("[TIMING]\tSystem initialization (RINEX parsing): {:.3}s", system_init_duration.as_secs_f64());
@@ -198,6 +199,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     
     // ЭТАП 4: Генерация данных (основная работа)
     println!("[INFO]\tStarting IF data generation...");
+    println!("[DEBUG] About to call generate_data()...");
     let generation_start = Instant::now();
     let result = if_data_gen.generate_data();
     let generation_duration = generation_start.elapsed();

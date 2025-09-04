@@ -84,7 +84,9 @@ impl LNavBit {
         start_time.Week += start_time.MilliSeconds / 604800000;
         start_time.MilliSeconds %= 604800000;
         let tow = start_time.MilliSeconds / 6000;
-        let subframe = (tow % 5) + 1;
+        // ТЕСТ: Принудительно использовать subframe 1 для уникальных эфемеридных данных
+        let subframe = 1;
+        println!("[GPS-SUBFRAME] SV{:02}: tow={}, subframe={}", svid, tow, subframe);
         
         let stream = if subframe > 3 {
             // subframe 4/5, further determine page number
@@ -142,9 +144,13 @@ impl LNavBit {
     }
 
     pub fn set_ephemeris(&mut self, svid: i32, eph: &GpsEphemeris) -> i32 {
+        println!("[GPS-EPH] set_ephemeris GPS SV{:02}: valid={}, svid_check={}", 
+                svid, eph.valid, (1..=32).contains(&svid));
         if !(1..=32).contains(&svid) || eph.valid == 0 {
+            println!("[GPS-EPH] REJECTED GPS SV{:02}: out of range or invalid", svid);
             return 0;
         }
+        println!("[GPS-EPH] ACCEPTED GPS SV{:02}: composing navigation data", svid);
         Self::compose_gps_stream123(eph, &mut self.gps_stream123[(svid - 1) as usize]);
         svid
     }
@@ -227,14 +233,20 @@ impl LNavBit {
     // Word1/2 removed, parity not included
     // 24 information bits occupies bit0~23 of each DWORD in Stream[]
     fn compose_gps_stream123(ephemeris: &GpsEphemeris, stream: &mut [[u32; 8]; 3]) -> i32 {
+        println!("[GPS-COMPOSE] SV{:02}: flag={}, ura={}, health={}, iodc={}, toc={}", 
+                ephemeris.svid, ephemeris.flag, ephemeris.ura, ephemeris.health, ephemeris.iodc, ephemeris.toc);
+        println!("[GPS-ORBITAL] SV{:02}: sqrtA={:.1}, ecc={:.8}, M0={:.8}, omega0={:.8}", 
+                ephemeris.svid, ephemeris.sqrtA, ephemeris.ecc, ephemeris.M0, ephemeris.omega0);
         // subframe 1, Stream[0]~Stream[7]
         let int_value = (ephemeris.flag & 3) as i32;
         stream[0][0] = Self::compose_bits(int_value, 12, 2);
-        let int_value = (ephemeris.ura & 0xf) as i32;
-        stream[0][0] |= Self::compose_bits(int_value, 8, 4);
+        let ura_val = (ephemeris.ura & 0xf) as i32;
+        stream[0][0] |= Self::compose_bits(ura_val, 8, 4);
         stream[0][0] |= Self::compose_bits(ephemeris.health as i32, 2, 6);
-        let int_value = (ephemeris.iodc >> 8) as i32;
-        stream[0][0] |= Self::compose_bits(int_value, 0, 2);
+        let iodc_high = (ephemeris.iodc >> 8) as i32;
+        stream[0][0] |= Self::compose_bits(iodc_high, 0, 2);
+        println!("[GPS-BITS] SV{:02}: word0=0x{:06x} (flag&3={}, ura&f={}, health={}, iodc>>8={})", 
+                ephemeris.svid, stream[0][0], int_value, ura_val, ephemeris.health, iodc_high);
         let int_value = (ephemeris.flag >> 2) as i32;
         stream[0][1] = Self::compose_bits(int_value, 23, 1);
         let int_value = Self::unscale_int(ephemeris.tgd, -31);

@@ -2094,7 +2094,7 @@ where
     }
     
     // Заполняем структуру эфемерид точно как в C++ (NavDataGpsLnav case)
-    eph.toc = 0; // Будет заполнено позже
+    eph.toc = (data[11] + 0.5) as i32; // toc = toe для GPS
     eph.sqrtA = data[10];
     eph.ecc = data[8];
     eph.i0 = data[15];
@@ -2112,9 +2112,16 @@ where
     eph.cis = data[14];
     eph.toe = (data[11] + 0.5) as i32;
     
-    // Специфичные для GPS LNAV параметры
-    if data.len() > 26 {
+    // Специфичные параметры для GPS и Galileo
+    // Определяем систему по значениям: у Galileo data[26] обычно близко к 0, у GPS - большие числа
+    if data.len() > 26 && data[26] > 10.0 {
+        // GPS: используем стандартный IODC из data[26]
         eph.iodc = data[26] as u16;
+        // Убираем отладку GPS чтобы не засорять вывод
+    } else {
+        // GALILEO: используем IODnav (data[3]) или SVID если IODnav равен 0
+        eph.iodc = if data[3] == 0.0 { eph.svid as u16 } else { data[3] as u16 };
+        println!("[GAL-IODC-FIX] SV{:02}: data[3]={:.0} (IODnav), data[26]={:.1} → iodc={}", eph.svid, data[3], if data.len() > 26 { data[26] } else { -1.0 }, eph.iodc);
     }
     eph.iode = data[3] as u8;
     if data.len() > 21 {
@@ -2518,7 +2525,7 @@ where
     }
     
     // Заполняем структуру эфемерид для Galileo (аналогично GPS но с учетом разных индексов)
-    eph.toc = 0;
+    eph.toc = (data[11] + 0.5) as i32; // toc = toe для Galileo
     eph.sqrtA = data[10];    // √a
     eph.ecc = data[8];       // e
     eph.i0 = data[15];       // i0
@@ -2538,6 +2545,10 @@ where
     
     // Galileo-специфические параметры
     eph.iode = data[3] as u8;           // IODnav
+    // GALILEO ФИКС: Если IODnav равен 0, используем SVID как уникальный идентификатор
+    eph.iodc = if data[3] == 0.0 { eph.svid as u16 } else { data[3] as u16 };
+    println!("[GAL-PARSE] SV{:02}: data[3]={:.0} (IODnav), iodc={}, toe={}", 
+            eph.svid, data[3], eph.iodc, eph.toe);
     eph.week = data[21] as i32;         // Week
     eph.ura = get_ura_index(data[22]) as i16; // SISA → URA mapping
     eph.health = data[23] as u16;       // Health
@@ -2595,7 +2606,7 @@ fn read_contents_time(line: &str, data: &mut [f64]) -> Option<u8> {
     let svid = if line.len() > 2 && !line.chars().nth(1).unwrap_or(' ').is_whitespace() {
         let svid_str = &line[1..3];
         let parsed = svid_str.trim().parse::<u8>().unwrap_or(0);
-        println!("[RINEX-PARSE] 📡 Parsed SVID: '{}' → {}", svid_str, parsed);
+        // println!("[RINEX-PARSE] 📡 Parsed SVID: '{}' → {}", svid_str, parsed);
         parsed
     } else {
         println!("[RINEX-PARSE] ⚠️  WARNING: Unable to parse SVID from positions 1-2");
@@ -2610,26 +2621,26 @@ fn read_contents_time(line: &str, data: &mut [f64]) -> Option<u8> {
     if line.len() > 42 {
         let af0_str = &line[23..42];
         data[0] = af0_str.trim().parse().unwrap_or(0.0);
-        println!("[RINEX-PARSE] 🕐 af0 (24-42): '{}' → {:.6e}", af0_str.trim(), data[0]);
+        // println!("[RINEX-PARSE] 🕐 af0 (24-42): '{}' → {:.6e}", af0_str.trim(), data[0]);
     }
     
     // af1: позиции 43-61 (19 символов) - clock drift в с/с  
     if line.len() > 61 {
         let af1_str = &line[42..61];
         data[1] = af1_str.trim().parse().unwrap_or(0.0);
-        println!("[RINEX-PARSE] 🕐 af1 (43-61): '{}' → {:.6e}", af1_str.trim(), data[1]);
+        // println!("[RINEX-PARSE] 🕐 af1 (43-61): '{}' → {:.6e}", af1_str.trim(), data[1]);
     }
     
     // af2: позиции 62-80 (19 символов) - clock drift rate в с/с²
     if line.len() > 80 {
         let af2_str = &line[61..80];
         data[2] = af2_str.trim().parse().unwrap_or(0.0);
-        println!("[RINEX-PARSE] 🕐 af2 (62-80): '{}' → {:.6e}", af2_str.trim(), data[2]);
+        // println!("[RINEX-PARSE] 🕐 af2 (62-80): '{}' → {:.6e}", af2_str.trim(), data[2]);
     } else if line.len() > 61 {
         // Последнее поле может быть короче если строка обрезана
         let af2_str = &line[61..];
         data[2] = af2_str.trim().parse().unwrap_or(0.0);
-        println!("[RINEX-PARSE] 🕐 af2 (62-end): '{}' → {:.6e}", af2_str.trim(), data[2]);
+        // println!("[RINEX-PARSE] 🕐 af2 (62-end): '{}' → {:.6e}", af2_str.trim(), data[2]);
     }
     
     Some(svid)
@@ -2660,7 +2671,7 @@ fn read_contents_data(line: &str, data: &mut [f64]) {
     if line.len() > 23 {
         let param1_str = &line[4..23];
         data[0] = param1_str.trim().parse().unwrap_or(0.0);
-        println!("[RINEX-DATA] 🔢 Param1 (5-23): '{}' → {:.6e}", param1_str.trim(), data[0]);
+        // println!("[RINEX-DATA] 🔢 Param1 (5-23): '{}' → {:.6e}", param1_str.trim(), data[0]);
     } else {
         println!("[RINEX-DATA] ⚠️  Line too short for param1 (need >23 chars, got {})", line.len());
     }
@@ -2669,26 +2680,26 @@ fn read_contents_data(line: &str, data: &mut [f64]) {
     if line.len() > 42 {
         let param2_str = &line[23..42];
         data[1] = param2_str.trim().parse().unwrap_or(0.0);
-        println!("[RINEX-DATA] 🔢 Param2 (24-42): '{}' → {:.6e}", param2_str.trim(), data[1]);
+        // println!("[RINEX-DATA] 🔢 Param2 (24-42): '{}' → {:.6e}", param2_str.trim(), data[1]);
     }
     
     // Параметр 3: позиции 43-61 (19 символов)
     if line.len() > 61 {
         let param3_str = &line[42..61];
         data[2] = param3_str.trim().parse().unwrap_or(0.0);
-        println!("[RINEX-DATA] 🔢 Param3 (43-61): '{}' → {:.6e}", param3_str.trim(), data[2]);
+        // println!("[RINEX-DATA] 🔢 Param3 (43-61): '{}' → {:.6e}", param3_str.trim(), data[2]);
     }
     
     // Параметр 4: позиции 62-80 (19 символов) - может быть обрезан в конце строки
     if line.len() > 80 {
         let param4_str = &line[61..80];
         data[3] = param4_str.trim().parse().unwrap_or(0.0);
-        println!("[RINEX-DATA] 🔢 Param4 (62-80): '{}' → {:.6e}", param4_str.trim(), data[3]);
+        // println!("[RINEX-DATA] 🔢 Param4 (62-80): '{}' → {:.6e}", param4_str.trim(), data[3]);
     } else if line.len() > 61 {
         // Обрабатываем укороченную строку (параметр 4 до конца строки)
         let param4_str = &line[61..];
         data[3] = param4_str.trim().parse().unwrap_or(0.0);
-        println!("[RINEX-DATA] 🔢 Param4 (62-end): '{}' → {:.6e}", param4_str.trim(), data[3]);
+        // println!("[RINEX-DATA] 🔢 Param4 (62-end): '{}' → {:.6e}", param4_str.trim(), data[3]);
     }
 }
 
