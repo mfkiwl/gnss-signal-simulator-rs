@@ -48,6 +48,7 @@ use crate::{bcnav1bit::BCNav1Bit as ActualBCNav1Bit, bcnav2bit::BCNav2Bit as Act
 use crate::powercontrol::{CPowerControl, SignalPower};
 use crate::trajectory::CTrajectory;
 use crate::types::SatelliteParam;
+use crate::satellite_param::get_doppler;
 use crate::navdata::NavDataType;
 use crate::nav_data::NavData as UnifiedNavData;
 
@@ -2699,7 +2700,9 @@ impl IFDataGen {
                 for &(signal_index, signal_mask) in &gps_signals {
                     if self.output_param.CompactConfig.is_signal_enabled(signal_mask) {
                         let center_freq = SIGNAL_CENTER_FREQ[GnssSystem::GpsSystem as usize][signal_index.min(7)];
-                        let if_freq = (center_freq - self.output_param.CenterFreq as f64) as i32;
+                        // Добавляем Doppler для создания реальной IF частоты
+                        let doppler = get_doppler(&self.gps_sat_param[eph.svid as usize - 1], signal_index);
+                        let if_freq = ((center_freq + doppler) - self.output_param.CenterFreq as f64) as i32;
                         let mut new_signal = SatIfSignal::new(self.output_param.SampleFreq, if_freq, GnssSystem::GpsSystem, signal_index as i32, eph.svid);
                         
                         let nav_data = self.get_nav_data(GnssSystem::GpsSystem, signal_index as i32, nav_bit_array);
@@ -2733,7 +2736,9 @@ impl IFDataGen {
                 for &(signal_index, signal_mask, freq_array_index) in &bds_signals {
                     if self.output_param.CompactConfig.is_signal_enabled(signal_mask) {
                         let center_freq = SIGNAL_CENTER_FREQ[GnssSystem::BdsSystem as usize][freq_array_index];
-                        let if_freq = (center_freq - self.output_param.CenterFreq as f64) as i32;
+                        // Добавляем Doppler для создания реальной IF частоты
+                        let doppler = get_doppler(&self.bds_sat_param[eph.svid as usize - 1], signal_index);
+                        let if_freq = ((center_freq + doppler) - self.output_param.CenterFreq as f64) as i32;
                         let mut new_signal = SatIfSignal::new(self.output_param.SampleFreq, if_freq, GnssSystem::BdsSystem, signal_index as i32, eph.svid);
                         
                         let nav_data = self.get_nav_data(GnssSystem::BdsSystem, signal_index as i32, nav_bit_array);
@@ -2763,7 +2768,9 @@ impl IFDataGen {
                 for &(signal_index, signal_mask, freq_array_index) in &gal_signals {
                     if self.output_param.CompactConfig.is_signal_enabled(signal_mask) {
                         let center_freq = SIGNAL_CENTER_FREQ[GnssSystem::GalileoSystem as usize][freq_array_index.min(7)];
-                        let if_freq = (center_freq - self.output_param.CenterFreq as f64) as i32;
+                        // Добавляем Doppler для создания реальной IF частоты
+                        let doppler = get_doppler(&self.gal_sat_param[eph.svid as usize - 1], signal_index);
+                        let if_freq = ((center_freq + doppler) - self.output_param.CenterFreq as f64) as i32;
                         let mut new_signal = SatIfSignal::new(self.output_param.SampleFreq, if_freq, GnssSystem::GalileoSystem, signal_index as i32, eph.svid);
                         
                         let nav_data = self.get_nav_data(GnssSystem::GalileoSystem, signal_index as i32, nav_bit_array);
