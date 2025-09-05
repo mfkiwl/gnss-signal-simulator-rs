@@ -317,6 +317,10 @@ pub fn get_satellite_param(
     satellite_param.Elevation = elevation;
     satellite_param.Azimuth = azimuth;
     satellite_param.RelativeSpeed = sat_relative_speed(position_ecef, &sat_position) - LIGHT_SPEED * eph.af1;
+    
+    // КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Сохраняем рассчитанную позицию и скорость спутника
+    satellite_param.PosVel = sat_position;
+    satellite_param.PosTimeTag = satellite_time as i32;
 }
 
 /// Set satellite CN0 based on power list and elevation
