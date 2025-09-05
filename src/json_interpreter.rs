@@ -1480,7 +1480,7 @@ fn set_output_param(object: *mut JsonObject, output_param: &mut OutputParam) -> 
                     output_param.SampleFreq = (get_double_value(current_object) * 1000.0).round() as i32;
                 },
                 13 => { // "centerFreq"
-                    output_param.CenterFreq = (get_double_value(current_object) * 1000.0).round() as i32;
+                    output_param.CenterFreq = (get_double_value(current_object) * 1_000_000.0).round() as i32; // МГц -> Гц
                 },
                 _ => {}
             }

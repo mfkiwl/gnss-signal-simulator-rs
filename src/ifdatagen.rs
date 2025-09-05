@@ -40,7 +40,7 @@ use crate::avx512_intrinsics::SafeAvx512Processor;
 #[cfg(feature = "gpu")]
 use crate::cuda_acceleration::{CudaGnssAccelerator, HybridAccelerator};
 use crate::gnsstime::{utc_to_gps_time, utc_to_glonass_time_corrected, utc_to_bds_time};
-use crate::coordinate::{lla_to_ecef, speed_local_to_ecef, calc_conv_matrix_lla};
+use crate::coordinate::{lla_to_ecef, ecef_to_lla, speed_local_to_ecef, calc_conv_matrix_lla};
 use crate::{lnavbit::LNavBit, l5cnavbit::L5CNavBit, gnavbit::GNavBit};
 use crate::{cnavbit::CNavBit as ActualCNavBit, cnav2bit::CNav2Bit as ActualCNav2Bit};
 use crate::{d1d2navbit::D1D2NavBit as ActualD1D2NavBit, inavbit::INavBit as ActualINavBit, fnavbit::FNavBit as ActualFNavBit};
@@ -787,7 +787,7 @@ impl IFDataGen {
         self.calculate_visible_satellites(cur_pos, glonass_time)?;
         println!("[DEBUG]\tVisible satellites calculation completed");
 
-        let mut sat_if_signals = self.create_satellite_signals(&nav_bit_array)?;
+        let mut sat_if_signals = self.create_satellite_signals(&nav_bit_array, cur_pos)?;
         println!("[DEBUG]\tSatellite signals created successfully");
         
         // Парсим время траектории из JSON пресета (используем хардкод пока)
@@ -1457,7 +1457,7 @@ impl IFDataGen {
         Ok(())
     }
 
-    fn create_satellite_signals(&mut self, nav_bit_array: &Vec<Option<UnifiedNavData>>) -> Result<Vec<Option<Box<SatIfSignal>>>, Box<dyn std::error::Error>> {
+    fn create_satellite_signals(&mut self, nav_bit_array: &Vec<Option<UnifiedNavData>>, cur_pos: KinematicInfo) -> Result<Vec<Option<Box<SatIfSignal>>>, Box<dyn std::error::Error>> {
         let mut sat_if_signals: Vec<Option<Box<SatIfSignal>>> = (0..TOTAL_SAT_CHANNEL).map(|_| None).collect();
         let mut total_channel_number = 0;
 
@@ -1477,9 +1477,9 @@ impl IFDataGen {
         self.display_signals_summary_table(gps_signal_count, bds_signal_count, gal_signal_count, glo_signal_count);
 
         // Create satellite signal instances for each system
-        total_channel_number = self.create_gps_signals(&mut sat_if_signals, total_channel_number, nav_bit_array)?;
-        total_channel_number = self.create_bds_signals(&mut sat_if_signals, total_channel_number, nav_bit_array)?;
-        total_channel_number = self.create_galileo_signals(&mut sat_if_signals, total_channel_number, nav_bit_array)?;
+        total_channel_number = self.create_gps_signals(&mut sat_if_signals, total_channel_number, nav_bit_array, cur_pos)?;
+        total_channel_number = self.create_bds_signals(&mut sat_if_signals, total_channel_number, nav_bit_array, cur_pos)?;
+        total_channel_number = self.create_galileo_signals(&mut sat_if_signals, total_channel_number, nav_bit_array, cur_pos)?;
         total_channel_number = self.create_glonass_signals(&mut sat_if_signals, total_channel_number, nav_bit_array)?;
 
         Ok(sat_if_signals)
@@ -1532,7 +1532,7 @@ impl IFDataGen {
         println!("[INFO]\tSignal Duration: {:.2} s", total_duration_ms as f64 / 1000.0);
         println!("[INFO]\tSignal Size: {:.2} MB", total_mb);
         println!("[INFO]\tSignal Data format: {}", if self.output_param.Format == OutputFormat::OutputFormatIQ4 { "IQ4" } else { "IQ8" });
-        println!("[INFO]\tSignal Center freq: {:.4} MHz", self.output_param.CenterFreq as f64 / 1000.0);
+        println!("[INFO]\tSignal Center freq: {:.4} MHz", self.output_param.CenterFreq as f64 / 1_000_000.0);
         println!("[INFO]\tSignal Sample rate: {:.2} MHz", self.output_param.SampleFreq);
         
         if debug_mode {
@@ -2717,9 +2717,30 @@ impl IFDataGen {
     // Вспомогательные методы для assign_parameters (упрощенная версия)
     // В полной реализации здесь должен быть полный парсер JSON параметров
 
-    fn create_gps_signals(&self, sat_if_signals: &mut Vec<Option<Box<SatIfSignal>>>, mut total_channel_number: usize, nav_bit_array: &Vec<Option<UnifiedNavData>>) -> Result<usize, Box<dyn std::error::Error>> {
+    fn create_gps_signals(&mut self, sat_if_signals: &mut Vec<Option<Box<SatIfSignal>>>, mut total_channel_number: usize, nav_bit_array: &Vec<Option<UnifiedNavData>>, cur_pos: KinematicInfo) -> Result<usize, Box<dyn std::error::Error>> {
         for i in 0..self.gps_sat_number {
             if let Some(eph) = &self.gps_eph_visible[i] {
+                // Рассчитываем параметры спутника для правильного доплера
+                let position_lla = ecef_to_lla(&cur_pos); 
+                let gps_time = self.cur_time; // используем текущее время
+                
+                let default_iono = IonoParam {
+                    a0: 0.0, a1: 0.0, a2: 0.0, a3: 0.0,
+                    b0: 0.0, b1: 0.0, b2: 0.0, b3: 0.0,
+                    flag: 0
+                };
+                let iono_param = self.nav_data.get_gps_iono().unwrap_or(&default_iono);
+                
+                crate::satellite_param::get_satellite_param(
+                    &cur_pos,
+                    &position_lla,
+                    &gps_time,
+                    GnssSystem::GpsSystem,
+                    eph,
+                    &iono_param,
+                    &mut self.gps_sat_param[eph.svid as usize - 1]
+                );
+                
                 // Check each GPS signal
                 let gps_signals = [
                     (SIGNAL_INDEX_L1CA, crate::types::GEN_L1CA),
@@ -2735,6 +2756,10 @@ impl IFDataGen {
                         // Добавляем Doppler для создания реальной IF частоты
                         let doppler = get_doppler(&self.gps_sat_param[eph.svid as usize - 1], signal_index);
                         let if_freq = ((center_freq + doppler) - self.output_param.CenterFreq as f64) as i32;
+                        if eph.svid <= 3 { // Отладка для первых 3 спутников
+                            println!("[DEBUG] GPS G{:02}: center_freq={:.0} Hz, doppler={:.1} Hz, CenterFreq={} Hz, if_freq={} Hz", 
+                                    eph.svid, center_freq, doppler, self.output_param.CenterFreq, if_freq);
+                        }
                         let mut new_signal = SatIfSignal::new(self.output_param.SampleFreq, if_freq, GnssSystem::GpsSystem, signal_index as i32, eph.svid);
                         
                         let nav_data = self.get_nav_data(GnssSystem::GpsSystem, signal_index as i32, nav_bit_array);
@@ -2751,9 +2776,33 @@ impl IFDataGen {
         Ok(total_channel_number)
     }
 
-    fn create_bds_signals(&self, sat_if_signals: &mut Vec<Option<Box<SatIfSignal>>>, mut total_channel_number: usize, nav_bit_array: &Vec<Option<UnifiedNavData>>) -> Result<usize, Box<dyn std::error::Error>> {
+    fn create_bds_signals(&mut self, sat_if_signals: &mut Vec<Option<Box<SatIfSignal>>>, mut total_channel_number: usize, nav_bit_array: &Vec<Option<UnifiedNavData>>, cur_pos: KinematicInfo) -> Result<usize, Box<dyn std::error::Error>> {
         for i in 0..self.bds_sat_number {
             if let Some(eph) = &self.bds_eph_visible[i] {
+                // Рассчитываем параметры спутника для правильного доплера
+                let position_lla = ecef_to_lla(&cur_pos); 
+                let bds_time = self.cur_time; // используем текущее время
+                
+                // BeiDou использует модель NeQuick или Klobuchar (используем GPS параметры как fallback)
+                let default_iono = IonoParam {
+                    a0: 0.0, a1: 0.0, a2: 0.0, a3: 0.0,
+                    b0: 0.0, b1: 0.0, b2: 0.0, b3: 0.0,
+                    flag: 0
+                };
+                let iono_param = self.nav_data.get_bds_iono()
+                    .or_else(|| self.nav_data.get_gps_iono())
+                    .unwrap_or(&default_iono);
+                
+                crate::satellite_param::get_satellite_param(
+                    &cur_pos,
+                    &position_lla,
+                    &bds_time,
+                    GnssSystem::BdsSystem,
+                    eph,
+                    &iono_param,
+                    &mut self.bds_sat_param[eph.svid as usize - 1]
+                );
+                
                 // Check each BDS signal
                 let bds_signals = [
                     (SIGNAL_INDEX_B1C, crate::types::GEN_B1C, 0),
@@ -2771,6 +2820,10 @@ impl IFDataGen {
                         // Добавляем Doppler для создания реальной IF частоты
                         let doppler = get_doppler(&self.bds_sat_param[eph.svid as usize - 1], signal_index);
                         let if_freq = ((center_freq + doppler) - self.output_param.CenterFreq as f64) as i32;
+                        if eph.svid <= 3 { // Отладка для первых 3 спутников
+                            println!("[DEBUG] BDS C{:02}: center_freq={:.0} Hz, doppler={:.1} Hz, CenterFreq={} Hz, if_freq={} Hz", 
+                                    eph.svid, center_freq, doppler, self.output_param.CenterFreq, if_freq);
+                        }
                         let mut new_signal = SatIfSignal::new(self.output_param.SampleFreq, if_freq, GnssSystem::BdsSystem, signal_index as i32, eph.svid);
                         
                         let nav_data = self.get_nav_data(GnssSystem::BdsSystem, signal_index as i32, nav_bit_array);
@@ -2786,9 +2839,33 @@ impl IFDataGen {
         Ok(total_channel_number)
     }
 
-    fn create_galileo_signals(&self, sat_if_signals: &mut Vec<Option<Box<SatIfSignal>>>, mut total_channel_number: usize, nav_bit_array: &Vec<Option<UnifiedNavData>>) -> Result<usize, Box<dyn std::error::Error>> {
+    fn create_galileo_signals(&mut self, sat_if_signals: &mut Vec<Option<Box<SatIfSignal>>>, mut total_channel_number: usize, nav_bit_array: &Vec<Option<UnifiedNavData>>, cur_pos: KinematicInfo) -> Result<usize, Box<dyn std::error::Error>> {
         for i in 0..self.gal_sat_number {
             if let Some(eph) = &self.gal_eph_visible[i] {
+                // Рассчитываем параметры спутника для правильного доплера
+                let position_lla = ecef_to_lla(&cur_pos); 
+                let gal_time = self.cur_time; // используем текущее время
+                
+                // Galileo использует модель NeQuick (используем GPS параметры как fallback)
+                let default_iono = IonoParam {
+                    a0: 0.0, a1: 0.0, a2: 0.0, a3: 0.0,
+                    b0: 0.0, b1: 0.0, b2: 0.0, b3: 0.0,
+                    flag: 0
+                };
+                let iono_param = self.nav_data.get_galileo_iono()
+                    .or_else(|| self.nav_data.get_gps_iono())
+                    .unwrap_or(&default_iono);
+                
+                crate::satellite_param::get_satellite_param(
+                    &cur_pos,
+                    &position_lla,
+                    &gal_time,
+                    GnssSystem::GalileoSystem,
+                    eph,
+                    &iono_param,
+                    &mut self.gal_sat_param[eph.svid as usize - 1]
+                );
+                
                 // Check each Galileo signal  
                 let gal_signals = [
                     (SIGNAL_INDEX_E1, crate::types::GEN_E1, 0),
@@ -2803,6 +2880,10 @@ impl IFDataGen {
                         // Добавляем Doppler для создания реальной IF частоты
                         let doppler = get_doppler(&self.gal_sat_param[eph.svid as usize - 1], signal_index);
                         let if_freq = ((center_freq + doppler) - self.output_param.CenterFreq as f64) as i32;
+                        if eph.svid <= 3 { // Отладка для первых 3 спутников
+                            println!("[DEBUG] GAL E{:02}: center_freq={:.0} Hz, doppler={:.1} Hz, CenterFreq={} Hz, if_freq={} Hz", 
+                                    eph.svid, center_freq, doppler, self.output_param.CenterFreq, if_freq);
+                        }
                         let mut new_signal = SatIfSignal::new(self.output_param.SampleFreq, if_freq, GnssSystem::GalileoSystem, signal_index as i32, eph.svid);
                         
                         let nav_data = self.get_nav_data(GnssSystem::GalileoSystem, signal_index as i32, nav_bit_array);
@@ -2944,9 +3025,9 @@ impl IFDataGen {
                         self.output_param.SampleFreq = (sample_freq * 1e6) as i32;
                     }
                     
-                    // Парсим центральную частоту (centerFreq в MHz -> kHz)
+                    // Парсим центральную частоту (centerFreq в MHz -> Hz)
                     if let Some(center_freq) = output.get("centerFreq").and_then(|v| v.as_f64()) {
-                        self.output_param.CenterFreq = (center_freq * 1000.0) as i32;
+                        self.output_param.CenterFreq = (center_freq * 1_000_000.0) as i32;
                     }
                     
                     // Парсим формат
@@ -3465,7 +3546,7 @@ impl IFDataGen {
         self.calculate_visible_satellites(cur_pos, glonass_time)?;
 
         // Создаем спутниковые сигналы и генерируем данные
-        let mut sat_if_signals = self.create_satellite_signals(&nav_bit_array)?;
+        let mut sat_if_signals = self.create_satellite_signals(&nav_bit_array, cur_pos)?;
         let trajectory_time_s = self.parse_trajectory_time_from_json(&self.output_param.config_filename).unwrap_or(10.0);
         self.generate_if_signal(&mut if_file, &mut sat_if_signals, cur_pos, trajectory_time_s)?;
 
