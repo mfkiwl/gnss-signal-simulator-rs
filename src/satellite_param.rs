@@ -340,7 +340,11 @@ pub fn get_satellite_cn0(
                 match adjust {
                     ElevationAdjust::ElevationAdjustNone => {},
                     ElevationAdjust::ElevationAdjustSinSqrtFade => {
-                        cn0 -= (1.0 - satellite_param.Elevation.sqrt()) * 25.0;
+                        // ИСПРАВЛЕНИЕ: Используем sin(elevation) вместо sqrt(elevation)
+                        // Elevation в радианах: 0° = 0, 90° = π/2
+                        // При elevation = 0° → sin(0) = 0 → sqrt(0) = 0 → коррекция = -25 дБ
+                        // При elevation = 90° → sin(π/2) = 1 → sqrt(1) = 1 → коррекция = 0 дБ
+                        cn0 -= (1.0 - satellite_param.Elevation.sin().sqrt()) * 25.0;
                     },
                 }
             } else {

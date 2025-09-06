@@ -1778,33 +1778,30 @@ impl IFDataGen {
         // МАТЕМАТИЧЕСКАЯ МОДЕЛЬ РАСЧЕТА НАЧАЛЬНОГО КОЭФФИЦИЕНТА УСИЛЕНИЯ:
         // Амплитуда сигнала одного спутника зависит от его мощности (CN0) и частоты дискретизации:
         // 
-        // single_sat_amplitude = 10^((CN0_scaled - 3000) / 1000) / sqrt(sample_rate)
+        // single_sat_amplitude = 10^((CN0_scaled - REFERENCE_CN0) / 1000) / sqrt(sample_rate)
         // 
         // где:
         // - CN0_scaled = CN0 * 100 (например, 47 dB-Hz → 4700)
-        // - 3000 - опорное значение для нормализации мощности
+        // - REFERENCE_CN0 = 4500 (45 dB-Hz) - типичное значение для нормализации
         // - sample_rate = samples_per_ms * 1000 (частота дискретизации в Гц)
         // 
         // Пример расчета:
         // CN0 = 47 dB-Hz → CN0_scaled = 4700
         // sample_rate = 2_048_000 Hz (2.048 МГц)
-        // single_amplitude = 10^((4700-3000)/1000) / sqrt(2048000) = 10^1.7 / 1431 ≈ 0.035
+        // single_amplitude = 10^((4700-4500)/1000) / sqrt(2048000) = 10^0.2 / 1431 ≈ 0.0011
         
-        let cn0_scaled = self.power_control.init_cn0 * 100.0;  // Масштабируем CN0 (47 → 4700)
-        let single_sat_amplitude = 10.0_f64.powf((cn0_scaled - 3000.0) / 1000.0) / (samples_per_ms as f64).sqrt();
+        const REFERENCE_CN0: f64 = 4500.0; // 45 dB-Hz опорное значение вместо 3000 (30 dB-Hz)
         
-        // КОГЕРЕНТНОЕ СЛОЖЕНИЕ СПУТНИКОВЫХ СИГНАЛОВ:
-        // При синфазном сложении N спутников их амплитуды складываются арифметически:
-        // total_amplitude = N * single_amplitude (худший случай - все сигналы в фазе)
-        // 
-        // Это отличается от некогерентного сложения, где амплитуды складывались бы как:
-        // total_amplitude = sqrt(N) * single_amplitude (случайные фазы)
+        // УПРОЩЕННЫЙ AGC НА ОСНОВЕ КОЛИЧЕСТВА АКТИВНЫХ СПУТНИКОВ
+        // Используем уже известное количество генерируемых сигналов вместо повторной проверки
+        let cn0_scaled = self.power_control.init_cn0 * 100.0;
+        let single_sat_amplitude = 10.0_f64.powf((cn0_scaled - REFERENCE_CN0) / 1000.0) / (samples_per_ms as f64).sqrt();
         let total_expected_amplitude = active_satellites as f64 * single_sat_amplitude;
         
         // ЦЕЛЕВАЯ АМПЛИТУДА ДЛЯ БЕЗОПАСНОЙ РАБОТЫ:
-        // Оставляем 30% запас для предотвращения клиппинга при флуктуациях сигнала.
-        // Максимальная амплитуда цифрового сигнала = ±1.0, целевая = 0.7
-        let target_amplitude = 0.7; // 70% от максимальной амплитуды
+        // Оставляем 10% запас для предотвращения клиппинга при флуктуациях сигнала.
+        // Максимальная амплитуда цифрового сигнала = ±1.0, целевая = 0.9
+        let target_amplitude = 0.9; // 90% от максимальной амплитуды
         
         // РАСЧЕТ НАЧАЛЬНОГО КОЭФФИЦИЕНТА AGC:
         // agc_gain = target_amplitude / total_expected_amplitude
@@ -1829,8 +1826,7 @@ impl IFDataGen {
         
         println!("🎚️  AGC: Начальный коэффициент: {:.3} (спутников: {}, ожидаемая амплитуда: {:.3}, целевая: {:.1})", 
                  agc_gain, active_satellites, total_expected_amplitude, target_amplitude);
-        println!("📊 AGC: Одиночный спутник: CN0={:.1} dB-Hz → амплитуда {:.4}", 
-                 self.power_control.init_cn0, single_sat_amplitude);
+        println!("📊 AGC: Расчёт на основе {} активных генерируемых сигналов", active_satellites);
         
         // ОСНОВНОЙ ЦИКЛ: Обработка по блокам
         let num_blocks = (total_duration_ms + BLOCK_SIZE_MS - 1) / BLOCK_SIZE_MS;
@@ -1874,16 +1870,19 @@ impl IFDataGen {
             // Буфер для накопления данных блока (не весь файл!)
             let mut block_signal = vec![ComplexNumber::from_parts(0.0, 0.0); block_samples];
             
-            // Накапливаем сигналы всех спутников для этого блока с применением AGC
+            // Накапливаем сигналы всех спутников для этого блока с глобальным AGC
+            // TODO: Реализовать индивидуальную амплитуду для каждого спутника в будущем
             for sample_idx in 0..block_samples {
                 for sat_option in sat_if_signals.iter() {
                     if let Some(ref satellite) = sat_option {
                         if let Some(block_data) = &satellite.block_data {
                             if sample_idx < block_data.len() {
                                 let mut sat_sample = block_data[sample_idx];
-                                // ПРИМЕНЯЕМ AGC К КАЖДОМУ СПУТНИКУ ПЕРЕД СУММИРОВАНИЕМ
+                                
+                                // ПРИМЕНЯЕМ ГЛОБАЛЬНЫЙ AGC К КАЖДОМУ СПУТНИКУ ПЕРЕД СУММИРОВАНИЕМ
                                 sat_sample.real *= agc_gain;
                                 sat_sample.imag *= agc_gain;
+                                
                                 block_signal[sample_idx].real += sat_sample.real;
                                 block_signal[sample_idx].imag += sat_sample.imag;
                             }
