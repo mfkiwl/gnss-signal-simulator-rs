@@ -111,7 +111,7 @@ impl BCNav2Bit {
             }
         }
 
-        0
+        svid
     }
 
     // 288 bits subframe information divided into 12 WORDs

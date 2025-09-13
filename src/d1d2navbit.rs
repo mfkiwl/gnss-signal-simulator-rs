@@ -728,29 +728,25 @@ impl D1D2NavBit {
     }
 
     fn fill_bds_health_page(almanac: &[GpsAlmanac], length: usize, stream: &mut [u32; 9]) -> i32 {
-        for i in 0..length.min(almanac.len()) {
-            let health = if almanac[i].valid == 1 {
-                0
-            } else {
-                0x1ff + almanac[i].health as u32
-            };
-
-            let index0 = i * 9 + 20; // first bit position
-            let index1 = index0 + 8; // last bit position
-
-            if (index0 / 22) == (index1 / 22) {
-                // in same WORD
-                stream[index0 / 22] |= COMPOSE_BITS!(health, (21 - (index1 % 22)), 9);
-            } else {
-                stream[index1 / 22] |=
-                    COMPOSE_BITS!(health, (21 - (index1 % 22)), ((index1 % 22) + 1)); // fill in LSB
-                let health = health >> ((index1 % 22) + 1);
-                stream[index0 / 22] |= COMPOSE_BITS!(health, 0, (8 - (index0 % 22)));
-                // fill in MSB
+        // Упрощённая безопасная раскладка 9‑битовых health индикаторов последовательно по 24‑битным словам
+        let mut bit_cursor: usize = 0; // от 0 до 9*24-1
+        let count = length.min(almanac.len());
+        for i in 0..count {
+            let mut health: u32 = if almanac[i].valid == 1 { 0 } else { 0x1FF };
+            for k in (0..9).rev() {
+                let bit = ((health >> k) & 1) as u32;
+                let word = bit_cursor / 24;
+                let pos = bit_cursor % 24; // 0..23 (MSB..LSB)
+                if word < stream.len() {
+                    // ставим бит в позицию (23-pos)
+                    stream[word] |= bit << (23 - pos);
+                }
+                bit_cursor += 1;
+                if bit_cursor >= stream.len() * 24 { break; }
             }
+            if bit_cursor >= stream.len() * 24 { break; }
         }
-
-        length.min(almanac.len()) as i32
+        count as i32
     }
 
     // Calculate BCH and XOR to lowest 4bit

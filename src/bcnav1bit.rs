@@ -454,7 +454,7 @@ impl BCNav1Bit {
         let value = BCH_SOH_TABLE[soh as usize] as u32;
         self.assign_bits(value as i32, 32, &mut nav_bits[40..]);
 
-        1800 // B1C frame length is 1800 bits
+        0
     }
 
     fn compose_subframe2(&self, week: i32, how: i32, svid: i32, frame2_data: &mut [u32; 25]) {

@@ -254,22 +254,27 @@ impl BCNav3Bit {
     // LDPC encode
     fn ldpc_encode(&self, symbols: &mut [i32], symbol_length: usize, matrix_gen: &str) {
         let mut parity_symbols = vec![0; symbol_length];
-        let mut matrix_index = 0;
+        let bytes = matrix_gen.as_bytes();
+        let mut matrix_index = 0usize;
 
-        // Calculate parity symbols
+        // Calculate parity symbols (защита от выхода за пределы матрицы)
         for i in 0..symbol_length {
             for j in 0..symbol_length {
-                let matrix_value = matrix_gen.chars().nth(matrix_index).unwrap() as u8 - b'0';
+                if matrix_index >= bytes.len() { break; }
+                let matrix_value = bytes[matrix_index].saturating_sub(b'0');
                 if matrix_value < 64 {
                     parity_symbols[i] ^= self.gf6_int_mul(symbols[j], matrix_value as i32);
                 }
                 matrix_index += 1;
             }
+            if matrix_index >= bytes.len() { break; }
         }
 
         // Append parity symbols to data symbols
         for i in 0..symbol_length {
-            symbols[i + symbol_length] = parity_symbols[i];
+            if i + symbol_length < symbols.len() {
+                symbols[i + symbol_length] = parity_symbols[i];
+            }
         }
     }
 

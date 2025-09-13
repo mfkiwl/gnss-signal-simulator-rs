@@ -150,7 +150,10 @@ impl CNavBit {
                 + self.convolution_encode_pair(&mut conv_encode_bits, &mut encode_word);
             bit_count += 2;
             if (bit_count % 32) == 0 {
-                encode_word = encode_data[bit_count >> 5];
+                let idx = bit_count >> 5;
+                if idx < encode_data.len() as i32 {
+                    encode_word = encode_data[idx as usize];
+                }
             }
             i += 1;
         }

@@ -77,7 +77,7 @@ impl FNavBit {
         let subframe = (tow % 1200) / 50; // two round of 600s frame (24 subframes) to hold 36 almanacs
         let page = (tow % 50) / 10;
 
-        let mut encode_data = [0u32; 7];
+        let mut encode_data = [0u32; 8];
         self.get_page_data(svid, page, subframe, gst as u32, &mut encode_data);
         let crc_result = Self::crc24q_encode(&encode_data, 248);
 
@@ -425,12 +425,12 @@ impl FNavBit {
         0
     }
 
-    fn get_page_data(&self, svid: i32, page: i32, subframe: i32, gst: u32, data: &mut [u32; 7]) {
+    fn get_page_data(&self, svid: i32, page: i32, subframe: i32, gst: u32, data: &mut [u32; 8]) {
         match page {
             0 => {
                 // page 1
                 let tow = gst & 0xFFFFF; // Extract 20-bit TOW
-                data.copy_from_slice(&self.gal_eph_data[(svid - 1) as usize][0]);
+                data[..7].copy_from_slice(&self.gal_eph_data[(svid - 1) as usize][0]);
                 // Add TOW (20 bits)
                 data[0] |= COMPOSE_BITS!(tow >> 4, 0, 16); // TOW upper 16 bits
                 data[1] |= COMPOSE_BITS!(tow, 28, 4); // TOW lower 4 bits
@@ -440,22 +440,25 @@ impl FNavBit {
                 // add GST (32 bits)
                 data[5] |= COMPOSE_BITS!(gst >> 27, 0, 5); // GST upper 5 bits
                 data[6] |= COMPOSE_BITS!(gst, 5, 27); // GST lower 27 bits
+                data[7] = 0; // reserved
             }
             1 => {
                 // page 2
-                data.copy_from_slice(&self.gal_eph_data[(svid - 1) as usize][1]);
+                data[..7].copy_from_slice(&self.gal_eph_data[(svid - 1) as usize][1]);
                 data[6] = gst;
+                data[7] = 0;
             }
             2 => {
                 // page 3
-                data.copy_from_slice(&self.gal_eph_data[(svid - 1) as usize][2]);
+                data[..7].copy_from_slice(&self.gal_eph_data[(svid - 1) as usize][2]);
                 // add GST
                 data[5] |= COMPOSE_BITS!(gst >> 24, 0, 8);
                 data[6] |= COMPOSE_BITS!(gst, 8, 24);
+                data[7] = 0;
             }
             3 => {
                 // page 4
-                data.copy_from_slice(&self.gal_eph_data[(svid - 1) as usize][3]);
+                data[..7].copy_from_slice(&self.gal_eph_data[(svid - 1) as usize][3]);
                 // add GST-UTC
                 data[1] |= self.gal_utc_data[0];
                 data[2] = self.gal_utc_data[1];
@@ -463,16 +466,18 @@ impl FNavBit {
                 data[4] = self.gal_utc_data[3];
                 // add TOW
                 data[6] |= COMPOSE_BITS!(gst, 5, 20);
+                data[7] = 0;
             }
             4 => {
                 // page 5/6
-                data.copy_from_slice(
+                data[..7].copy_from_slice(
                     &self.gal_alm_data[(subframe / 2) as usize][(subframe & 1) as usize],
                 );
+                data[7] = 0;
             }
             _ => {
                 // Unknown page, fill with zeros
-                for i in 0..7 {
+                for i in 0..8 {
                     data[i] = 0;
                 }
             }

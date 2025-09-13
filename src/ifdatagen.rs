@@ -318,6 +318,7 @@ pub trait NavBitTrait {
         nav_bits: &mut [i32],
     ) -> i32;
     fn set_ephemeris(&mut self, svid: i32, eph: &GpsEphemeris);
+    fn set_glonass_ephemeris(&mut self, _svid: i32, _eph: &GlonassEphemeris) {}
     fn set_almanac(&mut self, alm: &[GpsAlmanac]);
     fn set_iono_utc(&mut self, iono_param: Option<&IonoParam>, utc_param: Option<&UtcParam>);
     fn get_type(&self) -> NavDataType;
@@ -741,8 +742,9 @@ impl NavBitTrait for GNavBit {
         // Заглушка - избегаем бесконечной рекурсии
         0
     }
-    fn set_ephemeris(&mut self, svid: i32, eph: &GpsEphemeris) {
-        self.set_ephemeris(svid, eph);
+    fn set_ephemeris(&mut self, _svid: i32, _eph: &GpsEphemeris) {}
+    fn set_glonass_ephemeris(&mut self, svid: i32, eph: &GlonassEphemeris) {
+        GNavBit::set_glonass_ephemeris(self, svid, eph);
     }
     fn set_almanac(&mut self, alm: &[GpsAlmanac]) {
         self.set_almanac(alm);
@@ -1580,11 +1582,8 @@ impl IFDataGen {
 
             if let Some(ref eph) = self.glo_eph[i - 1] {
                 if eph.flag != 0 {
-                    if let Some(ref mut nav_bit) = nav_bit_array[DataBitType::DataBitGNav as usize]
-                    {
-                        // Convert GLONASS ephemeris to GPS format for compatibility
-                        let gps_eph = self.convert_glonass_to_gps_ephemeris(eph);
-                        nav_bit.set_ephemeris(i as i32, &gps_eph);
+                    if let Some(ref mut nav_bit) = nav_bit_array[DataBitType::DataBitGNav as usize] {
+                        nav_bit.set_glonass_ephemeris(i as i32, eph);
                     }
                     glo_eph_count += 1;
                 }

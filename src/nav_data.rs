@@ -175,6 +175,15 @@ impl NavData {
         }
     }
 
+    /// Установить эфемериды ГЛОНАСС
+    #[inline]
+    pub fn set_glonass_ephemeris(&mut self, svid: i32, eph: &GlonassEphemeris) -> i32 {
+        match self {
+            NavData::GNav(nav) => nav.set_glonass_ephemeris(svid, eph),
+            _ => 0,
+        }
+    }
+
     /// Установить альманах  
     #[inline]
     pub fn set_almanac(&mut self, alm: &[GpsAlmanac]) -> i32 {
