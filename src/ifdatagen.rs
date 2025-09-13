@@ -734,10 +734,8 @@ impl IFDataGen {
                 &enabled_systems // Только BeiDou система
             );
             
-            // Копируем загруженные эфемериды в наши данные
-            self.copy_ephemeris_from_json_nav_data(&c_nav_data, utc_time); // GPS эфемериды
-            self.copy_beidou_ephemeris_from_json_nav_data(&c_nav_data, utc_time); // BeiDou эфемериды
-            self.copy_galileo_ephemeris_from_json_nav_data(&c_nav_data, utc_time); // Galileo эфемериды
+            // ГЛОБАЛЬНЫЙ ВЫБОР ЕДИНОЙ ЭПОХИ ДЛЯ ВСЕХ СИСТЕМ
+            self.select_global_epochs_and_fill(&c_nav_data, utc_time);
         } else {
             println!("[ERROR]\tRINEX file not found: {}", rinex_file);
         }
@@ -823,6 +821,68 @@ impl IFDataGen {
         }
         
         nav_bit_array
+    }
+
+    // Выбор глобальной эпохи (week,toe) в GPS секундах, согласованной между системами.
+    // Для каждой системы выбирается ближайшая эпоха к глобальной в пределах окна (±2ч),
+    // затем массивы self.*_eph заполняются эфемеридами только этой эпохи.
+    fn select_global_epochs_and_fill(&mut self, c_nav_data: &crate::json_interpreter::CNavData, utc_time: UtcTime) {
+        use std::collections::{HashMap, HashSet};
+        // Группировка по эпохам внутри каждой системы
+        let mut gps_by_epoch: HashMap<(i32,i32), HashMap<u8, GpsEphemeris>> = HashMap::new();
+        for eph in &c_nav_data.gps_ephemeris { gps_by_epoch.entry((eph.week, eph.toe)).or_default().insert(eph.svid, *eph); }
+        let mut bds_by_epoch: HashMap<(i32,i32), HashMap<u8, crate::types::BeiDouEphemeris>> = HashMap::new();
+        for eph in &c_nav_data.beidou_ephemeris { bds_by_epoch.entry((eph.week, eph.toe)).or_default().insert(eph.svid, *eph); }
+        let mut gal_by_epoch: HashMap<(i32,i32), HashMap<u8, GpsEphemeris>> = HashMap::new();
+        for eph in &c_nav_data.galileo_ephemeris { gal_by_epoch.entry((eph.week, eph.toe)).or_default().insert(eph.svid, *eph); }
+
+        // Кандидаты глобальной эпохи: все эпохи всех систем + целевое время пресета
+        let mut candidates: HashSet<i64> = HashSet::new();
+        let gps_abs = |w:i32,t:i32| -> i64 { (w as i64)*604800 + (t as i64) };
+        let bds_abs = |w:i32,t:i32| -> i64 { ((w as i64)+1356)*604800 + (t as i64) }; // игнор 14с
+        let gal_abs = |w:i32,t:i32| -> i64 { ((w as i64)+1024)*604800 + (t as i64) };
+        for (&(w,t),_) in gps_by_epoch.iter() { candidates.insert(gps_abs(w,t)); }
+        for (&(w,t),_) in bds_by_epoch.iter() { candidates.insert(bds_abs(w,t)); }
+        for (&(w,t),_) in gal_by_epoch.iter() { candidates.insert(gal_abs(w,t)); }
+        let tgt_gps = utc_to_gps_time(utc_time, false);
+        let tgt_abs = (tgt_gps.Week as i64)*604800 + (tgt_gps.MilliSeconds as i64)/1000;
+        candidates.insert(tgt_abs);
+
+        // Оценка кандидатов: максимизируем суммарное число SV в окне ±7200с, tie-break — минимальная суммарная |Δt|
+        let window: i64 = 7200;
+        let mut best_cand: Option<i64> = None; let mut best_score: i32 = -1; let mut best_sum_diff: i64 = i64::MAX;
+        for &cand in &candidates {
+            // Оценка inline для каждой системы (без замыканий с разными типами)
+            let (gps_n, gps_d) = { let mut best: Option<i64> = None; let mut n=0; for (&(w,t),svmap) in &gps_by_epoch { let d=(gps_abs(w,t)-cand).abs(); if best.map_or(true, |bd| d<bd) { best=Some(d); n=svmap.len() as i32; } } if let Some(d)=best { if d<=window {(n,d)} else {(0,d)} } else {(0,i64::MAX)} };
+            let (bds_n, bds_d) = { let mut best: Option<i64> = None; let mut n=0; for (&(w,t),svmap) in &bds_by_epoch { let d=(bds_abs(w,t)-cand).abs(); if best.map_or(true, |bd| d<bd) { best=Some(d); n=svmap.len() as i32; } } if let Some(d)=best { if d<=window {(n,d)} else {(0,d)} } else {(0,i64::MAX)} };
+            let (gal_n, gal_d) = { let mut best: Option<i64> = None; let mut n=0; for (&(w,t),svmap) in &gal_by_epoch { let d=(gal_abs(w,t)-cand).abs(); if best.map_or(true, |bd| d<bd) { best=Some(d); n=svmap.len() as i32; } } if let Some(d)=best { if d<=window {(n,d)} else {(0,d)} } else {(0,i64::MAX)} };
+            let score = gps_n + bds_n + gal_n;
+            let sum_diff = gps_d.saturating_add(bds_d).saturating_add(gal_d);
+            if score > best_score || (score==best_score && sum_diff < best_sum_diff) { best_score=score; best_sum_diff=sum_diff; best_cand=Some(cand); }
+        }
+
+        // Заполняем выходные массивы по лучшему кандидату
+        self.gps_eph.fill(None); self.bds_eph.fill(None); self.gal_eph.fill(None);
+        if let Some(cand) = best_cand {
+            // GPS
+            if !gps_by_epoch.is_empty() {
+                let mut best: Option<((i32,i32), i64)> = None; for (&(w,t),_) in &gps_by_epoch { let d=(gps_abs(w,t)-cand).abs(); if best.map_or(true, |(_,bd)| d<bd) { best=Some(((w,t),d)); } }
+                if let Some(((w,t),d)) = best { if d<=window { if let Some(map)=gps_by_epoch.get(&(w,t)) { for (&svid,eph) in map { let idx=(svid as usize).saturating_sub(1); if idx<TOTAL_GPS_SAT { self.gps_eph[idx]=Some(*eph); } } println!("[EPOCH] GPS: week={}, toe={}, |Δt|={}s, sats={}", w, t, d, map.len()); } } }
+            }
+            // BDS
+            if !bds_by_epoch.is_empty() {
+                let mut best: Option<((i32,i32), i64)> = None; for (&(w,t),_) in &bds_by_epoch { let d=(bds_abs(w,t)-cand).abs(); if best.map_or(true, |(_,bd)| d<bd) { best=Some(((w,t),d)); } }
+                if let Some(((w,t),d)) = best { if d<=window { if let Some(map)=bds_by_epoch.get(&(w,t)) { for (&svid, bds) in map { let idx=(svid as usize).saturating_sub(1); if idx<TOTAL_BDS_SAT { self.bds_eph[idx]=Some(bds.to_gps_ephemeris()); } } println!("[EPOCH] BDS: week={}, toe={}, |Δt|={}s, sats={}", w, t, d, map.len()); } } }
+            }
+            // GAL
+            if !gal_by_epoch.is_empty() {
+                let mut best: Option<((i32,i32), i64)> = None; for (&(w,t),_) in &gal_by_epoch { let d=(gal_abs(w,t)-cand).abs(); if best.map_or(true, |(_,bd)| d<bd) { best=Some(((w,t),d)); } }
+                if let Some(((w,t),d)) = best { if d<=window { if let Some(map)=gal_by_epoch.get(&(w,t)) { for (&svid,eph) in map { let idx=(svid as usize).saturating_sub(1); if idx<TOTAL_GAL_SAT { self.gal_eph[idx]=Some(*eph); } } println!("[EPOCH] GAL: week={}, toe={}, |Δt|={}s, sats={}", w, t, d, map.len()); } } }
+            }
+            println!("[EPOCH] Global candidate (GPS sec): {} (score={}, sum|Δt|={}s)", cand, best_score, best_sum_diff);
+        } else {
+            println!("[WARN] No global epoch candidate available");
+        }
     }
 
 
