@@ -38,19 +38,19 @@ pub struct CNavBit {
     // Arrays allocate bits align with the method of putting 276bits (without CRC) of a message into 9 DWORD according to following table
     // WORD sequence:  DWORD0  DWORD1  DWORD2  DWORD3  DWORD4  DWORD5  DWORD6  DWORD7  DWORD8
     // bit order:       1-20   21-52   53-84   85-116 117-148 149-180 181-212 213-244 245-276
-    pub eph_message: [[[u32; 9]; 2]; 32],    // 32 SVs, Message 10/11 each has 276bits from bit19 DWORD0 to bit0 DWORD8
-    pub midi_alm: [[u32; 4]; 32],            // 32 SVs, Message 37, 128bits from bit0 DWORD5 to bit0 DWORD8
-    pub reduced_alm: [u32; 32],              // 32 SVs, 31bit each
-    pub toa: u32,                           // TOA combines WNa (13bit) and toa (8bit) in DWORD4 21LSB
-    pub clock_message: [[u32; 4]; 32],       // 32 SVs, Clock fields (top through af2) 89bits from bit13 DWORD1 to bit21 DWORD4
-    pub delay_message: [[u32; 3]; 32],       // 32 SVs, Group delay fields 65bits from bit20 DWORD4 to bit20 DWORD6
-    pub iono_message: [u32; 3],              // 84bits from bit19 DWORD6 to bit0 DWORD8 (include last 12 reserved bits)
-    pub utc_message: [u32; 4],               // 98bits from bit20 DWORD4 to bit19 DWORD7
+    pub eph_message: [[[u32; 9]; 2]; 32], // 32 SVs, Message 10/11 each has 276bits from bit19 DWORD0 to bit0 DWORD8
+    pub midi_alm: [[u32; 4]; 32], // 32 SVs, Message 37, 128bits from bit0 DWORD5 to bit0 DWORD8
+    pub reduced_alm: [u32; 32],   // 32 SVs, 31bit each
+    pub toa: u32,                 // TOA combines WNa (13bit) and toa (8bit) in DWORD4 21LSB
+    pub clock_message: [[u32; 4]; 32], // 32 SVs, Clock fields (top through af2) 89bits from bit13 DWORD1 to bit21 DWORD4
+    pub delay_message: [[u32; 3]; 32], // 32 SVs, Group delay fields 65bits from bit20 DWORD4 to bit20 DWORD6
+    pub iono_message: [u32; 3], // 84bits from bit19 DWORD6 to bit0 DWORD8 (include last 12 reserved bits)
+    pub utc_message: [u32; 4],  // 98bits from bit20 DWORD4 to bit19 DWORD7
 
     // save convolutional encode state
     pub conv_encode_bits_l2: [u8; 32],
     pub conv_encode_bits_l5: [u8; 32],
-    
+
     // tracking masks for data validity
     pub ephemeris_mask: [bool; 32],
     pub almanac_mask: [bool; 32],
@@ -66,7 +66,6 @@ impl Default for CNavBit {
 
 impl CNavBit {
     pub fn new() -> Self {
-        
         CNavBit {
             eph_message: [[[0; 9]; 2]; 32],
             midi_alm: [[0; 4]; 32],
@@ -95,11 +94,17 @@ impl CNavBit {
     // each super frame has 8 message 31 each has 4 reduced amlamanc
     // each super frame has 32 message 37, message index 3 contains SV01 to SV24, message index 2 contains SV25 to SV32
     // Param is used to distinguish from Dc in L2C and D5 in L5 (0 for L2C)
-    pub fn get_frame_data(&mut self, start_time: GnssTime, svid: i32, param: i32, nav_bits: &mut [i32]) -> i32 {
+    pub fn get_frame_data(
+        &mut self,
+        start_time: GnssTime,
+        svid: i32,
+        param: i32,
+        nav_bits: &mut [i32],
+    ) -> i32 {
         let mut tow: i32;
-        
+
         let mut encode_data = [0u32; 9];
-        
+
         let mut encode_word: u32;
         let mut encode_message = [0u8; 75];
         let mut conv_encode_bits: u8;
@@ -132,12 +137,17 @@ impl CNavBit {
         let crc_result: u32 = Self::crc24q_encode(&encode_data, 276);
 
         // do convolution encode (EncodeData[0] bit22 through EncodeData[6] bit0)
-        conv_encode_bits = if param != 0 { self.conv_encode_bits_l5[(svid-1) as usize] } else { self.conv_encode_bits_l2[(svid-1) as usize] };
+        conv_encode_bits = if param != 0 {
+            self.conv_encode_bits_l5[(svid - 1) as usize]
+        } else {
+            self.conv_encode_bits_l2[(svid - 1) as usize]
+        };
         encode_word = encode_data[0] << 12; // move to MSB
         let mut bit_count = 12;
         let mut i = 0;
         while i < 276 / 2 {
-            encode_message[i/2] = (encode_message[i/2] << 4) + self.convolution_encode_pair(&mut conv_encode_bits, &mut encode_word);
+            encode_message[i / 2] = (encode_message[i / 2] << 4)
+                + self.convolution_encode_pair(&mut conv_encode_bits, &mut encode_word);
             bit_count += 2;
             if (bit_count % 32) == 0 {
                 encode_word = encode_data[bit_count >> 5];
@@ -145,14 +155,16 @@ impl CNavBit {
             i += 1;
         }
         encode_word = crc_result << 8;
-        while i < 300 / 2 { // encode CRC
-            encode_message[i/2] = (encode_message[i/2] << 4) + self.convolution_encode_pair(&mut conv_encode_bits, &mut encode_word);
+        while i < 300 / 2 {
+            // encode CRC
+            encode_message[i / 2] = (encode_message[i / 2] << 4)
+                + self.convolution_encode_pair(&mut conv_encode_bits, &mut encode_word);
             i += 1;
         }
         if param != 0 {
-            self.conv_encode_bits_l5[(svid-1) as usize] = conv_encode_bits;
+            self.conv_encode_bits_l5[(svid - 1) as usize] = conv_encode_bits;
         } else {
-            self.conv_encode_bits_l2[(svid-1) as usize] = conv_encode_bits;
+            self.conv_encode_bits_l2[(svid - 1) as usize] = conv_encode_bits;
         }
 
         // put into NavBits
@@ -160,7 +172,11 @@ impl CNavBit {
         for i in 0..75 {
             for j in 0..8 {
                 conv_encode_bits = 0x80 >> j;
-                nav_bits[nav_bit_index] = if (encode_message[i] & conv_encode_bits) != 0 { 1 } else { 0 };
+                nav_bits[nav_bit_index] = if (encode_message[i] & conv_encode_bits) != 0 {
+                    1
+                } else {
+                    0
+                };
                 nav_bit_index += 1;
             }
         }
@@ -172,7 +188,7 @@ impl CNavBit {
         if !(1..=32).contains(&svid) || eph.valid == 0 {
             return 0;
         }
-        let svid_idx = (svid-1) as usize;
+        let svid_idx = (svid - 1) as usize;
         // Destructure the fields to avoid multiple mutable borrows of self
         let eph_message_ptr = &mut self.eph_message[svid_idx] as *mut [[u32; 9]; 2];
         let clock_message_ptr = &mut self.clock_message[svid_idx] as *mut [u32; 4];
@@ -245,7 +261,7 @@ impl CNavBit {
         int_value = Self::unscale_int(utc_param.A2, -68);
         self.utc_message[1] |= COMPOSE_BITS!(int_value, 17, 7);
         self.utc_message[1] |= COMPOSE_BITS!(utc_param.TLS as i32, 9, 8);
-        self.utc_message[1] |= COMPOSE_BITS!(utc_param.tot as i32, 1, 8); // UtcParam.tot has scale factor of 2^12, so leaving 8LSB as 0 for scale factor 2^4 
+        self.utc_message[1] |= COMPOSE_BITS!(utc_param.tot as i32, 1, 8); // UtcParam.tot has scale factor of 2^12, so leaving 8LSB as 0 for scale factor 2^4
         self.utc_message[2] = COMPOSE_BITS!(utc_param.WN as i32, 12, 13);
         self.utc_message[2] |= COMPOSE_BITS!((utc_param.WNLSF as i32) >> 1, 0, 12);
         self.utc_message[3] = COMPOSE_BITS!(utc_param.WNLSF as i32, 31, 1);
@@ -255,11 +271,16 @@ impl CNavBit {
         0
     }
 
-    fn compose_eph_words(&mut self, ephemeris: &GpsEphemeris, eph_data: &mut [[u32; 9]; 2], clock_data: &mut [u32; 4], delay_data: &mut [u32; 3]) -> i32 {
+    fn compose_eph_words(
+        &mut self,
+        ephemeris: &GpsEphemeris,
+        eph_data: &mut [[u32; 9]; 2],
+        clock_data: &mut [u32; 4],
+        delay_data: &mut [u32; 3],
+    ) -> i32 {
         let mut int_value: i32;
         let mut uint_value: u32;
         let mut long_value: i64;
-        
 
         // Message Type 10
         eph_data[0][0] = (0x8b << 12) | ((ephemeris.svid as u32) << 6) | 10;
@@ -283,19 +304,31 @@ impl CNavBit {
         int_value = Self::unscale_int(ephemeris.delta_n_dot / std::f64::consts::PI, -57);
         eph_data[0][5] |= COMPOSE_BITS!(int_value, 8, 23);
         long_value = Self::unscale_long(ephemeris.M0 / std::f64::consts::PI, -32);
-        int_value = if (long_value & 0x100000000i64) != 0 { 1 } else { 0 };
+        int_value = if (long_value & 0x100000000i64) != 0 {
+            1
+        } else {
+            0
+        };
         uint_value = long_value as u32;
         eph_data[0][5] |= COMPOSE_BITS!(int_value, 7, 1);
         eph_data[0][5] |= COMPOSE_BITS!((uint_value >> 25) as i32, 0, 7);
         eph_data[0][6] = COMPOSE_BITS!(uint_value as i32, 7, 25);
         let ulong_value: u64 = Self::unscale_ulong(ephemeris.ecc, -34);
-        int_value = if (ulong_value & 0x100000000u64) != 0 { 1 } else { 0 };
+        int_value = if (ulong_value & 0x100000000u64) != 0 {
+            1
+        } else {
+            0
+        };
         uint_value = ulong_value as u32;
         eph_data[0][6] |= COMPOSE_BITS!(int_value, 6, 1);
         eph_data[0][6] |= COMPOSE_BITS!((uint_value >> 26) as i32, 0, 6);
         eph_data[0][7] = COMPOSE_BITS!(uint_value as i32, 6, 26);
         long_value = Self::unscale_long(ephemeris.w / std::f64::consts::PI, -32);
-        int_value = if (long_value & 0x100000000i64) != 0 { 1 } else { 0 };
+        int_value = if (long_value & 0x100000000i64) != 0 {
+            1
+        } else {
+            0
+        };
         uint_value = long_value as u32;
         eph_data[0][7] |= COMPOSE_BITS!(int_value, 5, 1);
         eph_data[0][7] |= COMPOSE_BITS!((uint_value >> 27) as i32, 0, 5);
@@ -306,18 +339,29 @@ impl CNavBit {
         uint_value = (ephemeris.toe / 300) as u32;
         eph_data[1][1] = COMPOSE_BITS!(uint_value as i32, 3, 11);
         long_value = Self::unscale_long(ephemeris.omega0 / std::f64::consts::PI, -32);
-        int_value = if (long_value & 0x100000000i64) != 0 { 1 } else { 0 };
+        int_value = if (long_value & 0x100000000i64) != 0 {
+            1
+        } else {
+            0
+        };
         uint_value = long_value as u32;
         eph_data[1][1] |= COMPOSE_BITS!(int_value, 2, 1);
         eph_data[1][1] |= COMPOSE_BITS!((uint_value >> 30) as i32, 0, 2);
         eph_data[1][2] = COMPOSE_BITS!(uint_value as i32, 2, 30);
         long_value = Self::unscale_long(ephemeris.i0 / std::f64::consts::PI, -32);
-        int_value = if (long_value & 0x100000000i64) != 0 { 1 } else { 0 };
+        int_value = if (long_value & 0x100000000i64) != 0 {
+            1
+        } else {
+            0
+        };
         uint_value = long_value as u32;
         eph_data[1][2] |= COMPOSE_BITS!(int_value, 1, 1);
         eph_data[1][2] |= COMPOSE_BITS!((uint_value >> 31) as i32, 0, 1);
         eph_data[1][3] = COMPOSE_BITS!(uint_value as i32, 1, 31);
-        int_value = Self::unscale_int(ephemeris.omega_dot / std::f64::consts::PI - OMEGA_DOT_REF, -44);
+        int_value = Self::unscale_int(
+            ephemeris.omega_dot / std::f64::consts::PI - OMEGA_DOT_REF,
+            -44,
+        );
         eph_data[1][3] |= COMPOSE_BITS!(int_value >> 16, 0, 1);
         eph_data[1][4] = COMPOSE_BITS!(int_value, 16, 16);
         int_value = Self::unscale_int(ephemeris.idot / std::f64::consts::PI, -44);
@@ -370,12 +414,24 @@ impl CNavBit {
         0
     }
 
-    fn compose_alm_words(&self, almanac: &GpsAlmanac, reduced_alm_data: &mut u32, midi_alm_data: &mut [u32; 4]) -> i32 {
+    fn compose_alm_words(
+        &self,
+        almanac: &GpsAlmanac,
+        reduced_alm_data: &mut u32,
+        midi_alm_data: &mut [u32; 4],
+    ) -> i32 {
         let mut int_value: i32;
         let mut uint_value: u32;
-        
 
-        midi_alm_data[0] = COMPOSE_BITS!(if almanac.valid != 0 { almanac.svid as i32 } else { 0 }, 26, 6);
+        midi_alm_data[0] = COMPOSE_BITS!(
+            if almanac.valid != 0 {
+                almanac.svid as i32
+            } else {
+                0
+            },
+            26,
+            6
+        );
         midi_alm_data[0] |= COMPOSE_BITS!(if almanac.valid != 0 { 0 } else { 7 }, 23, 3);
         uint_value = Self::unscale_uint(almanac.ecc, -16) as u32;
         midi_alm_data[0] |= COMPOSE_BITS!(uint_value as i32, 12, 11);
@@ -399,7 +455,11 @@ impl CNavBit {
         int_value = Self::unscale_int(almanac.af0, -37);
         midi_alm_data[3] |= COMPOSE_BITS!(int_value, 0, 10);
 
-        *reduced_alm_data = if almanac.valid != 0 { (almanac.svid as u32) << 25 } else { 0 };
+        *reduced_alm_data = if almanac.valid != 0 {
+            (almanac.svid as u32) << 25
+        } else {
+            0
+        };
         let double_value: f64 = almanac.sqrtA * almanac.sqrtA - A_REF;
         int_value = (double_value / 512.0 + 0.5) as i32;
         *reduced_alm_data |= COMPOSE_BITS!(int_value, 17, 8);
@@ -433,46 +493,52 @@ impl CNavBit {
         // msg index 3  37 37 37 37 37 37 37 37 37 37 37 37 37 37 37 37 37 37 37 37 37 37 37 37 33
         let message = message % 4;
         match message {
-            0 => { // message 10
+            0 => {
+                // message 10
                 for i in 0..9 {
-                    data[i] = self.eph_message[(svid-1) as usize][0][i];
+                    data[i] = self.eph_message[(svid - 1) as usize][0][i];
                 }
-            },
-            1 => { // message 11
+            }
+            1 => {
+                // message 11
                 for i in 0..9 {
-                    data[i] = self.eph_message[(svid-1) as usize][1][i];
+                    data[i] = self.eph_message[(svid - 1) as usize][1][i];
                 }
-            },
-            2 => { // message index 2
+            }
+            2 => {
+                // message index 2
                 message_id = message_order[(frame % 6) as usize];
-                data[1] = self.clock_message[(svid-1) as usize][0];
-                data[2] = self.clock_message[(svid-1) as usize][1];
-                data[3] = self.clock_message[(svid-1) as usize][2];
-                data[4] = self.clock_message[(svid-1) as usize][3]; // copy clock fields
+                data[1] = self.clock_message[(svid - 1) as usize][0];
+                data[2] = self.clock_message[(svid - 1) as usize][1];
+                data[3] = self.clock_message[(svid - 1) as usize][2];
+                data[4] = self.clock_message[(svid - 1) as usize][3]; // copy clock fields
                 match message_id {
                     30 => {
-                        data[4] |= self.delay_message[(svid-1) as usize][0];
-                        data[5] = self.delay_message[(svid-1) as usize][1];
-                        data[6] = self.delay_message[(svid-1) as usize][2]; // copy group delay fields
+                        data[4] |= self.delay_message[(svid - 1) as usize][0];
+                        data[5] = self.delay_message[(svid - 1) as usize][1];
+                        data[6] = self.delay_message[(svid - 1) as usize][2]; // copy group delay fields
                         data[6] |= self.iono_message[0];
                         data[7] = self.iono_message[1];
                         data[8] = self.iono_message[2]; // copy ionosphere delay fields
-                    },
+                    }
                     31 => {
                         data[4] |= self.toa;
                         alm_index = (frame / 6) * 8 + (if (frame % 6) == 2 { 0 } else { 4 });
-                        data[5] = (self.reduced_alm[alm_index as usize] << 1) + (self.reduced_alm[(alm_index+1) as usize] >> 30);
-                        data[6] = (self.reduced_alm[(alm_index+1) as usize] << 2) + (self.reduced_alm[(alm_index+2) as usize] >> 29);
-                        data[7] = (self.reduced_alm[(alm_index+2) as usize] << 3) + (self.reduced_alm[(alm_index+3) as usize] >> 28);
-                        data[8] = self.reduced_alm[(alm_index+3) as usize] << 4;
-                    },
+                        data[5] = (self.reduced_alm[alm_index as usize] << 1)
+                            + (self.reduced_alm[(alm_index + 1) as usize] >> 30);
+                        data[6] = (self.reduced_alm[(alm_index + 1) as usize] << 2)
+                            + (self.reduced_alm[(alm_index + 2) as usize] >> 29);
+                        data[7] = (self.reduced_alm[(alm_index + 2) as usize] << 3)
+                            + (self.reduced_alm[(alm_index + 3) as usize] >> 28);
+                        data[8] = self.reduced_alm[(alm_index + 3) as usize] << 4;
+                    }
                     33 => {
                         data[4] |= self.utc_message[0];
                         data[5] = self.utc_message[1];
                         data[6] = self.utc_message[2];
                         data[7] = self.utc_message[2]; // copy UTC fields
                         data[8] = 0;
-                    },
+                    }
                     37 => {
                         alm_index = 24 + (frame / 6) + (if (frame % 6) == 3 { 0 } else { 1 });
                         data[4] |= self.toa;
@@ -480,23 +546,24 @@ impl CNavBit {
                         data[6] = self.midi_alm[alm_index as usize][1];
                         data[7] = self.midi_alm[alm_index as usize][2];
                         data[8] = self.midi_alm[alm_index as usize][3]; // copy almanac
-                    },
+                    }
                     _ => {}
                 }
                 data[0] = (0x8b << 12) | ((svid as u32) << 6) | (message_id as u32);
-            },
-            3 => { // message 37
+            }
+            3 => {
+                // message 37
                 data[0] = (0x8b << 12) | ((svid as u32) << 6) | 37;
-                data[1] = self.clock_message[(svid-1) as usize][0];
-                data[2] = self.clock_message[(svid-1) as usize][1];
-                data[3] = self.clock_message[(svid-1) as usize][2];
-                data[4] = self.clock_message[(svid-1) as usize][3]; // copy clock fields
+                data[1] = self.clock_message[(svid - 1) as usize][0];
+                data[2] = self.clock_message[(svid - 1) as usize][1];
+                data[3] = self.clock_message[(svid - 1) as usize][2];
+                data[4] = self.clock_message[(svid - 1) as usize][3]; // copy clock fields
                 data[4] |= self.toa;
                 data[5] = self.midi_alm[frame as usize][0];
                 data[6] = self.midi_alm[frame as usize][1];
                 data[7] = self.midi_alm[frame as usize][2];
                 data[8] = self.midi_alm[frame as usize][3]; // copy almanac
-            },
+            }
             _ => {}
         }
         // add TOW
@@ -601,8 +668,14 @@ impl CNavBit {
         result
     }
 
-    // Alternative interface method  
-    pub fn get_frame_data_alt(&self, start_time: GnssTime, svid: i32, param: i32, nav_bits: &mut [i32]) -> i32 {
+    // Alternative interface method
+    pub fn get_frame_data_alt(
+        &self,
+        start_time: GnssTime,
+        svid: i32,
+        param: i32,
+        nav_bits: &mut [i32],
+    ) -> i32 {
         // Validate SVID to prevent out-of-bounds access
         if !(1..=32).contains(&svid) {
             // Fill nav_bits with zeros for invalid svid
@@ -611,34 +684,34 @@ impl CNavBit {
             }
             return -1;
         }
-        
+
         // Calculate TOW and message index
         let mut time = start_time;
         time.Week += time.MilliSeconds / 604800000;
         time.MilliSeconds %= 604800000;
-        
+
         let tow_divisor = if param != 0 { 6000 } else { 12000 };
         let tow = time.MilliSeconds / tow_divisor;
         let message = tow % 100; // message index within super frame
         let mut next_tow = tow + 1; // TOW is the time of NEXT message
-        
+
         if param == 0 {
             next_tow *= 2;
         }
         if next_tow >= 100800 {
             next_tow = 0;
         }
-        
+
         // Generate message data using existing get_message_data implementation
         let mut encode_data = [0u32; 9];
         self.get_message_data(svid, message, next_tow, &mut encode_data);
-        
+
         // Calculate proper CRC24Q
         let crc_result = crate::crc24q::crc24q_encode(&encode_data, 276);
-        
+
         // Generate navigation bits
         let mut bit_index = 0;
-        
+
         // Convert encoded data to bits
         for &word in &encode_data {
             for i in (0..32).rev() {
@@ -648,7 +721,7 @@ impl CNavBit {
                 }
             }
         }
-        
+
         // Add CRC bits
         for i in (0..24).rev() {
             if bit_index < nav_bits.len() {
@@ -656,42 +729,42 @@ impl CNavBit {
                 bit_index += 1;
             }
         }
-        
+
         // Pad remaining bits with zeros
         while bit_index < nav_bits.len() {
             nav_bits[bit_index] = 0;
             bit_index += 1;
         }
-        
+
         600 // Return number of bits generated
     }
-    
 
     pub fn set_ephemeris_alt(&mut self, svid: i32, eph: &GpsEphemeris) -> bool {
         // Validate SVID
         if !(1..=32).contains(&svid) {
             return false;
         }
-        
+
         let index = (svid - 1) as usize;
-        
+
         // Set ephemeris data (simplified - would need full implementation for production)
         // In full implementation, this would store ephemeris parameters for message generation
         if index < self.ephemeris_mask.len() {
             self.ephemeris_mask[index] = true;
         }
-        
+
         // Store key ephemeris parameters (simplified)
         // In full implementation, would store all ephemeris fields in internal structures
-        
+
         true
     }
 
     pub fn set_almanac_alt(&mut self, alm: &[GpsAlmanac]) -> bool {
         // Set almanac data for navigation message generation
-        
+
         // Validate and store almanac data (simplified)
-        for almanac in alm.iter().take(32) { // GPS has up to 32 satellites
+        for almanac in alm.iter().take(32) {
+            // GPS has up to 32 satellites
             if almanac.svid > 0 && almanac.svid <= 32 && almanac.valid > 0 {
                 let index = (almanac.svid - 1) as usize;
                 if index < self.almanac_mask.len() {
@@ -701,21 +774,21 @@ impl CNavBit {
                 // for inclusion in navigation messages
             }
         }
-        
+
         true
     }
 
     pub fn set_iono_utc_alt(&mut self, iono: &IonoParam, utc: &UtcParam) -> bool {
         // Set ionospheric and UTC parameters for navigation message generation
-        
+
         // Store ionospheric parameters (simplified)
         // In full implementation, these would be encoded into appropriate message types
         self.iono_valid = iono.flag > 0;
-        
-        // Store UTC parameters (simplified)  
+
+        // Store UTC parameters (simplified)
         // In full implementation, UTC parameters would be encoded into navigation messages
         self.utc_valid = utc.flag > 0;
-        
+
         // Mark that ionospheric and UTC data is available
         true
     }

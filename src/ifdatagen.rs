@@ -25,40 +25,47 @@
 //----------------------------------------------------------------------
 
 use std::fs::File;
-use std::io::{Write, BufWriter};
+use std::io::{BufWriter, Write};
 use std::time::Instant;
 
-
-use crate::types::IonoNequick as INavIonoNequick;
-use std::env;
-use crate::types::*;
 use crate::complex_number::ComplexNumber;
 use crate::constants::*;
 use crate::json_parser::JsonObject;
+use crate::types::IonoNequick as INavIonoNequick;
+use crate::types::*;
+use std::env;
 // ЭКСТРЕМАЛЬНОЕ АППАРАТНОЕ УСКОРЕНИЕ: CPU + GPU
 use crate::avx512_intrinsics::SafeAvx512Processor;
+use crate::coordinate::{calc_conv_matrix_lla, ecef_to_lla, lla_to_ecef, speed_local_to_ecef};
 #[cfg(feature = "gpu")]
 use crate::cuda_acceleration::{CudaGnssAccelerator, HybridAccelerator};
-use crate::gnsstime::{utc_to_gps_time, utc_to_glonass_time_corrected, utc_to_bds_time, utc_to_galileo_time};
-use crate::coordinate::{lla_to_ecef, ecef_to_lla, speed_local_to_ecef, calc_conv_matrix_lla};
-use crate::{lnavbit::LNavBit, l5cnavbit::L5CNavBit, gnavbit::GNavBit};
-use crate::{cnavbit::CNavBit as ActualCNavBit, cnav2bit::CNav2Bit as ActualCNav2Bit};
-use crate::{d1d2navbit::D1D2NavBit as ActualD1D2NavBit, inavbit::INavBit as ActualINavBit, fnavbit::FNavBit as ActualFNavBit};
-use crate::{bcnav1bit::BCNav1Bit as ActualBCNav1Bit, bcnav2bit::BCNav2Bit as ActualBCNav2Bit, bcnav3bit::BCNav3Bit as ActualBCNav3Bit};
+use crate::gnsstime::{
+    utc_to_bds_time, utc_to_galileo_time, utc_to_glonass_time_corrected, utc_to_gps_time,
+};
+use crate::nav_data::NavData as UnifiedNavData;
+use crate::navdata::NavDataType;
 use crate::powercontrol::{CPowerControl, SignalPower};
+use crate::pvt;
+use crate::satellite_param::get_doppler;
 use crate::trajectory::CTrajectory;
 use crate::types::SatelliteParam;
-use crate::satellite_param::get_doppler;
-use crate::navdata::NavDataType;
-use crate::nav_data::NavData as UnifiedNavData;
-use crate::pvt;
+use crate::{
+    bcnav1bit::BCNav1Bit as ActualBCNav1Bit, bcnav2bit::BCNav2Bit as ActualBCNav2Bit,
+    bcnav3bit::BCNav3Bit as ActualBCNav3Bit,
+};
+use crate::{cnav2bit::CNav2Bit as ActualCNav2Bit, cnavbit::CNavBit as ActualCNavBit};
+use crate::{
+    d1d2navbit::D1D2NavBit as ActualD1D2NavBit, fnavbit::FNavBit as ActualFNavBit,
+    inavbit::INavBit as ActualINavBit,
+};
+use crate::{gnavbit::GNavBit, l5cnavbit::L5CNavBit, lnavbit::LNavBit};
 
 #[derive(Debug)]
 pub struct GenerationStats {
     pub total_samples: u64,
     pub clipped_samples: u64,
     pub file_size_mb: Option<f64>,
-    
+
     // Дополнительная информация для анализа производительности
     pub total_time_ms: f64,
     pub signal_processing_time_ms: f64,
@@ -75,13 +82,13 @@ pub struct NavData {
     bds_utc: Option<UtcParam>,
     gal_iono: Option<IonoParam>,
     gal_utc: Option<UtcParam>,
-    
+
     // Эфемериды для всех ГНСС систем
     pub gps_ephemeris: Vec<Option<GpsEphemeris>>,
     pub bds_ephemeris: Vec<Option<BeiDouEphemeris>>, // BeiDou использует специализированную структуру
-    pub gal_ephemeris: Vec<Option<GpsEphemeris>>, // Galileo использует структуру GPS
+    pub gal_ephemeris: Vec<Option<GpsEphemeris>>,    // Galileo использует структуру GPS
     pub glonass_ephemeris: Vec<Option<GlonassEphemeris>>,
-    
+
     // Альманахи
     gps_almanac: Vec<GpsAlmanac>,
     bds_almanac: Vec<GpsAlmanac>,
@@ -115,24 +122,51 @@ impl NavData {
         }
     }
 
-    pub fn get_gps_iono(&self) -> Option<&IonoParam> { self.gps_iono.as_ref() }
-    pub fn get_gps_utc_param(&self) -> Option<&UtcParam> { self.gps_utc.as_ref() }
-    pub fn get_bds_iono(&self) -> Option<&IonoParam> { self.bds_iono.as_ref() }
-    pub fn get_bds_utc_param(&self) -> Option<&UtcParam> { self.bds_utc.as_ref() }
-    pub fn get_galileo_iono(&self) -> Option<&IonoParam> { self.gal_iono.as_ref() }
-    pub fn get_galileo_utc_param(&self) -> Option<&UtcParam> { self.gal_utc.as_ref() }
-    pub fn get_gps_almanac(&self) -> &[GpsAlmanac] { &self.gps_almanac }
-    pub fn get_bds_almanac(&self) -> &[GpsAlmanac] { &self.bds_almanac }
-    pub fn get_galileo_almanac(&self) -> &[GpsAlmanac] { &self.gal_almanac }
-    pub fn get_glonass_almanac(&self) -> &[GlonassAlmanac] { &self.glo_almanac }
+    pub fn get_gps_iono(&self) -> Option<&IonoParam> {
+        self.gps_iono.as_ref()
+    }
+    pub fn get_gps_utc_param(&self) -> Option<&UtcParam> {
+        self.gps_utc.as_ref()
+    }
+    pub fn get_bds_iono(&self) -> Option<&IonoParam> {
+        self.bds_iono.as_ref()
+    }
+    pub fn get_bds_utc_param(&self) -> Option<&UtcParam> {
+        self.bds_utc.as_ref()
+    }
+    pub fn get_galileo_iono(&self) -> Option<&IonoParam> {
+        self.gal_iono.as_ref()
+    }
+    pub fn get_galileo_utc_param(&self) -> Option<&UtcParam> {
+        self.gal_utc.as_ref()
+    }
+    pub fn get_gps_almanac(&self) -> &[GpsAlmanac] {
+        &self.gps_almanac
+    }
+    pub fn get_bds_almanac(&self) -> &[GpsAlmanac] {
+        &self.bds_almanac
+    }
+    pub fn get_galileo_almanac(&self) -> &[GpsAlmanac] {
+        &self.gal_almanac
+    }
+    pub fn get_glonass_almanac(&self) -> &[GlonassAlmanac] {
+        &self.glo_almanac
+    }
 
     /// Поиск эфемерид по системе, времени и SVID
     /// Возвращает наиболее подходящие эфемериды по временной близости
     /// Поиск эфемерид по системе, времени и SVID - ТОЧНО как в C++ FindEphemeris()
-    pub fn find_ephemeris(&self, system: GnssSystem, time: GnssTime, svid: i32, _signal: i32, _param: i32) -> Option<GpsEphemeris> {
+    pub fn find_ephemeris(
+        &self,
+        system: GnssSystem,
+        time: GnssTime,
+        svid: i32,
+        _signal: i32,
+        _param: i32,
+    ) -> Option<GpsEphemeris> {
         let mut best_eph: Option<GpsEphemeris> = None;
         let mut best_time_diff = f64::INFINITY;
-        
+
         // Обработка разных систем отдельно из-за разных типов эфемерид
         match system {
             GnssSystem::GpsSystem => {
@@ -140,11 +174,11 @@ impl NavData {
                 for eph_opt in self.gps_ephemeris.iter() {
                     if let Some(eph) = eph_opt {
                         if eph.svid as i32 == svid && (eph.valid & 1) != 0 && eph.health == 0 {
-                            let diff = ((time.Week - eph.week) as f64) * 604800.0 + 
-                                       ((time.MilliSeconds / 1000) as f64 - eph.toe as f64);
-                            
+                            let diff = ((time.Week - eph.week) as f64) * 604800.0
+                                + ((time.MilliSeconds / 1000) as f64 - eph.toe as f64);
+
                             let abs_diff = diff.abs();
-                            
+
                             if abs_diff <= 7200.0 && abs_diff < best_time_diff {
                                 best_time_diff = abs_diff;
                                 best_eph = Some(*eph);
@@ -152,17 +186,17 @@ impl NavData {
                         }
                     }
                 }
-            },
+            }
             GnssSystem::BdsSystem => {
                 // Поиск BeiDou эфемерид с конвертацией в GPS формат
                 for eph_opt in self.bds_ephemeris.iter() {
                     if let Some(eph) = eph_opt {
                         if eph.svid as i32 == svid && (eph.valid & 1) != 0 && eph.health == 0 {
-                            let diff = ((time.Week - eph.week) as f64) * 604800.0 + 
-                                       ((time.MilliSeconds / 1000) as f64 - eph.toe as f64);
-                            
+                            let diff = ((time.Week - eph.week) as f64) * 604800.0
+                                + ((time.MilliSeconds / 1000) as f64 - eph.toe as f64);
+
                             let abs_diff = diff.abs();
-                            
+
                             if abs_diff <= 7200.0 && abs_diff < best_time_diff {
                                 best_time_diff = abs_diff;
                                 best_eph = Some(eph.to_gps_ephemeris()); // Конвертируем BeiDou в GPS формат
@@ -170,17 +204,17 @@ impl NavData {
                         }
                     }
                 }
-            },
+            }
             GnssSystem::GalileoSystem => {
                 // Поиск Galileo эфемерид
                 for eph_opt in self.gal_ephemeris.iter() {
                     if let Some(eph) = eph_opt {
                         if eph.svid as i32 == svid && (eph.valid & 1) != 0 && eph.health == 0 {
-                            let diff = ((time.Week - eph.week) as f64) * 604800.0 + 
-                                       ((time.MilliSeconds / 1000) as f64 - eph.toe as f64);
-                            
+                            let diff = ((time.Week - eph.week) as f64) * 604800.0
+                                + ((time.MilliSeconds / 1000) as f64 - eph.toe as f64);
+
                             let abs_diff = diff.abs();
-                            
+
                             if abs_diff <= 7200.0 && abs_diff < best_time_diff {
                                 best_time_diff = abs_diff;
                                 best_eph = Some(*eph);
@@ -188,10 +222,10 @@ impl NavData {
                         }
                     }
                 }
-            },
+            }
             _ => return None,
         }
-        
+
         best_eph
     }
 
@@ -199,11 +233,11 @@ impl NavData {
     pub fn find_glo_ephemeris(&self, time: GlonassTime, svid: i32) -> Option<GlonassEphemeris> {
         let mut best_eph: Option<GlonassEphemeris> = None;
         let mut best_time_diff = f64::INFINITY;
-        
+
         // Простое сравнение по дню и времени в секундах
         let request_day = time.Day as f64;
         let request_seconds = (time.MilliSeconds / 1000) as f64;
-        
+
         // Поиск по номеру слота и времени
         for eph_opt in self.glonass_ephemeris.iter() {
             if let Some(eph) = eph_opt {
@@ -211,12 +245,16 @@ impl NavData {
                     // Сравниваем по дню года и времени tb
                     let eph_day = eph.day as f64;
                     let eph_tb = eph.tb as f64;
-                    
+
                     let day_diff = (request_day - eph_day).abs();
                     let time_diff = (request_seconds - eph_tb).abs();
-                    
-                    let total_diff = if day_diff == 0.0 { time_diff } else { day_diff * 86400.0 + time_diff };
-                    
+
+                    let total_diff = if day_diff == 0.0 {
+                        time_diff
+                    } else {
+                        day_diff * 86400.0 + time_diff
+                    };
+
                     // GLONASS эфемериды действительны 30 минут (1800 секунд)
                     if total_diff < 1800.0 && total_diff < best_time_diff {
                         best_time_diff = total_diff;
@@ -225,7 +263,7 @@ impl NavData {
                 }
             }
         }
-        
+
         best_eph
     }
 
@@ -236,30 +274,49 @@ impl NavData {
     /// Генерирует GPS альманах из данных эфемерид для всех 32 спутников
     pub fn generate_gps_almanac_from_ephemeris(&mut self, current_week: i32) {
         use crate::almanac::get_almanac_from_ephemeris;
-        
+
         let toa = (current_week % 1024) * 604800 + 405504; // Reference time of almanac
-        
+
         for i in 0usize..32 {
             let svid = (i + 1) as i32;
-            if let Some(eph) = self.find_ephemeris(GnssSystem::GpsSystem, 
-                GnssTime { Week: current_week, MilliSeconds: 0, SubMilliSeconds: 0.0 }, svid, 0, 0) {
+            if let Some(eph) = self.find_ephemeris(
+                GnssSystem::GpsSystem,
+                GnssTime {
+                    Week: current_week,
+                    MilliSeconds: 0,
+                    SubMilliSeconds: 0.0,
+                },
+                svid,
+                0,
+                0,
+            ) {
                 if (eph.valid & 1) != 0 {
                     let almanac = get_almanac_from_ephemeris(&eph, current_week, toa);
                     self.gps_almanac[i] = almanac;
-                    println!("[GPS-ALMANAC] Generated almanac for SV{:02}: valid={}, toa={}, health={}", 
-                            svid, self.gps_almanac[i].valid, self.gps_almanac[i].toa, self.gps_almanac[i].health);
+                    println!(
+                        "[GPS-ALMANAC] Generated almanac for SV{:02}: valid={}, toa={}, health={}",
+                        svid,
+                        self.gps_almanac[i].valid,
+                        self.gps_almanac[i].toa,
+                        self.gps_almanac[i].health
+                    );
                 }
             }
         }
     }
 }
 
-
 // SignalPower is imported from powercontrol module
 
 // Placeholder trait for navigation bit generation
 pub trait NavBitTrait {
-    fn get_frame_data(&mut self, start_time: GnssTime, svid: i32, param: i32, nav_bits: &mut [i32]) -> i32;
+    fn get_frame_data(
+        &mut self,
+        start_time: GnssTime,
+        svid: i32,
+        param: i32,
+        nav_bits: &mut [i32],
+    ) -> i32;
     fn set_ephemeris(&mut self, svid: i32, eph: &GpsEphemeris);
     fn set_almanac(&mut self, alm: &[GpsAlmanac]);
     fn set_iono_utc(&mut self, iono_param: Option<&IonoParam>, utc_param: Option<&UtcParam>);
@@ -276,20 +333,38 @@ impl Default for CNavBit {
     }
 }
 
-impl CNavBit { pub fn new() -> Self { CNavBit(ActualCNavBit::new()) } }
+impl CNavBit {
+    pub fn new() -> Self {
+        CNavBit(ActualCNavBit::new())
+    }
+}
 impl NavBitTrait for CNavBit {
-    fn get_frame_data(&mut self, start_time: GnssTime, svid: i32, param: i32, nav_bits: &mut [i32]) -> i32 { 
+    fn get_frame_data(
+        &mut self,
+        start_time: GnssTime,
+        svid: i32,
+        param: i32,
+        nav_bits: &mut [i32],
+    ) -> i32 {
         self.0.get_frame_data(start_time, svid, param, nav_bits)
     }
-    fn set_ephemeris(&mut self, svid: i32, eph: &GpsEphemeris) { self.0.set_ephemeris(svid, eph); }
-    fn set_almanac(&mut self, alm: &[GpsAlmanac]) { self.0.set_almanac(alm); }
-    fn set_iono_utc(&mut self, iono_param: Option<&IonoParam>, utc_param: Option<&UtcParam>) { 
+    fn set_ephemeris(&mut self, svid: i32, eph: &GpsEphemeris) {
+        self.0.set_ephemeris(svid, eph);
+    }
+    fn set_almanac(&mut self, alm: &[GpsAlmanac]) {
+        self.0.set_almanac(alm);
+    }
+    fn set_iono_utc(&mut self, iono_param: Option<&IonoParam>, utc_param: Option<&UtcParam>) {
         if let (Some(iono), Some(utc)) = (iono_param, utc_param) {
-            self.0.set_iono_utc(iono, utc); 
+            self.0.set_iono_utc(iono, utc);
         }
     }
-    fn get_type(&self) -> NavDataType { NavDataType::CNav }
-    fn clone_box(&self) -> Box<dyn NavBitTrait> { Box::new(self.clone()) }
+    fn get_type(&self) -> NavDataType {
+        NavDataType::CNav
+    }
+    fn clone_box(&self) -> Box<dyn NavBitTrait> {
+        Box::new(self.clone())
+    }
 }
 
 #[derive(Clone)]
@@ -300,20 +375,38 @@ impl Default for CNav2Bit {
     }
 }
 
-impl CNav2Bit { pub fn new() -> Self { CNav2Bit(ActualCNav2Bit::new()) } }
+impl CNav2Bit {
+    pub fn new() -> Self {
+        CNav2Bit(ActualCNav2Bit::new())
+    }
+}
 impl NavBitTrait for CNav2Bit {
-    fn get_frame_data(&mut self, start_time: GnssTime, svid: i32, param: i32, nav_bits: &mut [i32]) -> i32 { 
+    fn get_frame_data(
+        &mut self,
+        start_time: GnssTime,
+        svid: i32,
+        param: i32,
+        nav_bits: &mut [i32],
+    ) -> i32 {
         self.0.get_frame_data(start_time, svid, param, nav_bits)
     }
-    fn set_ephemeris(&mut self, svid: i32, eph: &GpsEphemeris) { self.0.set_ephemeris(svid, eph); }
-    fn set_almanac(&mut self, alm: &[GpsAlmanac]) { self.0.set_almanac(alm); }
+    fn set_ephemeris(&mut self, svid: i32, eph: &GpsEphemeris) {
+        self.0.set_ephemeris(svid, eph);
+    }
+    fn set_almanac(&mut self, alm: &[GpsAlmanac]) {
+        self.0.set_almanac(alm);
+    }
     fn set_iono_utc(&mut self, iono_param: Option<&IonoParam>, utc_param: Option<&UtcParam>) {
         if let (Some(iono), Some(utc)) = (iono_param, utc_param) {
             self.0.set_iono_utc(iono, utc);
         }
     }
-    fn get_type(&self) -> NavDataType { NavDataType::CNav2 }
-    fn clone_box(&self) -> Box<dyn NavBitTrait> { Box::new(self.clone()) }
+    fn get_type(&self) -> NavDataType {
+        NavDataType::CNav2
+    }
+    fn clone_box(&self) -> Box<dyn NavBitTrait> {
+        Box::new(self.clone())
+    }
 }
 
 use crate::sat_if_signal::SatIfSignal;
@@ -326,20 +419,38 @@ impl Default for D1D2NavBit {
     }
 }
 
-impl D1D2NavBit { pub fn new() -> Self { D1D2NavBit(ActualD1D2NavBit::new()) } }
+impl D1D2NavBit {
+    pub fn new() -> Self {
+        D1D2NavBit(ActualD1D2NavBit::new())
+    }
+}
 impl NavBitTrait for D1D2NavBit {
-    fn get_frame_data(&mut self, start_time: GnssTime, svid: i32, param: i32, nav_bits: &mut [i32]) -> i32 { 
+    fn get_frame_data(
+        &mut self,
+        start_time: GnssTime,
+        svid: i32,
+        param: i32,
+        nav_bits: &mut [i32],
+    ) -> i32 {
         self.0.get_frame_data(start_time, svid, param, nav_bits)
     }
-    fn set_ephemeris(&mut self, svid: i32, eph: &GpsEphemeris) { self.0.set_ephemeris(svid, eph); }
-    fn set_almanac(&mut self, alm: &[GpsAlmanac]) { self.0.set_almanac(alm); }
+    fn set_ephemeris(&mut self, svid: i32, eph: &GpsEphemeris) {
+        self.0.set_ephemeris(svid, eph);
+    }
+    fn set_almanac(&mut self, alm: &[GpsAlmanac]) {
+        self.0.set_almanac(alm);
+    }
     fn set_iono_utc(&mut self, iono_param: Option<&IonoParam>, utc_param: Option<&UtcParam>) {
         if let (Some(iono), Some(utc)) = (iono_param, utc_param) {
             self.0.set_iono_utc(iono, utc);
         }
     }
-    fn get_type(&self) -> NavDataType { NavDataType::D1D2Nav }
-    fn clone_box(&self) -> Box<dyn NavBitTrait> { Box::new(self.clone()) }
+    fn get_type(&self) -> NavDataType {
+        NavDataType::D1D2Nav
+    }
+    fn clone_box(&self) -> Box<dyn NavBitTrait> {
+        Box::new(self.clone())
+    }
 }
 
 #[derive(Clone)]
@@ -350,32 +461,46 @@ impl Default for INavBit {
     }
 }
 
-impl INavBit { pub fn new() -> Self { INavBit(ActualINavBit::new()) } }
+impl INavBit {
+    pub fn new() -> Self {
+        INavBit(ActualINavBit::new())
+    }
+}
 impl NavBitTrait for INavBit {
-    fn get_frame_data(&mut self, start_time: GnssTime, svid: i32, param: i32, nav_bits: &mut [i32]) -> i32 { 
+    fn get_frame_data(
+        &mut self,
+        start_time: GnssTime,
+        svid: i32,
+        param: i32,
+        nav_bits: &mut [i32],
+    ) -> i32 {
         self.0.get_frame_data(start_time, svid, param, nav_bits)
     }
-    fn set_ephemeris(&mut self, svid: i32, eph: &GpsEphemeris) { 
+    fn set_ephemeris(&mut self, svid: i32, eph: &GpsEphemeris) {
         self.0.set_ephemeris(svid, eph);
     }
-    fn set_almanac(&mut self, alm: &[GpsAlmanac]) { 
+    fn set_almanac(&mut self, alm: &[GpsAlmanac]) {
         self.0.set_almanac(alm);
     }
     fn set_iono_utc(&mut self, iono_param: Option<&IonoParam>, utc_param: Option<&UtcParam>) {
         if let (Some(iono), Some(utc)) = (iono_param, utc_param) {
             // Convert IonoParam to IonoNequick (assume Galileo NeQuick model)
             let inav_iono = INavIonoNequick {
-                ai0: iono.a0,  // Use alpha parameters as ai parameters
+                ai0: iono.a0, // Use alpha parameters as ai parameters
                 ai1: iono.a1,
                 ai2: iono.a2,
                 flag: iono.flag,
             };
-            
+
             self.0.set_iono_utc(&inav_iono, utc);
         }
     }
-    fn get_type(&self) -> NavDataType { NavDataType::INav }
-    fn clone_box(&self) -> Box<dyn NavBitTrait> { Box::new(self.clone()) }
+    fn get_type(&self) -> NavDataType {
+        NavDataType::INav
+    }
+    fn clone_box(&self) -> Box<dyn NavBitTrait> {
+        Box::new(self.clone())
+    }
 }
 
 #[derive(Clone)]
@@ -386,20 +511,38 @@ impl Default for FNavBit {
     }
 }
 
-impl FNavBit { pub fn new() -> Self { FNavBit(ActualFNavBit::new()) } }
+impl FNavBit {
+    pub fn new() -> Self {
+        FNavBit(ActualFNavBit::new())
+    }
+}
 impl NavBitTrait for FNavBit {
-    fn get_frame_data(&mut self, start_time: GnssTime, svid: i32, param: i32, nav_bits: &mut [i32]) -> i32 { 
+    fn get_frame_data(
+        &mut self,
+        start_time: GnssTime,
+        svid: i32,
+        param: i32,
+        nav_bits: &mut [i32],
+    ) -> i32 {
         self.0.get_frame_data(start_time, svid, param, nav_bits)
     }
-    fn set_ephemeris(&mut self, svid: i32, eph: &GpsEphemeris) { self.0.set_ephemeris(svid, eph); }
-    fn set_almanac(&mut self, alm: &[GpsAlmanac]) { self.0.set_almanac(alm); }
+    fn set_ephemeris(&mut self, svid: i32, eph: &GpsEphemeris) {
+        self.0.set_ephemeris(svid, eph);
+    }
+    fn set_almanac(&mut self, alm: &[GpsAlmanac]) {
+        self.0.set_almanac(alm);
+    }
     fn set_iono_utc(&mut self, iono_param: Option<&IonoParam>, utc_param: Option<&UtcParam>) {
         if let (Some(iono), Some(utc)) = (iono_param, utc_param) {
             self.0.set_iono_utc(iono, utc);
         }
     }
-    fn get_type(&self) -> NavDataType { NavDataType::FNav }
-    fn clone_box(&self) -> Box<dyn NavBitTrait> { Box::new(self.clone()) }
+    fn get_type(&self) -> NavDataType {
+        NavDataType::FNav
+    }
+    fn clone_box(&self) -> Box<dyn NavBitTrait> {
+        Box::new(self.clone())
+    }
 }
 
 #[derive(Clone)]
@@ -410,18 +553,36 @@ impl Default for BCNav1Bit {
     }
 }
 
-impl BCNav1Bit { pub fn new() -> Self { BCNav1Bit(ActualBCNav1Bit::new()) } }
+impl BCNav1Bit {
+    pub fn new() -> Self {
+        BCNav1Bit(ActualBCNav1Bit::new())
+    }
+}
 impl NavBitTrait for BCNav1Bit {
-    fn get_frame_data(&mut self, start_time: GnssTime, svid: i32, param: i32, nav_bits: &mut [i32]) -> i32 { 
+    fn get_frame_data(
+        &mut self,
+        start_time: GnssTime,
+        svid: i32,
+        param: i32,
+        nav_bits: &mut [i32],
+    ) -> i32 {
         self.0.get_frame_data(start_time, svid, param, nav_bits)
     }
-    fn set_ephemeris(&mut self, svid: i32, eph: &GpsEphemeris) { self.0.set_ephemeris(svid, eph); }
-    fn set_almanac(&mut self, alm: &[GpsAlmanac]) { self.0.set_almanac(alm); }
+    fn set_ephemeris(&mut self, svid: i32, eph: &GpsEphemeris) {
+        self.0.set_ephemeris(svid, eph);
+    }
+    fn set_almanac(&mut self, alm: &[GpsAlmanac]) {
+        self.0.set_almanac(alm);
+    }
     fn set_iono_utc(&mut self, iono_param: Option<&IonoParam>, utc_param: Option<&UtcParam>) {
         self.0.set_iono_utc(iono_param, utc_param);
     }
-    fn get_type(&self) -> NavDataType { NavDataType::BCNav1 }
-    fn clone_box(&self) -> Box<dyn NavBitTrait> { Box::new(self.clone()) }
+    fn get_type(&self) -> NavDataType {
+        NavDataType::BCNav1
+    }
+    fn clone_box(&self) -> Box<dyn NavBitTrait> {
+        Box::new(self.clone())
+    }
 }
 
 #[derive(Clone)]
@@ -432,18 +593,36 @@ impl Default for BCNav2Bit {
     }
 }
 
-impl BCNav2Bit { pub fn new() -> Self { BCNav2Bit(ActualBCNav2Bit::new()) } }
+impl BCNav2Bit {
+    pub fn new() -> Self {
+        BCNav2Bit(ActualBCNav2Bit::new())
+    }
+}
 impl NavBitTrait for BCNav2Bit {
-    fn get_frame_data(&mut self, start_time: GnssTime, svid: i32, param: i32, nav_bits: &mut [i32]) -> i32 { 
+    fn get_frame_data(
+        &mut self,
+        start_time: GnssTime,
+        svid: i32,
+        param: i32,
+        nav_bits: &mut [i32],
+    ) -> i32 {
         self.0.get_frame_data(start_time, svid, param, nav_bits)
     }
-    fn set_ephemeris(&mut self, svid: i32, eph: &GpsEphemeris) { self.0.set_ephemeris(svid, eph); }
-    fn set_almanac(&mut self, alm: &[GpsAlmanac]) { self.0.set_almanac(alm); }
+    fn set_ephemeris(&mut self, svid: i32, eph: &GpsEphemeris) {
+        self.0.set_ephemeris(svid, eph);
+    }
+    fn set_almanac(&mut self, alm: &[GpsAlmanac]) {
+        self.0.set_almanac(alm);
+    }
     fn set_iono_utc(&mut self, iono_param: Option<&IonoParam>, utc_param: Option<&UtcParam>) {
         self.0.set_iono_utc(iono_param, utc_param);
     }
-    fn get_type(&self) -> NavDataType { NavDataType::BCNav2 }
-    fn clone_box(&self) -> Box<dyn NavBitTrait> { Box::new(self.clone()) }
+    fn get_type(&self) -> NavDataType {
+        NavDataType::BCNav2
+    }
+    fn clone_box(&self) -> Box<dyn NavBitTrait> {
+        Box::new(self.clone())
+    }
 }
 
 #[derive(Clone)]
@@ -454,71 +633,129 @@ impl Default for BCNav3Bit {
     }
 }
 
-impl BCNav3Bit { pub fn new() -> Self { BCNav3Bit(ActualBCNav3Bit::new()) } }
+impl BCNav3Bit {
+    pub fn new() -> Self {
+        BCNav3Bit(ActualBCNav3Bit::new())
+    }
+}
 impl NavBitTrait for BCNav3Bit {
-    fn get_frame_data(&mut self, start_time: GnssTime, svid: i32, param: i32, nav_bits: &mut [i32]) -> i32 { 
+    fn get_frame_data(
+        &mut self,
+        start_time: GnssTime,
+        svid: i32,
+        param: i32,
+        nav_bits: &mut [i32],
+    ) -> i32 {
         self.0.get_frame_data(start_time, svid, param, nav_bits)
     }
-    fn set_ephemeris(&mut self, svid: i32, eph: &GpsEphemeris) { self.0.set_ephemeris(svid, eph); }
-    fn set_almanac(&mut self, alm: &[GpsAlmanac]) { self.0.set_almanac(alm); }
+    fn set_ephemeris(&mut self, svid: i32, eph: &GpsEphemeris) {
+        self.0.set_ephemeris(svid, eph);
+    }
+    fn set_almanac(&mut self, alm: &[GpsAlmanac]) {
+        self.0.set_almanac(alm);
+    }
     fn set_iono_utc(&mut self, iono_param: Option<&IonoParam>, utc_param: Option<&UtcParam>) {
         self.0.set_iono_utc(iono_param, utc_param);
     }
-    fn get_type(&self) -> NavDataType { NavDataType::BCNav3 }
-    fn clone_box(&self) -> Box<dyn NavBitTrait> { Box::new(self.clone()) }
+    fn get_type(&self) -> NavDataType {
+        NavDataType::BCNav3
+    }
+    fn clone_box(&self) -> Box<dyn NavBitTrait> {
+        Box::new(self.clone())
+    }
 }
 
 // Implement NavBitTrait for existing types
 impl NavBitTrait for LNavBit {
-    fn get_frame_data(&mut self, start_time: GnssTime, svid: i32, param: i32, nav_bits: &mut [i32]) -> i32 {
+    fn get_frame_data(
+        &mut self,
+        start_time: GnssTime,
+        svid: i32,
+        param: i32,
+        nav_bits: &mut [i32],
+    ) -> i32 {
         let mut nav_bits_300 = [0i32; 300];
         let result = LNavBit::get_frame_data(self, start_time, svid, param, &mut nav_bits_300);
         nav_bits[..300].copy_from_slice(&nav_bits_300);
         result
     }
-    fn set_ephemeris(&mut self, svid: i32, eph: &GpsEphemeris) { self.set_ephemeris(svid, eph); }
-    fn set_almanac(&mut self, alm: &[GpsAlmanac]) { 
+    fn set_ephemeris(&mut self, svid: i32, eph: &GpsEphemeris) {
+        self.set_ephemeris(svid, eph);
+    }
+    fn set_almanac(&mut self, alm: &[GpsAlmanac]) {
         // Convert slice to array - for now, use default empty almanac
         let empty_almanac = [GpsAlmanac::default(); 32];
-        self.set_almanac(&empty_almanac); 
+        self.set_almanac(&empty_almanac);
     }
-    fn set_iono_utc(&mut self, _iono_param: Option<&IonoParam>, _utc_param: Option<&UtcParam>) { 
+    fn set_iono_utc(&mut self, _iono_param: Option<&IonoParam>, _utc_param: Option<&UtcParam>) {
         // Заглушка - не используется в GPS L1CA генерации
     }
-    fn get_type(&self) -> NavDataType { NavDataType::NavDataGpsEph }
-    fn clone_box(&self) -> Box<dyn NavBitTrait> { Box::new(self.clone()) }
+    fn get_type(&self) -> NavDataType {
+        NavDataType::NavDataGpsEph
+    }
+    fn clone_box(&self) -> Box<dyn NavBitTrait> {
+        Box::new(self.clone())
+    }
 }
 
 impl NavBitTrait for L5CNavBit {
-    fn get_frame_data(&mut self, start_time: GnssTime, svid: i32, param: i32, nav_bits: &mut [i32]) -> i32 {
+    fn get_frame_data(
+        &mut self,
+        start_time: GnssTime,
+        svid: i32,
+        param: i32,
+        nav_bits: &mut [i32],
+    ) -> i32 {
         let mut nav_bits_600 = [0i32; 600];
         let result = L5CNavBit::get_frame_data(self, start_time, svid, param, &mut nav_bits_600);
         nav_bits[..600].copy_from_slice(&nav_bits_600);
         result
     }
-    fn set_ephemeris(&mut self, svid: i32, eph: &GpsEphemeris) { self.set_ephemeris(svid, eph); }
-    fn set_almanac(&mut self, alm: &[GpsAlmanac]) { 
+    fn set_ephemeris(&mut self, svid: i32, eph: &GpsEphemeris) {
+        self.set_ephemeris(svid, eph);
+    }
+    fn set_almanac(&mut self, alm: &[GpsAlmanac]) {
         // Convert slice to array - for now, use default empty almanac
         let empty_almanac = [GpsAlmanac::default(); 32];
-        self.set_almanac(&empty_almanac); 
+        self.set_almanac(&empty_almanac);
     }
-    fn set_iono_utc(&mut self, _iono_param: Option<&IonoParam>, _utc_param: Option<&UtcParam>) { 
+    fn set_iono_utc(&mut self, _iono_param: Option<&IonoParam>, _utc_param: Option<&UtcParam>) {
         // Заглушка - не используется в GPS L1CA генерации
     }
-    fn get_type(&self) -> NavDataType { NavDataType::CNav }
-    fn clone_box(&self) -> Box<dyn NavBitTrait> { Box::new(self.clone()) }
+    fn get_type(&self) -> NavDataType {
+        NavDataType::CNav
+    }
+    fn clone_box(&self) -> Box<dyn NavBitTrait> {
+        Box::new(self.clone())
+    }
 }
 
 impl NavBitTrait for GNavBit {
-    fn get_frame_data(&mut self, _start_time: GnssTime, _svid: i32, _param: i32, _nav_bits: &mut [i32]) -> i32 {
+    fn get_frame_data(
+        &mut self,
+        _start_time: GnssTime,
+        _svid: i32,
+        _param: i32,
+        _nav_bits: &mut [i32],
+    ) -> i32 {
         // Заглушка - избегаем бесконечной рекурсии
         0
     }
-    fn set_ephemeris(&mut self, svid: i32, eph: &GpsEphemeris) { self.set_ephemeris(svid, eph); }
-    fn set_almanac(&mut self, alm: &[GpsAlmanac]) { self.set_almanac(alm); }
-    fn set_iono_utc(&mut self, iono_param: Option<&IonoParam>, utc_param: Option<&UtcParam>) { self.set_iono_utc(iono_param, utc_param); }
-    fn get_type(&self) -> NavDataType { NavDataType::NavDataGlonassEph }
-    fn clone_box(&self) -> Box<dyn NavBitTrait> { Box::new(self.clone()) }
+    fn set_ephemeris(&mut self, svid: i32, eph: &GpsEphemeris) {
+        self.set_ephemeris(svid, eph);
+    }
+    fn set_almanac(&mut self, alm: &[GpsAlmanac]) {
+        self.set_almanac(alm);
+    }
+    fn set_iono_utc(&mut self, iono_param: Option<&IonoParam>, utc_param: Option<&UtcParam>) {
+        self.set_iono_utc(iono_param, utc_param);
+    }
+    fn get_type(&self) -> NavDataType {
+        NavDataType::NavDataGlonassEph
+    }
+    fn clone_box(&self) -> Box<dyn NavBitTrait> {
+        Box::new(self.clone())
+    }
 }
 use crate::fastmath::FastMath;
 use rayon::prelude::*;
@@ -536,20 +773,20 @@ const TOTAL_SAT_CHANNEL: usize = 128;
 
 #[derive(Debug, Clone, Copy)]
 pub enum DataBitType {
-    DataBitLNav = 0,    // for GPS
+    DataBitLNav = 0, // for GPS
     DataBitCNav = 1,
     DataBitCNav2 = 2,
     DataBitL5CNav = 3,
-    DataBitGNav = 4,    // for GLONASS
+    DataBitGNav = 4, // for GLONASS
     DataBitGNav2 = 5,
-    DataBitD1D2 = 6,    // for BDS
+    DataBitD1D2 = 6, // for BDS
     DataBitBCNav1 = 7,
     DataBitBCNav2 = 8,
     DataBitBCNav3 = 9,
-    DataBitINav = 10,   // for Galileo
+    DataBitINav = 10, // for Galileo
     DataBitFNav = 11,
     DataBitECNav = 12,
-    DataBitSbas = 13,   // for SBAS
+    DataBitSbas = 13, // for SBAS
 }
 
 pub struct IFDataGen {
@@ -559,13 +796,13 @@ pub struct IFDataGen {
     pub output_param: OutputParam,
     pub cur_time: GnssTime,
     pub start_pos: LlaPosition,
-    
+
     // ЭКСТРЕМАЛЬНАЯ АППАРАТНАЯ ОПТИМИЗАЦИЯ
     #[cfg(feature = "gpu")]
     pub hybrid_accelerator: HybridAccelerator,
     #[cfg(not(feature = "gpu"))]
     pub _hybrid_placeholder: (),
-    
+
     // Satellite ephemeris arrays
     pub gps_eph: [Option<GpsEphemeris>; TOTAL_GPS_SAT],
     pub gps_eph_visible: [Option<GpsEphemeris>; TOTAL_GPS_SAT],
@@ -575,13 +812,13 @@ pub struct IFDataGen {
     pub gal_eph_visible: [Option<GpsEphemeris>; TOTAL_GAL_SAT],
     pub glo_eph: [Option<GlonassEphemeris>; TOTAL_GLO_SAT],
     pub glo_eph_visible: [Option<GlonassEphemeris>; TOTAL_GLO_SAT],
-    
+
     // Satellite parameter arrays
     pub gps_sat_param: [SatelliteParam; TOTAL_GPS_SAT],
     pub bds_sat_param: [SatelliteParam; TOTAL_BDS_SAT],
     pub gal_sat_param: [SatelliteParam; TOTAL_GAL_SAT],
     pub glo_sat_param: [SatelliteParam; TOTAL_GLO_SAT],
-    
+
     // Satellite numbers
     pub gps_sat_number: usize,
     pub bds_sat_number: usize,
@@ -591,12 +828,38 @@ pub struct IFDataGen {
 
 // Signal center frequencies in Hz
 const SIGNAL_CENTER_FREQ: [[f64; 8]; 4] = [
-    [FREQ_GPS_L1, FREQ_GPS_L1, FREQ_GPS_L2, FREQ_GPS_L2, FREQ_GPS_L5, 0.0, 0.0, 0.0],
-    [FREQ_BDS_B1C, FREQ_BDS_B1I, FREQ_BDS_B2I, FREQ_BDS_B3I, FREQ_BDS_B2A, FREQ_BDS_B2B, FREQ_BDS_B2AB, 0.0],
-    [FREQ_GAL_E1, FREQ_GAL_E5A, FREQ_GAL_E5B, FREQ_GAL_E5, FREQ_GAL_E6, 0.0, 0.0, 0.0],
+    [
+        FREQ_GPS_L1,
+        FREQ_GPS_L1,
+        FREQ_GPS_L2,
+        FREQ_GPS_L2,
+        FREQ_GPS_L5,
+        0.0,
+        0.0,
+        0.0,
+    ],
+    [
+        FREQ_BDS_B1C,
+        FREQ_BDS_B1I,
+        FREQ_BDS_B2I,
+        FREQ_BDS_B3I,
+        FREQ_BDS_B2A,
+        FREQ_BDS_B2B,
+        FREQ_BDS_B2AB,
+        0.0,
+    ],
+    [
+        FREQ_GAL_E1,
+        FREQ_GAL_E5A,
+        FREQ_GAL_E5B,
+        FREQ_GAL_E5,
+        FREQ_GAL_E6,
+        0.0,
+        0.0,
+        0.0,
+    ],
     [FREQ_GLO_G1, FREQ_GLO_G2, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
 ];
-
 
 impl IFDataGen {
     pub fn new() -> Self {
@@ -607,13 +870,13 @@ impl IFDataGen {
             output_param: OutputParam::default(),
             cur_time: GnssTime::default(),
             start_pos: LlaPosition::default(),
-            
+
             // ЭКСТРЕМАЛЬНАЯ ИНИЦИАЛИЗАЦИЯ: CPU+GPU гибридное ускорение
             #[cfg(feature = "gpu")]
             hybrid_accelerator: HybridAccelerator::new(),
             #[cfg(not(feature = "gpu"))]
             _hybrid_placeholder: (),
-            
+
             gps_eph: [None; TOTAL_GPS_SAT],
             gps_eph_visible: [None; TOTAL_GPS_SAT],
             bds_eph: [None; TOTAL_BDS_SAT],
@@ -622,12 +885,12 @@ impl IFDataGen {
             gal_eph_visible: [None; TOTAL_GAL_SAT],
             glo_eph: [None; TOTAL_GLO_SAT],
             glo_eph_visible: [None; TOTAL_GLO_SAT],
-            
+
             gps_sat_param: [SatelliteParam::default(); TOTAL_GPS_SAT],
             bds_sat_param: [SatelliteParam::default(); TOTAL_BDS_SAT],
             gal_sat_param: [SatelliteParam::default(); TOTAL_GAL_SAT],
             glo_sat_param: [SatelliteParam::default(); TOTAL_GLO_SAT],
-            
+
             gps_sat_number: 0,
             bds_sat_number: 0,
             gal_sat_number: 0,
@@ -636,9 +899,13 @@ impl IFDataGen {
     }
 
     pub fn main(&mut self, args: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
-        println!("\n================================================================================");
+        println!(
+            "\n================================================================================"
+        );
         println!("                          IF SIGNAL GENERATION ");
-        println!("================================================================================");
+        println!(
+            "================================================================================"
+        );
 
         // Read JSON file and assign parameters
         let json_file = if args.len() > 1 {
@@ -653,12 +920,12 @@ impl IFDataGen {
 
         // ВРЕМЕННО: не используем JSON парсинг в initialize (используется load_config)
         println!("[INFO]\tSkipping JSON parsing (handled by load_config)");
-        
-        // Используем значения по умолчанию  
+
+        // Используем значения по умолчанию
         let mut utc_time = UtcTime::default();
         let start_pos = LlaPosition::default();
         let start_vel = LocalSpeed::default();
-        
+
         // Значения по умолчанию для тестирования
         utc_time.Year = 2025;
         utc_time.Month = 6;
@@ -666,31 +933,37 @@ impl IFDataGen {
         utc_time.Hour = 10;
         utc_time.Minute = 5;
         utc_time.Second = 30.0;
-        
+
         // TODO: Установить правильное время из JSON пресета
         // Пока используем хардкод что время симуляции 10 секунд
-        
-        println!("[INFO]\tParsed time from preset: {}-{:02}-{:02} {:02}:{:02}:{:02.0}", 
-                 utc_time.Year, utc_time.Month, utc_time.Day, 
-                 utc_time.Hour, utc_time.Minute, utc_time.Second);
+
+        println!(
+            "[INFO]\tParsed time from preset: {}-{:02}-{:02} {:02}:{:02}:{:02.0}",
+            utc_time.Year,
+            utc_time.Month,
+            utc_time.Day,
+            utc_time.Hour,
+            utc_time.Minute,
+            utc_time.Second
+        );
         let _start_pos = LlaPosition::default();
         let _start_vel = LocalSpeed::default();
 
         // Старый код удалён - используем новый чистый Rust JSON парсинг ниже
 
-        // Reset satellite masks to allow all satellites 
+        // Reset satellite masks to allow all satellites
         self.output_param.GpsMaskOut = 0;
         self.output_param.BdsMaskOut = 0;
         self.output_param.GalileoMaskOut = 0;
         self.output_param.GlonassMaskOut = 0;
-        
+
         // Set reasonable elevation mask (5 degrees)
         self.output_param.ElevationMask = 5.0_f64.to_radians();
-        
+
         // Load RINEX ephemeris data with smart filtering
         // Читаем путь к RINEX файлу из JSON конфигурации
         let mut rinex_file = String::from("Rinex_Data/rinex_v3_20251560000.rnx"); // По умолчанию
-        
+
         // Парсим JSON для получения пути к RINEX файлу
         if let Ok(json_content) = std::fs::read_to_string(json_file) {
             if let Ok(json) = serde_json::from_str::<serde_json::Value>(&json_content) {
@@ -704,10 +977,10 @@ impl IFDataGen {
         }
         if std::path::Path::new(&rinex_file).exists() {
             println!("[INFO]\tLoading RINEX ephemeris file: {}", rinex_file);
-            
+
             // Создаем CNavData для загрузки эфемерид
             let mut c_nav_data = crate::json_interpreter::CNavData::default();
-            
+
             // Определяем включенные системы из JSON конфигурации (CompactConfig)
             let mut enabled_systems = Vec::new();
             if self.output_param.CompactConfig.should_parse_gps() {
@@ -722,18 +995,18 @@ impl IFDataGen {
             if self.output_param.CompactConfig.should_parse_galileo() {
                 enabled_systems.push("Galileo");
             }
-            
+
             println!("[DEBUG] Using filtered RINEX loading: time={}-{:02}-{:02} {:02}:{:02}:{:02}, systems={:?}", 
                 utc_time.Year, utc_time.Month, utc_time.Day, utc_time.Hour, utc_time.Minute, utc_time.Second, enabled_systems);
-            
-            // Используем оптимизированную загрузку RINEX с фильтрацией систем из JSON  
+
+            // Используем оптимизированную загрузку RINEX с фильтрацией систем из JSON
             crate::json_interpreter::read_nav_file_filtered(
-                &mut c_nav_data, 
+                &mut c_nav_data,
                 &rinex_file,
-                Some(utc_time), // Фильтрация по времени
-                &enabled_systems // Только BeiDou система
+                Some(utc_time),   // Фильтрация по времени
+                &enabled_systems, // Только BeiDou система
             );
-            
+
             // ГЛОБАЛЬНЫЙ ВЫБОР ЕДИНОЙ ЭПОХИ ДЛЯ ВСЕХ СИСТЕМ
             self.select_global_epochs_and_fill(&c_nav_data, utc_time);
         } else {
@@ -747,7 +1020,12 @@ impl IFDataGen {
         let bds_time = utc_to_bds_time(utc_time);
         let cur_pos = lla_to_ecef(&start_pos);
         let convert_matrix = calc_conv_matrix_lla(&start_pos);
-        let mut pos_vel = KinematicInfo { x: cur_pos.x, y: cur_pos.y, z: cur_pos.z, ..Default::default() };
+        let mut pos_vel = KinematicInfo {
+            x: cur_pos.x,
+            y: cur_pos.y,
+            z: cur_pos.z,
+            ..Default::default()
+        };
         speed_local_to_ecef(&convert_matrix, &start_vel, &mut pos_vel);
 
         let filename_binding = String::from_utf8_lossy(&self.output_param.filename);
@@ -757,10 +1035,13 @@ impl IFDataGen {
             Ok(file) => {
                 println!("[INFO]\tOutput file opened successfully.");
                 BufWriter::new(file)
-            },
+            }
             Err(_) => {
                 let filename_str = String::from_utf8_lossy(&self.output_param.filename);
-                println!("[ERROR]\tFailed to open output file: {}", filename_str.trim_end_matches('\0'));
+                println!(
+                    "[ERROR]\tFailed to open output file: {}",
+                    filename_str.trim_end_matches('\0')
+                );
                 return Err("Failed to open output file".into());
             }
         };
@@ -788,163 +1069,424 @@ impl IFDataGen {
 
         let mut sat_if_signals = self.create_satellite_signals(&nav_bit_array, cur_pos)?;
         println!("[DEBUG]\tSatellite signals created successfully");
-        
+
         // Парсим время траектории из JSON пресета (используем хардкод пока)
-        let trajectory_time_s = self.parse_trajectory_time_from_json(&self.output_param.config_filename).unwrap_or(10.0);
-        self.generate_if_signal(&mut if_file, &mut sat_if_signals, cur_pos, trajectory_time_s)?;
+        let trajectory_time_s = self
+            .parse_trajectory_time_from_json(&self.output_param.config_filename)
+            .unwrap_or(10.0);
+        self.generate_if_signal(
+            &mut if_file,
+            &mut sat_if_signals,
+            cur_pos,
+            trajectory_time_s,
+        )?;
 
         println!("[INFO]\tIF Signal generation completed!");
         Ok(())
-    } 
-   fn create_nav_bit_instances(&self) -> Vec<Option<UnifiedNavData>> {
+    }
+    fn create_nav_bit_instances(&self) -> Vec<Option<UnifiedNavData>> {
         let mut nav_bit_array: Vec<Option<UnifiedNavData>> = Vec::with_capacity(14);
-        
+
         for i in 0..14 {
             let nav_bit: Option<UnifiedNavData> = match i {
-                0 => Some(UnifiedNavData::LNav(LNavBit::new())),           // DataBitLNav
+                0 => Some(UnifiedNavData::LNav(LNavBit::new())), // DataBitLNav
                 1 => Some(UnifiedNavData::CNav(ActualCNavBit::new())), // DataBitCNav
                 2 => Some(UnifiedNavData::CNav2(ActualCNav2Bit::new())), // DataBitCNav2
-                3 => Some(UnifiedNavData::L5CNav(L5CNavBit::new())),   // DataBitL5CNav
-                4 => Some(UnifiedNavData::GNav(GNavBit::new())),       // DataBitGNav
-                5 => None,                                      // DataBitGNav2
+                3 => Some(UnifiedNavData::L5CNav(L5CNavBit::new())), // DataBitL5CNav
+                4 => Some(UnifiedNavData::GNav(GNavBit::new())), // DataBitGNav
+                5 => None,                                       // DataBitGNav2
                 6 => Some(UnifiedNavData::D1D2Nav(ActualD1D2NavBit::new())), // DataBitD1D2
                 7 => Some(UnifiedNavData::BCNav1(ActualBCNav1Bit::new())), // DataBitBCNav1
                 8 => Some(UnifiedNavData::BCNav2(ActualBCNav2Bit::new())), // DataBitBCNav2
                 9 => Some(UnifiedNavData::BCNav3(ActualBCNav3Bit::new())), // DataBitBCNav3
-                10 => Some(UnifiedNavData::INav(ActualINavBit::new())),   // DataBitINav
-                11 => Some(UnifiedNavData::FNav(ActualFNavBit::new())),   // DataBitFNav
-                12 => None,                                    // DataBitECNav
-                13 => None,                                    // DataBitSbas
+                10 => Some(UnifiedNavData::INav(ActualINavBit::new())), // DataBitINav
+                11 => Some(UnifiedNavData::FNav(ActualFNavBit::new())), // DataBitFNav
+                12 => None,                                      // DataBitECNav
+                13 => None,                                      // DataBitSbas
                 _ => None,
             };
             nav_bit_array.push(nav_bit);
         }
-        
+
         nav_bit_array
     }
 
     // Выбор глобальной эпохи (week,toe) в GPS секундах, согласованной между системами.
     // Для каждой системы выбирается ближайшая эпоха к глобальной в пределах окна (±2ч),
     // затем массивы self.*_eph заполняются эфемеридами только этой эпохи.
-    fn select_global_epochs_and_fill(&mut self, c_nav_data: &crate::json_interpreter::CNavData, utc_time: UtcTime) {
+    fn select_global_epochs_and_fill(
+        &mut self,
+        c_nav_data: &crate::json_interpreter::CNavData,
+        utc_time: UtcTime,
+    ) {
         use std::collections::{HashMap, HashSet};
         // Группировка по эпохам внутри каждой системы
-        let mut gps_by_epoch: HashMap<(i32,i32), HashMap<u8, GpsEphemeris>> = HashMap::new();
-        for eph in &c_nav_data.gps_ephemeris { gps_by_epoch.entry((eph.week, eph.toe)).or_default().insert(eph.svid, *eph); }
-        let mut bds_by_epoch: HashMap<(i32,i32), HashMap<u8, crate::types::BeiDouEphemeris>> = HashMap::new();
-        for eph in &c_nav_data.beidou_ephemeris { bds_by_epoch.entry((eph.week, eph.toe)).or_default().insert(eph.svid, *eph); }
-        let mut gal_by_epoch: HashMap<(i32,i32), HashMap<u8, GpsEphemeris>> = HashMap::new();
-        for eph in &c_nav_data.galileo_ephemeris { gal_by_epoch.entry((eph.week, eph.toe)).or_default().insert(eph.svid, *eph); }
+        let mut gps_by_epoch: HashMap<(i32, i32), HashMap<u8, GpsEphemeris>> = HashMap::new();
+        for eph in &c_nav_data.gps_ephemeris {
+            gps_by_epoch
+                .entry((eph.week, eph.toe))
+                .or_default()
+                .insert(eph.svid, *eph);
+        }
+        let mut bds_by_epoch: HashMap<(i32, i32), HashMap<u8, crate::types::BeiDouEphemeris>> =
+            HashMap::new();
+        for eph in &c_nav_data.beidou_ephemeris {
+            bds_by_epoch
+                .entry((eph.week, eph.toe))
+                .or_default()
+                .insert(eph.svid, *eph);
+        }
+        let mut gal_by_epoch: HashMap<(i32, i32), HashMap<u8, GpsEphemeris>> = HashMap::new();
+        for eph in &c_nav_data.galileo_ephemeris {
+            gal_by_epoch
+                .entry((eph.week, eph.toe))
+                .or_default()
+                .insert(eph.svid, *eph);
+        }
 
         // Кандидаты глобальной эпохи: все эпохи всех систем + целевое время пресета
         let mut candidates: HashSet<i64> = HashSet::new();
-        let gps_abs = |w:i32,t:i32| -> i64 { (w as i64)*604800 + (t as i64) };
-        let bds_abs = |w:i32,t:i32| -> i64 { ((w as i64)+1356)*604800 + (t as i64) }; // игнор 14с
-        let gal_abs = |w:i32,t:i32| -> i64 { ((w as i64)+1024)*604800 + (t as i64) };
-        for (&(w,t),_) in gps_by_epoch.iter() { candidates.insert(gps_abs(w,t)); }
-        for (&(w,t),_) in bds_by_epoch.iter() { candidates.insert(bds_abs(w,t)); }
-        for (&(w,t),_) in gal_by_epoch.iter() { candidates.insert(gal_abs(w,t)); }
+        let gps_abs = |w: i32, t: i32| -> i64 { (w as i64) * 604800 + (t as i64) };
+        let bds_abs = |w: i32, t: i32| -> i64 { ((w as i64) + 1356) * 604800 + (t as i64) }; // игнор 14с
+        let gal_abs = |w: i32, t: i32| -> i64 { ((w as i64) + 1024) * 604800 + (t as i64) };
+        for (&(w, t), _) in gps_by_epoch.iter() {
+            candidates.insert(gps_abs(w, t));
+        }
+        for (&(w, t), _) in bds_by_epoch.iter() {
+            candidates.insert(bds_abs(w, t));
+        }
+        for (&(w, t), _) in gal_by_epoch.iter() {
+            candidates.insert(gal_abs(w, t));
+        }
         let tgt_gps = utc_to_gps_time(utc_time, false);
-        let tgt_abs = (tgt_gps.Week as i64)*604800 + (tgt_gps.MilliSeconds as i64)/1000;
+        let tgt_abs = (tgt_gps.Week as i64) * 604800 + (tgt_gps.MilliSeconds as i64) / 1000;
         candidates.insert(tgt_abs);
 
         // Оценка кандидатов: максимизируем суммарное число SV в окне ±7200с, tie-break — минимальная суммарная |Δt|
         let window: i64 = 7200;
-        let mut best_cand: Option<i64> = None; let mut best_score: i32 = -1; let mut best_sum_diff: i64 = i64::MAX;
+        let mut best_cand: Option<i64> = None;
+        let mut best_score: i32 = -1;
+        let mut best_sum_diff: i64 = i64::MAX;
         for &cand in &candidates {
             // Оценка inline для каждой системы (без замыканий с разными типами)
-            let (gps_n, gps_d) = { let mut best: Option<i64> = None; let mut n=0; for (&(w,t),svmap) in &gps_by_epoch { let d=(gps_abs(w,t)-cand).abs(); if best.map_or(true, |bd| d<bd) { best=Some(d); n=svmap.len() as i32; } } if let Some(d)=best { if d<=window {(n,d)} else {(0,d)} } else {(0,i64::MAX)} };
-            let (bds_n, bds_d) = { let mut best: Option<i64> = None; let mut n=0; for (&(w,t),svmap) in &bds_by_epoch { let d=(bds_abs(w,t)-cand).abs(); if best.map_or(true, |bd| d<bd) { best=Some(d); n=svmap.len() as i32; } } if let Some(d)=best { if d<=window {(n,d)} else {(0,d)} } else {(0,i64::MAX)} };
-            let (gal_n, gal_d) = { let mut best: Option<i64> = None; let mut n=0; for (&(w,t),svmap) in &gal_by_epoch { let d=(gal_abs(w,t)-cand).abs(); if best.map_or(true, |bd| d<bd) { best=Some(d); n=svmap.len() as i32; } } if let Some(d)=best { if d<=window {(n,d)} else {(0,d)} } else {(0,i64::MAX)} };
+            let (gps_n, gps_d) = {
+                let mut best: Option<i64> = None;
+                let mut n = 0;
+                for (&(w, t), svmap) in &gps_by_epoch {
+                    let d = (gps_abs(w, t) - cand).abs();
+                    if best.map_or(true, |bd| d < bd) {
+                        best = Some(d);
+                        n = svmap.len() as i32;
+                    }
+                }
+                if let Some(d) = best {
+                    if d <= window {
+                        (n, d)
+                    } else {
+                        (0, d)
+                    }
+                } else {
+                    (0, i64::MAX)
+                }
+            };
+            let (bds_n, bds_d) = {
+                let mut best: Option<i64> = None;
+                let mut n = 0;
+                for (&(w, t), svmap) in &bds_by_epoch {
+                    let d = (bds_abs(w, t) - cand).abs();
+                    if best.map_or(true, |bd| d < bd) {
+                        best = Some(d);
+                        n = svmap.len() as i32;
+                    }
+                }
+                if let Some(d) = best {
+                    if d <= window {
+                        (n, d)
+                    } else {
+                        (0, d)
+                    }
+                } else {
+                    (0, i64::MAX)
+                }
+            };
+            let (gal_n, gal_d) = {
+                let mut best: Option<i64> = None;
+                let mut n = 0;
+                for (&(w, t), svmap) in &gal_by_epoch {
+                    let d = (gal_abs(w, t) - cand).abs();
+                    if best.map_or(true, |bd| d < bd) {
+                        best = Some(d);
+                        n = svmap.len() as i32;
+                    }
+                }
+                if let Some(d) = best {
+                    if d <= window {
+                        (n, d)
+                    } else {
+                        (0, d)
+                    }
+                } else {
+                    (0, i64::MAX)
+                }
+            };
             let score = gps_n + bds_n + gal_n;
             let sum_diff = gps_d.saturating_add(bds_d).saturating_add(gal_d);
-            if score > best_score || (score==best_score && sum_diff < best_sum_diff) { best_score=score; best_sum_diff=sum_diff; best_cand=Some(cand); }
+            if score > best_score || (score == best_score && sum_diff < best_sum_diff) {
+                best_score = score;
+                best_sum_diff = sum_diff;
+                best_cand = Some(cand);
+            }
         }
 
         // Заполняем выходные массивы по лучшему кандидату
-        self.gps_eph.fill(None); self.bds_eph.fill(None); self.gal_eph.fill(None);
+        self.gps_eph.fill(None);
+        self.bds_eph.fill(None);
+        self.gal_eph.fill(None);
         if let Some(cand) = best_cand {
             // GPS
             if !gps_by_epoch.is_empty() {
-                let mut best: Option<((i32,i32), i64)> = None; for (&(w,t),_) in &gps_by_epoch { let d=(gps_abs(w,t)-cand).abs(); if best.map_or(true, |(_,bd)| d<bd) { best=Some(((w,t),d)); } }
-                if let Some(((w,t),d)) = best { if d<=window { if let Some(map)=gps_by_epoch.get(&(w,t)) { for (&svid,eph) in map { let idx=(svid as usize).saturating_sub(1); if idx<TOTAL_GPS_SAT { self.gps_eph[idx]=Some(*eph); } } println!("[EPOCH] GPS: week={}, toe={}, |Δt|={}s, sats={}", w, t, d, map.len()); } } }
+                let mut best: Option<((i32, i32), i64)> = None;
+                for (&(w, t), _) in &gps_by_epoch {
+                    let d = (gps_abs(w, t) - cand).abs();
+                    if best.map_or(true, |(_, bd)| d < bd) {
+                        best = Some(((w, t), d));
+                    }
+                }
+                if let Some(((w, t), d)) = best {
+                    if d <= window {
+                        if let Some(map) = gps_by_epoch.get(&(w, t)) {
+                            for (&svid, eph) in map {
+                                let idx = (svid as usize).saturating_sub(1);
+                                if idx < TOTAL_GPS_SAT {
+                                    self.gps_eph[idx] = Some(*eph);
+                                }
+                            }
+                            println!(
+                                "[EPOCH] GPS: week={}, toe={}, |Δt|={}s, sats={}",
+                                w,
+                                t,
+                                d,
+                                map.len()
+                            );
+                        }
+                    }
+                }
             }
             // BDS
             if !bds_by_epoch.is_empty() {
-                let mut best: Option<((i32,i32), i64)> = None; for (&(w,t),_) in &bds_by_epoch { let d=(bds_abs(w,t)-cand).abs(); if best.map_or(true, |(_,bd)| d<bd) { best=Some(((w,t),d)); } }
-                if let Some(((w,t),d)) = best { if d<=window { if let Some(map)=bds_by_epoch.get(&(w,t)) { for (&svid, bds) in map { let idx=(svid as usize).saturating_sub(1); if idx<TOTAL_BDS_SAT { self.bds_eph[idx]=Some(bds.to_gps_ephemeris()); } } println!("[EPOCH] BDS: week={}, toe={}, |Δt|={}s, sats={}", w, t, d, map.len()); } } }
+                let mut best: Option<((i32, i32), i64)> = None;
+                for (&(w, t), _) in &bds_by_epoch {
+                    let d = (bds_abs(w, t) - cand).abs();
+                    if best.map_or(true, |(_, bd)| d < bd) {
+                        best = Some(((w, t), d));
+                    }
+                }
+                if let Some(((w, t), d)) = best {
+                    if d <= window {
+                        if let Some(map) = bds_by_epoch.get(&(w, t)) {
+                            for (&svid, bds) in map {
+                                let idx = (svid as usize).saturating_sub(1);
+                                if idx < TOTAL_BDS_SAT {
+                                    self.bds_eph[idx] = Some(bds.to_gps_ephemeris());
+                                }
+                            }
+                            println!(
+                                "[EPOCH] BDS: week={}, toe={}, |Δt|={}s, sats={}",
+                                w,
+                                t,
+                                d,
+                                map.len()
+                            );
+                        }
+                    }
+                }
             }
             // GAL
             if !gal_by_epoch.is_empty() {
-                let mut best: Option<((i32,i32), i64)> = None; for (&(w,t),_) in &gal_by_epoch { let d=(gal_abs(w,t)-cand).abs(); if best.map_or(true, |(_,bd)| d<bd) { best=Some(((w,t),d)); } }
-                if let Some(((w,t),d)) = best { if d<=window { if let Some(map)=gal_by_epoch.get(&(w,t)) { for (&svid,eph) in map { let idx=(svid as usize).saturating_sub(1); if idx<TOTAL_GAL_SAT { self.gal_eph[idx]=Some(*eph); } } println!("[EPOCH] GAL: week={}, toe={}, |Δt|={}s, sats={}", w, t, d, map.len()); } } }
+                let mut best: Option<((i32, i32), i64)> = None;
+                for (&(w, t), _) in &gal_by_epoch {
+                    let d = (gal_abs(w, t) - cand).abs();
+                    if best.map_or(true, |(_, bd)| d < bd) {
+                        best = Some(((w, t), d));
+                    }
+                }
+                if let Some(((w, t), d)) = best {
+                    if d <= window {
+                        if let Some(map) = gal_by_epoch.get(&(w, t)) {
+                            for (&svid, eph) in map {
+                                let idx = (svid as usize).saturating_sub(1);
+                                if idx < TOTAL_GAL_SAT {
+                                    self.gal_eph[idx] = Some(*eph);
+                                }
+                            }
+                            println!(
+                                "[EPOCH] GAL: week={}, toe={}, |Δt|={}s, sats={}",
+                                w,
+                                t,
+                                d,
+                                map.len()
+                            );
+                        }
+                    }
+                }
             }
-            println!("[EPOCH] Global candidate (GPS sec): {} (score={}, sum|Δt|={}s)", cand, best_score, best_sum_diff);
+            println!(
+                "[EPOCH] Global candidate (GPS sec): {} (score={}, sum|Δt|={}s)",
+                cand, best_score, best_sum_diff
+            );
         } else {
             println!("[WARN] No global epoch candidate available");
         }
     }
 
     // C-совместимый выбор: для каждого спутника выбираем ближайшую эфемериду в пределах окна.
-    fn select_per_satellite_and_fill(&mut self, c_nav_data: &crate::json_interpreter::CNavData, utc_time: UtcTime) {
+    fn select_per_satellite_and_fill(
+        &mut self,
+        c_nav_data: &crate::json_interpreter::CNavData,
+        utc_time: UtcTime,
+    ) {
         // Очистка
-        self.gps_eph.fill(None); self.bds_eph.fill(None); self.gal_eph.fill(None); self.glo_eph.fill(None);
+        self.gps_eph.fill(None);
+        self.bds_eph.fill(None);
+        self.gal_eph.fill(None);
+        self.glo_eph.fill(None);
 
         // 1) GPS (UTC→GPS)
         let tgt_gps = utc_to_gps_time(utc_time, false);
-        let tgt_week = tgt_gps.Week; let tgt_sec = (tgt_gps.MilliSeconds/1000) as i64;
-        for svid in 1..=TOTAL_GPS_SAT { let mut best: Option<(GpsEphemeris,i64)> = None; for eph in &c_nav_data.gps_ephemeris { if eph.svid as usize == svid && eph.health==0 { let diff = ((tgt_week - eph.week) as i64)*604800 + (tgt_sec - eph.toe as i64); let ad = diff.abs(); if ad <= 7200 && best.map_or(true, |(_,bd)| ad<bd){ best = Some((*eph,ad)); } } } if let Some((eph,_))=best { self.gps_eph[svid-1]=Some(eph); } }
-
-        // 2) BeiDou (UTC→BDT)
-        let tgt_bds = utc_to_bds_time(utc_time); let bw=tgt_bds.Week; let bs=(tgt_bds.MilliSeconds/1000) as i64;
-        for svid in 1..=TOTAL_BDS_SAT { let mut best: Option<(GpsEphemeris,i64)> = None; for eph in &c_nav_data.beidou_ephemeris { if eph.svid as usize == svid && eph.health==0 { let diff = ((bw - eph.week) as i64)*604800 + (bs - eph.toe as i64); let ad=diff.abs(); if ad<=7200 && best.map_or(true, |(_,bd)| ad<bd){ best=Some((eph.to_gps_ephemeris(),ad)); } } } if let Some((eph,_))=best { self.bds_eph[svid-1]=Some(eph); } }
-
-        // 3) Galileo (UTC→GPS) — как в C-версии
-        let tgt_gps = utc_to_gps_time(utc_time, false); let gw=tgt_gps.Week; let gs=(tgt_gps.MilliSeconds/1000) as i64;
-        for svid in 1..=TOTAL_GAL_SAT { let mut best: Option<(GpsEphemeris,i64)> = None; for eph in &c_nav_data.galileo_ephemeris { if eph.svid as usize == svid && eph.health==0 { let diff=((gw - eph.week) as i64)*604800 + (gs - eph.toe as i64); let ad=diff.abs(); if ad<=7200 && best.map_or(true, |(_,bd)| ad<bd){ best=Some((*eph,ad)); } } } if let Some((eph,_))=best { self.gal_eph[svid-1]=Some(eph); } }
-
-        // 4) ГЛОНАСС (UTC→ГЛОНАСС) — окно 1800с
-        let gtime = utc_to_glonass_time_corrected(utc_time); let req_day = gtime.Day; let req_sec=(gtime.MilliSeconds/1000) as i64;
-        for slot in 1..=TOTAL_GLO_SAT {
-            let mut best: Option<(crate::types::GlonassEphemeris,i64)> = None;
-            for eph in &c_nav_data.glonass_ephemeris {
-                if eph.slot as usize == slot && eph.flag!=0 {
-                    let mut day_diff = (req_day - eph.day as i32) as i64;
-                    if day_diff>183 { day_diff-=365; } else if day_diff < -183 { day_diff+=365; }
-                    let diff = day_diff*86400 + (req_sec - eph.tb as i64);
+        let tgt_week = tgt_gps.Week;
+        let tgt_sec = (tgt_gps.MilliSeconds / 1000) as i64;
+        for svid in 1..=TOTAL_GPS_SAT {
+            let mut best: Option<(GpsEphemeris, i64)> = None;
+            for eph in &c_nav_data.gps_ephemeris {
+                if eph.svid as usize == svid && eph.health == 0 {
+                    let diff = ((tgt_week - eph.week) as i64) * 604800 + (tgt_sec - eph.toe as i64);
                     let ad = diff.abs();
-                    if ad<=1800 && best.map_or(true, |(_,bd)| ad<bd) { best=Some((*eph,ad)); }
+                    if ad <= 7200 && best.map_or(true, |(_, bd)| ad < bd) {
+                        best = Some((*eph, ad));
+                    }
                 }
             }
-            if let Some((eph,_))=best { self.glo_eph[slot-1]=Some(eph); }
+            if let Some((eph, _)) = best {
+                self.gps_eph[svid - 1] = Some(eph);
+            }
+        }
+
+        // 2) BeiDou (UTC→BDT)
+        let tgt_bds = utc_to_bds_time(utc_time);
+        let bw = tgt_bds.Week;
+        let bs = (tgt_bds.MilliSeconds / 1000) as i64;
+        for svid in 1..=TOTAL_BDS_SAT {
+            let mut best: Option<(GpsEphemeris, i64)> = None;
+            for eph in &c_nav_data.beidou_ephemeris {
+                if eph.svid as usize == svid && eph.health == 0 {
+                    let diff = ((bw - eph.week) as i64) * 604800 + (bs - eph.toe as i64);
+                    let ad = diff.abs();
+                    if ad <= 7200 && best.map_or(true, |(_, bd)| ad < bd) {
+                        best = Some((eph.to_gps_ephemeris(), ad));
+                    }
+                }
+            }
+            if let Some((eph, _)) = best {
+                self.bds_eph[svid - 1] = Some(eph);
+            }
+        }
+
+        // 3) Galileo (UTC→GPS) — как в C-версии
+        let tgt_gps = utc_to_gps_time(utc_time, false);
+        let gw = tgt_gps.Week;
+        let gs = (tgt_gps.MilliSeconds / 1000) as i64;
+        for svid in 1..=TOTAL_GAL_SAT {
+            let mut best: Option<(GpsEphemeris, i64)> = None;
+            for eph in &c_nav_data.galileo_ephemeris {
+                if eph.svid as usize == svid && eph.health == 0 {
+                    let diff = ((gw - eph.week) as i64) * 604800 + (gs - eph.toe as i64);
+                    let ad = diff.abs();
+                    if ad <= 7200 && best.map_or(true, |(_, bd)| ad < bd) {
+                        best = Some((*eph, ad));
+                    }
+                }
+            }
+            if let Some((eph, _)) = best {
+                self.gal_eph[svid - 1] = Some(eph);
+            }
+        }
+
+        // 4) ГЛОНАСС (UTC→ГЛОНАСС) — окно 1800с
+        let gtime = utc_to_glonass_time_corrected(utc_time);
+        let req_day = gtime.Day;
+        let req_sec = (gtime.MilliSeconds / 1000) as i64;
+        for slot in 1..=TOTAL_GLO_SAT {
+            let mut best: Option<(crate::types::GlonassEphemeris, i64)> = None;
+            for eph in &c_nav_data.glonass_ephemeris {
+                if eph.slot as usize == slot && eph.flag != 0 {
+                    let mut day_diff = (req_day - eph.day as i32) as i64;
+                    if day_diff > 183 {
+                        day_diff -= 365;
+                    } else if day_diff < -183 {
+                        day_diff += 365;
+                    }
+                    let diff = day_diff * 86400 + (req_sec - eph.tb as i64);
+                    let ad = diff.abs();
+                    if ad <= 1800 && best.map_or(true, |(_, bd)| ad < bd) {
+                        best = Some((*eph, ad));
+                    }
+                }
+            }
+            if let Some((eph, _)) = best {
+                self.glo_eph[slot - 1] = Some(eph);
+            }
         }
     }
 
-
-    fn setup_navigation_data(&mut self, nav_bit_array: &mut Vec<Option<UnifiedNavData>>, 
-                           utc_time: UtcTime, glonass_time: GlonassTime, _bds_time: GnssTime) -> Result<(), Box<dyn std::error::Error>> {
-        
+    fn setup_navigation_data(
+        &mut self,
+        nav_bit_array: &mut Vec<Option<UnifiedNavData>>,
+        utc_time: UtcTime,
+        glonass_time: GlonassTime,
+        _bds_time: GnssTime,
+    ) -> Result<(), Box<dyn std::error::Error>> {
         // Set Ionosphere and UTC parameters for different navigation data bits
         if let Some(ref mut nav_bit) = nav_bit_array[DataBitType::DataBitLNav as usize] {
-            nav_bit.set_iono_utc(self.nav_data.get_gps_iono(), self.nav_data.get_gps_utc_param());
+            nav_bit.set_iono_utc(
+                self.nav_data.get_gps_iono(),
+                self.nav_data.get_gps_utc_param(),
+            );
         }
         if let Some(ref mut nav_bit) = nav_bit_array[DataBitType::DataBitCNav as usize] {
-            nav_bit.set_iono_utc(self.nav_data.get_gps_iono(), self.nav_data.get_gps_utc_param());
+            nav_bit.set_iono_utc(
+                self.nav_data.get_gps_iono(),
+                self.nav_data.get_gps_utc_param(),
+            );
         }
         if let Some(ref mut nav_bit) = nav_bit_array[DataBitType::DataBitCNav2 as usize] {
-            nav_bit.set_iono_utc(self.nav_data.get_gps_iono(), self.nav_data.get_gps_utc_param());
+            nav_bit.set_iono_utc(
+                self.nav_data.get_gps_iono(),
+                self.nav_data.get_gps_utc_param(),
+            );
         }
         if let Some(ref mut nav_bit) = nav_bit_array[DataBitType::DataBitD1D2 as usize] {
-            nav_bit.set_iono_utc(self.nav_data.get_bds_iono(), self.nav_data.get_bds_utc_param());
+            nav_bit.set_iono_utc(
+                self.nav_data.get_bds_iono(),
+                self.nav_data.get_bds_utc_param(),
+            );
         }
         if let Some(ref mut nav_bit) = nav_bit_array[DataBitType::DataBitBCNav1 as usize] {
-            nav_bit.set_iono_utc(self.nav_data.get_bds_iono(), self.nav_data.get_bds_utc_param());
+            nav_bit.set_iono_utc(
+                self.nav_data.get_bds_iono(),
+                self.nav_data.get_bds_utc_param(),
+            );
         }
         if let Some(ref mut nav_bit) = nav_bit_array[DataBitType::DataBitINav as usize] {
-            nav_bit.set_iono_utc(self.nav_data.get_galileo_iono(), self.nav_data.get_galileo_utc_param());
+            nav_bit.set_iono_utc(
+                self.nav_data.get_galileo_iono(),
+                self.nav_data.get_galileo_utc_param(),
+            );
         }
         if let Some(ref mut nav_bit) = nav_bit_array[DataBitType::DataBitFNav as usize] {
-            nav_bit.set_iono_utc(self.nav_data.get_galileo_iono(), self.nav_data.get_galileo_utc_param());
+            nav_bit.set_iono_utc(
+                self.nav_data.get_galileo_iono(),
+                self.nav_data.get_galileo_utc_param(),
+            );
         }
         if let Some(ref mut nav_bit) = nav_bit_array[DataBitType::DataBitGNav as usize] {
             nav_bit.set_iono_utc(None, self.nav_data.get_gps_utc_param()); // GLONASS uses GPS UTC parameters
@@ -953,12 +1495,18 @@ impl IFDataGen {
         // Find ephemeris matching current time and fill in data to generate bit stream
         // Не перезаписываем ранее выбранные RINEX-эфемериды; дополняем только при отсутствии
         for i in 1..=TOTAL_GPS_SAT {
-            if self.gps_eph[i-1].is_none() {
-                self.gps_eph[i-1] = self.nav_data.find_ephemeris(GnssSystem::GpsSystem, self.cur_time, i as i32, 0, 0);
+            if self.gps_eph[i - 1].is_none() {
+                self.gps_eph[i - 1] = self.nav_data.find_ephemeris(
+                    GnssSystem::GpsSystem,
+                    self.cur_time,
+                    i as i32,
+                    0,
+                    0,
+                );
             }
-            
+
             // For L1CA/L1C/L2C/L5, all can use the same ephemeris data
-            if let Some(ref eph) = self.gps_eph[i-1] {
+            if let Some(ref eph) = self.gps_eph[i - 1] {
                 if let Some(ref mut nav_bit) = nav_bit_array[DataBitType::DataBitLNav as usize] {
                     nav_bit.set_ephemeris(i as i32, eph);
                 }
@@ -978,12 +1526,12 @@ impl IFDataGen {
         // Они уже правильно скопированы из JSON в copy_beidou_ephemeris_from_json_nav_data
         // find_ephemeris ищет в nav_data.bds_ephemeris, но не в bds_ephemeris_pool
         println!("[DEBUG] Skipping find_ephemeris loop for BeiDou - data already copied from JSON");
-        
+
         /*
         for i in 1..=TOTAL_BDS_SAT {
             let found_eph = self.nav_data.find_ephemeris(GnssSystem::BdsSystem, bds_time, i as i32, 0, 0);
             self.bds_eph[i-1] = found_eph;
-            
+
             if let Some(ref eph) = self.bds_eph[i-1] {
                 if let Some(ref mut nav_bit) = nav_bit_array[DataBitType::DataBitD1D2 as usize] {
                     nav_bit.set_ephemeris(i as i32, eph);
@@ -1000,7 +1548,7 @@ impl IFDataGen {
             }
         }
         */
-        
+
         // Вместо перезаписи инициализируем навигационные биты для уже загруженных BeiDou эфемерид
         for i in 0..TOTAL_BDS_SAT {
             if let Some(ref eph) = self.bds_eph[i] {
@@ -1027,18 +1575,19 @@ impl IFDataGen {
                     nav_bit.set_ephemeris((i + 1) as i32, eph); // SVID starts from 1
                 }
                 if let Some(ref mut nav_bit) = nav_bit_array[DataBitType::DataBitFNav as usize] {
-                    nav_bit.set_ephemeris((i + 1) as i32, eph); // SVID starts from 1  
+                    nav_bit.set_ephemeris((i + 1) as i32, eph); // SVID starts from 1
                 }
             }
         }
 
         let mut glo_eph_count = 0;
         for i in 1..=TOTAL_GLO_SAT {
-            self.glo_eph[i-1] = self.nav_data.find_glo_ephemeris(glonass_time, i as i32);
-            
-            if let Some(ref eph) = self.glo_eph[i-1] {
+            self.glo_eph[i - 1] = self.nav_data.find_glo_ephemeris(glonass_time, i as i32);
+
+            if let Some(ref eph) = self.glo_eph[i - 1] {
                 if eph.flag != 0 {
-                    if let Some(ref mut nav_bit) = nav_bit_array[DataBitType::DataBitGNav as usize] {
+                    if let Some(ref mut nav_bit) = nav_bit_array[DataBitType::DataBitGNav as usize]
+                    {
                         // Convert GLONASS ephemeris to GPS format for compatibility
                         let gps_eph = self.convert_glonass_to_gps_ephemeris(eph);
                         nav_bit.set_ephemeris(i as i32, &gps_eph);
@@ -1047,18 +1596,29 @@ impl IFDataGen {
                 }
             }
         }
-        println!("[INFO] GLONASS ephemeris loaded: {} satellites", glo_eph_count);
+        println!(
+            "[INFO] GLONASS ephemeris loaded: {} satellites",
+            glo_eph_count
+        );
 
         // Complete almanac data
-        self.nav_data.complete_almanac(GnssSystem::GpsSystem, utc_time);
-        self.nav_data.complete_almanac(GnssSystem::BdsSystem, utc_time);
-        self.nav_data.complete_almanac(GnssSystem::GalileoSystem, utc_time);
-        self.nav_data.complete_almanac(GnssSystem::GlonassSystem, utc_time);
+        self.nav_data
+            .complete_almanac(GnssSystem::GpsSystem, utc_time);
+        self.nav_data
+            .complete_almanac(GnssSystem::BdsSystem, utc_time);
+        self.nav_data
+            .complete_almanac(GnssSystem::GalileoSystem, utc_time);
+        self.nav_data
+            .complete_almanac(GnssSystem::GlonassSystem, utc_time);
 
         // Generate GPS almanac from ephemeris data for all 32 satellites
         let gps_time = utc_to_gps_time(utc_time, true);
-        self.nav_data.generate_gps_almanac_from_ephemeris(gps_time.Week);
-        println!("[GPS-ALMANAC] Generated GPS almanac from ephemeris data for week {}", gps_time.Week);
+        self.nav_data
+            .generate_gps_almanac_from_ephemeris(gps_time.Week);
+        println!(
+            "[GPS-ALMANAC] Generated GPS almanac from ephemeris data for week {}",
+            gps_time.Week
+        );
 
         // Set almanac data for navigation bits
         if let Some(ref mut nav_bit) = nav_bit_array[DataBitType::DataBitLNav as usize] {
@@ -1093,15 +1653,23 @@ impl IFDataGen {
         }
         if let Some(ref mut nav_bit) = nav_bit_array[DataBitType::DataBitGNav as usize] {
             // Convert GLONASS almanac to GPS format for compatibility
-            let gps_almanac = self.convert_glonass_to_gps_almanac(self.nav_data.get_glonass_almanac());
+            let gps_almanac =
+                self.convert_glonass_to_gps_almanac(self.nav_data.get_glonass_almanac());
             nav_bit.set_almanac(&gps_almanac);
         }
 
         Ok(())
-    }    fn calculate_visible_satellites(&mut self, cur_pos: KinematicInfo, glonass_time: GlonassTime) -> Result<(), Box<dyn std::error::Error>> {
-        println!("[INFO]\tCalculating visible satellites at position ({:.1}, {:.1}, {:.1})", 
-                 cur_pos.x, cur_pos.y, cur_pos.z);
-        
+    }
+    fn calculate_visible_satellites(
+        &mut self,
+        cur_pos: KinematicInfo,
+        glonass_time: GlonassTime,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        println!(
+            "[INFO]\tCalculating visible satellites at position ({:.1}, {:.1}, {:.1})",
+            cur_pos.x, cur_pos.y, cur_pos.z
+        );
+
         // ОТЛАДКА: Вызываем функцию проверки позиций эталонных спутников
         // Конвертируем BDS эфемериды в массив BeiDouEphemeris
         let mut beidou_eph_array: [Option<BeiDouEphemeris>; 64] = [None; 64];
@@ -1114,7 +1682,7 @@ impl IFDataGen {
                 }
             }
         }
-        
+
         crate::debug_positions::debug_satellite_positions(
             &self.gps_eph,
             &beidou_eph_array,
@@ -1122,7 +1690,7 @@ impl IFDataGen {
             &self.cur_time,
             &cur_pos,
         );
-        
+
         // Debug: check if we have ephemeris before calculating visibility
         let mut total_gps_eph = 0;
         for i in 0..TOTAL_GPS_SAT {
@@ -1130,169 +1698,260 @@ impl IFDataGen {
                 total_gps_eph += 1;
             }
         }
-        println!("[DEBUG] Total GPS ephemeris available: {}/{}", total_gps_eph, TOTAL_GPS_SAT);
-        
+        println!(
+            "[DEBUG] Total GPS ephemeris available: {}/{}",
+            total_gps_eph, TOTAL_GPS_SAT
+        );
+
         // Calculate visible GPS satellites
         self.gps_sat_number = if self.output_param.CompactConfig.should_parse_gps() {
             let mut sat_number = 0;
             let elevation_mask = self.output_param.ElevationMask;
-            
+
             // КАК В C ВЕРСИИ: передаем только секунды недели, не полное время
             let transmit_time = (self.cur_time.MilliSeconds as f64) / 1000.0;
-            
+
             println!("[DEBUG] GPS Visibility Analysis:");
-            println!("[DEBUG] Current GPS time: Week={}, MS={}, Seconds={:.1}", 
-                     self.cur_time.Week, self.cur_time.MilliSeconds, transmit_time);
-            println!("[DEBUG] Receiver position: ({:.1}, {:.1}, {:.1})", cur_pos.x, cur_pos.y, cur_pos.z);
-            println!("[DEBUG] GPS mask out value: 0x{:08x}, elevation mask: {}°", 
-                     self.output_param.GpsMaskOut, elevation_mask.to_degrees());
-            
+            println!(
+                "[DEBUG] Current GPS time: Week={}, MS={}, Seconds={:.1}",
+                self.cur_time.Week, self.cur_time.MilliSeconds, transmit_time
+            );
+            println!(
+                "[DEBUG] Receiver position: ({:.1}, {:.1}, {:.1})",
+                cur_pos.x, cur_pos.y, cur_pos.z
+            );
+            println!(
+                "[DEBUG] GPS mask out value: 0x{:08x}, elevation mask: {}°",
+                self.output_param.GpsMaskOut,
+                elevation_mask.to_degrees()
+            );
+
             for i in 0..TOTAL_GPS_SAT {
                 if let Some(eph) = &self.gps_eph[i] {
                     println!("[DEBUG] Checking GPS satellite {} (SVID {})", i, eph.svid);
-                    
+
                     // Check health and validity
                     if (eph.valid & 1) == 0 {
-                        println!("[DEBUG] Satellite {} rejected: invalid (valid={})", i, eph.valid);
+                        println!(
+                            "[DEBUG] Satellite {} rejected: invalid (valid={})",
+                            i, eph.valid
+                        );
                         continue;
                     }
                     if eph.health != 0 {
-                        println!("[DEBUG] Satellite {} rejected: unhealthy (health={})", i, eph.health);
+                        println!(
+                            "[DEBUG] Satellite {} rejected: unhealthy (health={})",
+                            i, eph.health
+                        );
                         continue;
                     }
-                    
+
                     // Check mask out
                     if (self.output_param.GpsMaskOut & (1u32 << i)) != 0 {
                         println!("[DEBUG] Satellite {} rejected: masked out", i);
                         continue;
                     }
-                    
+
                     // Calculate satellite position
                     // КАК В C ВЕРСИИ: передаем только секунды недели, не полное время
-            let transmit_time = (self.cur_time.MilliSeconds as f64) / 1000.0;
+                    let transmit_time = (self.cur_time.MilliSeconds as f64) / 1000.0;
                     let mut sat_pos = KinematicInfo::default();
                     let mut eph_mut = *eph; // Копируем эфемериды для мутабельности
-                    // Для отладочного вывода используем секунды недели
+                                            // Для отладочного вывода используем секунды недели
                     let transmit_time_week_seconds = (self.cur_time.MilliSeconds as f64) / 1000.0;
                     let delta_t_gps = transmit_time_week_seconds - eph.toe as f64;
-                    println!("[DEBUG] GPS{:02} - toe={}, transmit_time_week={}, delta_t={:.1}h", i+1, eph.toe, transmit_time_week_seconds, delta_t_gps / 3600.0);
-                    if crate::coordinate::gps_sat_pos_speed_eph(GnssSystem::GpsSystem, transmit_time, &mut eph_mut, &mut sat_pos, None) {
-                        let range = ((sat_pos.x - cur_pos.x).powi(2) + 
-                                     (sat_pos.y - cur_pos.y).powi(2) + 
-                                     (sat_pos.z - cur_pos.z).powi(2)).sqrt();
-                        println!("[DEBUG] Satellite {} position: ({:.1}, {:.1}, {:.1}), range: {:.0}km", 
-                                 i, sat_pos.x, sat_pos.y, sat_pos.z, range/1000.0);
-                        
+                    println!(
+                        "[DEBUG] GPS{:02} - toe={}, transmit_time_week={}, delta_t={:.1}h",
+                        i + 1,
+                        eph.toe,
+                        transmit_time_week_seconds,
+                        delta_t_gps / 3600.0
+                    );
+                    if crate::coordinate::gps_sat_pos_speed_eph(
+                        GnssSystem::GpsSystem,
+                        transmit_time,
+                        &mut eph_mut,
+                        &mut sat_pos,
+                        None,
+                    ) {
+                        let range = ((sat_pos.x - cur_pos.x).powi(2)
+                            + (sat_pos.y - cur_pos.y).powi(2)
+                            + (sat_pos.z - cur_pos.z).powi(2))
+                        .sqrt();
+                        println!(
+                            "[DEBUG] Satellite {} position: ({:.1}, {:.1}, {:.1}), range: {:.0}km",
+                            i,
+                            sat_pos.x,
+                            sat_pos.y,
+                            sat_pos.z,
+                            range / 1000.0
+                        );
+
                         // Calculate elevation and azimuth using coordinate.rs function
                         let mut elevation = 0.0;
                         let mut azimuth = 0.0;
-                        crate::coordinate::sat_el_az_from_positions(&cur_pos, &sat_pos, &mut elevation, &mut azimuth);
+                        crate::coordinate::sat_el_az_from_positions(
+                            &cur_pos,
+                            &sat_pos,
+                            &mut elevation,
+                            &mut azimuth,
+                        );
                         // Специальная отладка для GPS 13 и 27
-                        if i == 12 || i == 26 {  // GPS 13 (индекс 12) и GPS 27 (индекс 26)
+                        if i == 12 || i == 26 {
+                            // GPS 13 (индекс 12) и GPS 27 (индекс 26)
                             let dx = sat_pos.x - cur_pos.x;
                             let dy = sat_pos.y - cur_pos.y;
                             let dz = sat_pos.z - cur_pos.z;
-                            let r = (dx*dx + dy*dy + dz*dz).sqrt();
+                            let r = (dx * dx + dy * dy + dz * dz).sqrt();
                             // DEBUG: GPS Delta и LOS отключены для уменьшения вывода
-                            // println!("[GPS{:02}-DEBUG] Delta: ({:.1}, {:.1}, {:.1}), Range: {:.1}", 
+                            // println!("[GPS{:02}-DEBUG] Delta: ({:.1}, {:.1}, {:.1}), Range: {:.1}",
                             //          i+1, dx, dy, dz, r);
-                            // println!("[GPS{:02}-DEBUG] LOS: ({:.4}, {:.4}, {:.4})", 
+                            // println!("[GPS{:02}-DEBUG] LOS: ({:.4}, {:.4}, {:.4})",
                             //          i+1, dx/r, dy/r, dz/r);
                             // Вычислим азимут вручную
                             let rcv_lla = crate::coordinate::ecef_to_lla(&cur_pos);
                             let lat = rcv_lla.lat;
                             let lon = rcv_lla.lon;
-                            let los_e = -(dx/r) * lon.sin() + (dy/r) * lon.cos();
-                            let los_n = -(dx/r) * lat.sin() * lon.cos() - (dy/r) * lat.sin() * lon.sin() + (dz/r) * lat.cos();
+                            let los_e = -(dx / r) * lon.sin() + (dy / r) * lon.cos();
+                            let los_n = -(dx / r) * lat.sin() * lon.cos()
+                                - (dy / r) * lat.sin() * lon.sin()
+                                + (dz / r) * lat.cos();
                             let manual_az = los_e.atan2(los_n);
-                            let manual_az_deg = if manual_az < 0.0 { manual_az + 2.0*std::f64::consts::PI } else { manual_az };
+                            let manual_az_deg = if manual_az < 0.0 {
+                                manual_az + 2.0 * std::f64::consts::PI
+                            } else {
+                                manual_az
+                            };
                             // DEBUG: GPS вычисления отключены для уменьшения вывода
-                            // println!("[GPS{:02}-DEBUG] Manual calc: E={:.4}, N={:.4}, Az={:.1}°", 
+                            // println!("[GPS{:02}-DEBUG] Manual calc: E={:.4}, N={:.4}, Az={:.1}°",
                             //          i+1, los_e, los_n, manual_az_deg.to_degrees());
-                            // println!("[GPS{:02}-DEBUG] Function returned: Elevation: {:.1}°, Azimuth: {:.1}°", 
+                            // println!("[GPS{:02}-DEBUG] Function returned: Elevation: {:.1}°, Azimuth: {:.1}°",
                             //          i+1, elevation.to_degrees(), azimuth.to_degrees());
                         }
-                        println!("[DEBUG] Satellite {} elevation: {:.1}°, azimuth: {:.1}°, mask: {:.1}°", 
-                                 i, elevation.to_degrees(), azimuth.to_degrees(), elevation_mask.to_degrees());
-                        
+                        println!(
+                            "[DEBUG] Satellite {} elevation: {:.1}°, azimuth: {:.1}°, mask: {:.1}°",
+                            i,
+                            elevation.to_degrees(),
+                            azimuth.to_degrees(),
+                            elevation_mask.to_degrees()
+                        );
+
                         if elevation >= elevation_mask {
                             if sat_number < TOTAL_GPS_SAT {
                                 self.gps_eph_visible[sat_number] = Some(*eph);
                                 sat_number += 1;
-                                println!("[DEBUG] Satellite {} added as visible #{}", i, sat_number);
+                                println!(
+                                    "[DEBUG] Satellite {} added as visible #{}",
+                                    i, sat_number
+                                );
                             }
                         } else {
                             println!("[DEBUG] Satellite {} rejected: elevation too low ({:.1}° < {:.1}°)", 
                                      i, elevation.to_degrees(), elevation_mask);
                         }
                     } else {
-                        println!("[DEBUG] Satellite {} rejected: position calculation failed", i);
+                        println!(
+                            "[DEBUG] Satellite {} rejected: position calculation failed",
+                            i
+                        );
                     }
-                } else if i < 10 { // Показать только первые 10 для краткости
+                } else if i < 10 {
+                    // Показать только первые 10 для краткости
                     println!("[DEBUG] No ephemeris for GPS satellite {}", i);
                 }
             }
             println!("[INFO]\tFound {} visible GPS satellites", sat_number);
-            
+
             // Подробная таблица видимых GPS спутников как в C-версии
             if sat_number > 0 {
                 println!("┌─────┬─────┬──────────┬──────────┬─────────────┬──────────┐");
                 println!("│ PRN │ SV  │ Elev(°)  │ Azim(°)  │ Doppler(Hz) │ Range(m) │");
                 println!("├─────┼─────┼──────────┼──────────┼─────────────┼──────────┤");
-                
+
                 for j in 0..sat_number {
                     if let Some(eph) = &self.gps_eph_visible[j] {
                         // КАК В C ВЕРСИИ: передаем только секунды недели, не полное время
-            let transmit_time = (self.cur_time.MilliSeconds as f64) / 1000.0;
+                        let transmit_time = (self.cur_time.MilliSeconds as f64) / 1000.0;
                         let mut sat_pos_vel = KinematicInfo::default();
                         let mut eph_mut = *eph;
-                        
-                        if crate::coordinate::gps_sat_pos_speed_eph(GnssSystem::GpsSystem, transmit_time, &mut eph_mut, &mut sat_pos_vel, None) {
+
+                        if crate::coordinate::gps_sat_pos_speed_eph(
+                            GnssSystem::GpsSystem,
+                            transmit_time,
+                            &mut eph_mut,
+                            &mut sat_pos_vel,
+                            None,
+                        ) {
                             let mut elevation = 0.0;
                             let mut azimuth = 0.0;
-                            crate::coordinate::sat_el_az_from_positions(&cur_pos, &sat_pos_vel, &mut elevation, &mut azimuth);
-                            
-                            let range = ((sat_pos_vel.x - cur_pos.x).powi(2) + 
-                                        (sat_pos_vel.y - cur_pos.y).powi(2) + 
-                                        (sat_pos_vel.z - cur_pos.z).powi(2)).sqrt();
-                            
+                            crate::coordinate::sat_el_az_from_positions(
+                                &cur_pos,
+                                &sat_pos_vel,
+                                &mut elevation,
+                                &mut azimuth,
+                            );
+
+                            let range = ((sat_pos_vel.x - cur_pos.x).powi(2)
+                                + (sat_pos_vel.y - cur_pos.y).powi(2)
+                                + (sat_pos_vel.z - cur_pos.z).powi(2))
+                            .sqrt();
+
                             // Вычисление Doppler частоты
                             let los_x = (sat_pos_vel.x - cur_pos.x) / range;
                             let los_y = (sat_pos_vel.y - cur_pos.y) / range;
                             let los_z = (sat_pos_vel.z - cur_pos.z) / range;
-                            let radial_velocity = los_x * sat_pos_vel.vx + los_y * sat_pos_vel.vy + los_z * sat_pos_vel.vz;
-                            let doppler_hz = -radial_velocity * 1575.42e6 / crate::constants::LIGHT_SPEED;
-                            
-                            println!("│ {:3} │ {:3} │ {:8.1} │ {:8.1} │ {:11.1} │ {:8.0} │", 
-                                    eph.svid, eph.svid, 
-                                    elevation.to_degrees(), azimuth.to_degrees(), 
-                                    doppler_hz, range);
+                            let radial_velocity = los_x * sat_pos_vel.vx
+                                + los_y * sat_pos_vel.vy
+                                + los_z * sat_pos_vel.vz;
+                            let doppler_hz =
+                                -radial_velocity * 1575.42e6 / crate::constants::LIGHT_SPEED;
+
+                            println!(
+                                "│ {:3} │ {:3} │ {:8.1} │ {:8.1} │ {:11.1} │ {:8.0} │",
+                                eph.svid,
+                                eph.svid,
+                                elevation.to_degrees(),
+                                azimuth.to_degrees(),
+                                doppler_hz,
+                                range
+                            );
                         }
                     }
                 }
                 println!("└─────┴─────┴──────────┴──────────┴─────────────┴──────────┘");
                 println!();
             }
-            
+
             sat_number
         } else {
             0
         };
 
-        // Calculate visible BeiDou satellites  
-        println!("[DEBUG] CompactConfig = 0x{:08x}", self.output_param.CompactConfig.config);
-        println!("[DEBUG] Parsing systems: GPS={}, BDS={}, GAL={}, GLO={}", 
+        // Calculate visible BeiDou satellites
+        println!(
+            "[DEBUG] CompactConfig = 0x{:08x}",
+            self.output_param.CompactConfig.config
+        );
+        println!(
+            "[DEBUG] Parsing systems: GPS={}, BDS={}, GAL={}, GLO={}",
             self.output_param.CompactConfig.should_parse_gps(),
-            self.output_param.CompactConfig.should_parse_bds(), 
+            self.output_param.CompactConfig.should_parse_bds(),
             self.output_param.CompactConfig.should_parse_galileo(),
-            self.output_param.CompactConfig.should_parse_glonass());
+            self.output_param.CompactConfig.should_parse_glonass()
+        );
         self.bds_sat_number = if self.output_param.CompactConfig.should_parse_bds() {
             let mut sat_number = 0;
             let elevation_mask = self.output_param.ElevationMask;
-            
-            println!("[DEBUG] Checking BeiDou satellites visibility, elevation_mask = {}", elevation_mask);
-            println!("[DEBUG] Total BDS ephemeris slots to check: {}", TOTAL_BDS_SAT);
-            
+
+            println!(
+                "[DEBUG] Checking BeiDou satellites visibility, elevation_mask = {}",
+                elevation_mask
+            );
+            println!(
+                "[DEBUG] Total BDS ephemeris slots to check: {}",
+                TOTAL_BDS_SAT
+            );
+
             // Проверим состояние массива bds_eph
             let mut filled_slots = 0;
             for i in 0..TOTAL_BDS_SAT {
@@ -1300,54 +1959,77 @@ impl IFDataGen {
                     filled_slots += 1;
                 }
             }
-            println!("[DEBUG] Total filled BDS ephemeris slots: {}/{}", filled_slots, TOTAL_BDS_SAT);
-            
+            println!(
+                "[DEBUG] Total filled BDS ephemeris slots: {}/{}",
+                filled_slots, TOTAL_BDS_SAT
+            );
+
             for i in 0..TOTAL_BDS_SAT {
                 if let Some(eph) = &self.bds_eph[i] {
                     if (eph.valid & 1) == 0 || eph.health != 0 {
                         continue;
                     }
-                    
+
                     if (self.output_param.BdsMaskOut & (1u64 << i)) != 0 {
                         continue;
                     }
-                    
-            // Для BeiDou используем секунды недели в шкале BDT
-            let utc_now = crate::gnsstime::gps_time_to_utc(self.cur_time, true);
-            let bds_now = crate::gnsstime::utc_to_bds_time(utc_now);
-            let transmit_time = (bds_now.MilliSeconds as f64) / 1000.0;
+
+                    // Для BeiDou используем секунды недели в шкале BDT
+                    let utc_now = crate::gnsstime::gps_time_to_utc(self.cur_time, true);
+                    let bds_now = crate::gnsstime::utc_to_bds_time(utc_now);
+                    let transmit_time = (bds_now.MilliSeconds as f64) / 1000.0;
                     let mut sat_pos = KinematicInfo::default();
                     let mut eph_mut = *eph; // Копируем эфемериды для мутабельности
-                    let pos_calc_success = crate::coordinate::gps_sat_pos_speed_eph(GnssSystem::BdsSystem, transmit_time, &mut eph_mut, &mut sat_pos, None);
-            if i < 5 { // Логируем только первые 5 для отладки
-                let delta_t_bds = transmit_time - eph.toe as f64;
-                println!("[DEBUG] BDS{:02} toe={}, transmit_time_week(BDT)={:.1}, delta_t={:.1}h", eph.svid, eph.toe, transmit_time, delta_t_bds / 3600.0);
-            }
+                    let pos_calc_success = crate::coordinate::gps_sat_pos_speed_eph(
+                        GnssSystem::BdsSystem,
+                        transmit_time,
+                        &mut eph_mut,
+                        &mut sat_pos,
+                        None,
+                    );
+                    if i < 5 {
+                        // Логируем только первые 5 для отладки
+                        let delta_t_bds = transmit_time - eph.toe as f64;
+                        println!("[DEBUG] BDS{:02} toe={}, transmit_time_week(BDT)={:.1}, delta_t={:.1}h", eph.svid, eph.toe, transmit_time, delta_t_bds / 3600.0);
+                    }
                     if pos_calc_success {
-                        println!("[DEBUG] BeiDou sat pos calculated: ({:.1}, {:.1}, {:.1})", sat_pos.x, sat_pos.y, sat_pos.z);
+                        println!(
+                            "[DEBUG] BeiDou sat pos calculated: ({:.1}, {:.1}, {:.1})",
+                            sat_pos.x, sat_pos.y, sat_pos.z
+                        );
                         let mut elevation = 0.0;
                         let mut azimuth = 0.0;
-                        crate::coordinate::sat_el_az_from_positions(&cur_pos, &sat_pos, &mut elevation, &mut azimuth);
-                        
-                        if elevation >= elevation_mask
-                            && sat_number < TOTAL_BDS_SAT {
-                                self.bds_eph_visible[sat_number] = Some(*eph);
-                                sat_number += 1;
-                                if sat_number <= 5 { // Показываем первые 5 видимых
-                                    println!("[DEBUG] BDS[{}]: VISIBLE, SVID={}, elevation={:.1}°", i, eph.svid, elevation.to_degrees());
-                                }
+                        crate::coordinate::sat_el_az_from_positions(
+                            &cur_pos,
+                            &sat_pos,
+                            &mut elevation,
+                            &mut azimuth,
+                        );
+
+                        if elevation >= elevation_mask && sat_number < TOTAL_BDS_SAT {
+                            self.bds_eph_visible[sat_number] = Some(*eph);
+                            sat_number += 1;
+                            if sat_number <= 5 {
+                                // Показываем первые 5 видимых
+                                println!(
+                                    "[DEBUG] BDS[{}]: VISIBLE, SVID={}, elevation={:.1}°",
+                                    i,
+                                    eph.svid,
+                                    elevation.to_degrees()
+                                );
                             }
+                        }
                     }
                 }
             }
             println!("[INFO]\tFound {} visible BeiDou satellites", sat_number);
-            
+
             // Подробная таблица видимых BeiDou спутников как в C-версии
             if sat_number > 0 {
                 println!("┌─────┬─────┬──────────┬──────────┬─────────────┬──────────┐");
                 println!("│ PRN │ SV  │ Elev(°)  │ Azim(°)  │ Doppler(Hz) │ Range(m) │");
                 println!("├─────┼─────┼──────────┼──────────┼─────────────┼──────────┤");
-                
+
                 for j in 0..sat_number {
                     if let Some(eph) = &self.bds_eph_visible[j] {
                         // Для BeiDou используем секунды недели в шкале BDT
@@ -1356,34 +2038,54 @@ impl IFDataGen {
                         let transmit_time = (bds_now.MilliSeconds as f64) / 1000.0;
                         let mut sat_pos_vel = KinematicInfo::default();
                         let mut eph_mut = *eph;
-                        
-                        if crate::coordinate::gps_sat_pos_speed_eph(GnssSystem::BdsSystem, transmit_time, &mut eph_mut, &mut sat_pos_vel, None) {
+
+                        if crate::coordinate::gps_sat_pos_speed_eph(
+                            GnssSystem::BdsSystem,
+                            transmit_time,
+                            &mut eph_mut,
+                            &mut sat_pos_vel,
+                            None,
+                        ) {
                             let mut elevation = 0.0;
                             let mut azimuth = 0.0;
-                            crate::coordinate::sat_el_az_from_positions(&cur_pos, &sat_pos_vel, &mut elevation, &mut azimuth);
-                            
-                            let range = ((sat_pos_vel.x - cur_pos.x).powi(2) + 
-                                        (sat_pos_vel.y - cur_pos.y).powi(2) + 
-                                        (sat_pos_vel.z - cur_pos.z).powi(2)).sqrt();
-                            
+                            crate::coordinate::sat_el_az_from_positions(
+                                &cur_pos,
+                                &sat_pos_vel,
+                                &mut elevation,
+                                &mut azimuth,
+                            );
+
+                            let range = ((sat_pos_vel.x - cur_pos.x).powi(2)
+                                + (sat_pos_vel.y - cur_pos.y).powi(2)
+                                + (sat_pos_vel.z - cur_pos.z).powi(2))
+                            .sqrt();
+
                             // Вычисление Doppler частоты для BeiDou B1C
                             let los_x = (sat_pos_vel.x - cur_pos.x) / range;
                             let los_y = (sat_pos_vel.y - cur_pos.y) / range;
                             let los_z = (sat_pos_vel.z - cur_pos.z) / range;
-                            let radial_velocity = los_x * sat_pos_vel.vx + los_y * sat_pos_vel.vy + los_z * sat_pos_vel.vz;
-                            let doppler_hz = -radial_velocity * 1575.42e6 / crate::constants::LIGHT_SPEED;
-                            
-                            println!("│ C{:2} │ {:3} │ {:8.1} │ {:8.1} │ {:11.1} │ {:8.0} │", 
-                                    eph.svid, eph.svid, 
-                                    elevation.to_degrees(), azimuth.to_degrees(), 
-                                    doppler_hz, range);
+                            let radial_velocity = los_x * sat_pos_vel.vx
+                                + los_y * sat_pos_vel.vy
+                                + los_z * sat_pos_vel.vz;
+                            let doppler_hz =
+                                -radial_velocity * 1575.42e6 / crate::constants::LIGHT_SPEED;
+
+                            println!(
+                                "│ C{:2} │ {:3} │ {:8.1} │ {:8.1} │ {:11.1} │ {:8.0} │",
+                                eph.svid,
+                                eph.svid,
+                                elevation.to_degrees(),
+                                azimuth.to_degrees(),
+                                doppler_hz,
+                                range
+                            );
                         }
                     }
                 }
                 println!("└─────┴─────┴──────────┴──────────┴─────────────┴──────────┘");
                 println!();
             }
-            
+
             sat_number
         } else {
             0
@@ -1398,26 +2100,35 @@ impl IFDataGen {
             let mut pos_failed = 0;
             let mut elev_failed = 0;
             let elevation_mask = self.output_param.ElevationMask;
-            
-            println!("[DEBUG] Starting Galileo visibility check: elevation_mask={}", elevation_mask);
-            
+
+            println!(
+                "[DEBUG] Starting Galileo visibility check: elevation_mask={}",
+                elevation_mask
+            );
+
             for i in 0..TOTAL_GAL_SAT {
                 if let Some(eph) = &self.gal_eph[i] {
                     total_checked += 1;
-                    println!("[DEBUG] GAL{:02} - svid={}, valid={}, health={}", i+1, eph.svid, eph.valid, eph.health);
-                    
+                    println!(
+                        "[DEBUG] GAL{:02} - svid={}, valid={}, health={}",
+                        i + 1,
+                        eph.svid,
+                        eph.valid,
+                        eph.health
+                    );
+
                     if (eph.valid & 1) == 0 || eph.health != 0 {
                         valid_failed += 1;
-                        println!("[DEBUG] GAL{:02} - FAILED: valid/health check", i+1);
+                        println!("[DEBUG] GAL{:02} - FAILED: valid/health check", i + 1);
                         continue;
                     }
-                    
+
                     if (self.output_param.GalileoMaskOut & (1u64 << i)) != 0 {
                         mask_failed += 1;
-                        println!("[DEBUG] GAL{:02} - FAILED: mask out", i+1);
+                        println!("[DEBUG] GAL{:02} - FAILED: mask out", i + 1);
                         continue;
                     }
-                    
+
                     // Для Galileo используем секунды недели в шкале GST
                     let utc_now = crate::gnsstime::gps_time_to_utc(self.cur_time, true);
                     let gal_now = crate::gnsstime::utc_to_galileo_time(utc_now);
@@ -1425,41 +2136,79 @@ impl IFDataGen {
                     let mut sat_pos = KinematicInfo::default();
                     let mut eph_mut = *eph; // Копируем эфемериды для мутабельности
                     let delta_t = transmit_time - eph.toe as f64;
-                    println!("[DEBUG] GAL{:02} - toe={}, transmit_time_week(GST)={:.1}, delta_t={:.1}h", i+1, eph.toe, transmit_time, delta_t / 3600.0);
-                    let pos_calc_success = crate::coordinate::gps_sat_pos_speed_eph(GnssSystem::GalileoSystem, transmit_time, &mut eph_mut, &mut sat_pos, None);
-                    println!("[DEBUG] GAL{:02} - pos_calc_success={}, sat_pos=({:.1}, {:.1}, {:.1})", i+1, pos_calc_success, sat_pos.x, sat_pos.y, sat_pos.z);
+                    println!(
+                        "[DEBUG] GAL{:02} - toe={}, transmit_time_week(GST)={:.1}, delta_t={:.1}h",
+                        i + 1,
+                        eph.toe,
+                        transmit_time,
+                        delta_t / 3600.0
+                    );
+                    let pos_calc_success = crate::coordinate::gps_sat_pos_speed_eph(
+                        GnssSystem::GalileoSystem,
+                        transmit_time,
+                        &mut eph_mut,
+                        &mut sat_pos,
+                        None,
+                    );
+                    println!(
+                        "[DEBUG] GAL{:02} - pos_calc_success={}, sat_pos=({:.1}, {:.1}, {:.1})",
+                        i + 1,
+                        pos_calc_success,
+                        sat_pos.x,
+                        sat_pos.y,
+                        sat_pos.z
+                    );
                     if pos_calc_success {
                         let mut elevation = 0.0;
                         let mut azimuth = 0.0;
-                        crate::coordinate::sat_el_az_from_positions(&cur_pos, &sat_pos, &mut elevation, &mut azimuth);
-                        println!("[DEBUG] GAL{:02} - elevation={:.1}°, azimuth={:.1}°", i+1, elevation.to_degrees(), azimuth.to_degrees());
-                        
+                        crate::coordinate::sat_el_az_from_positions(
+                            &cur_pos,
+                            &sat_pos,
+                            &mut elevation,
+                            &mut azimuth,
+                        );
+                        println!(
+                            "[DEBUG] GAL{:02} - elevation={:.1}°, azimuth={:.1}°",
+                            i + 1,
+                            elevation.to_degrees(),
+                            azimuth.to_degrees()
+                        );
+
                         if elevation >= elevation_mask {
                             if sat_number < TOTAL_GAL_SAT {
                                 self.gal_eph_visible[sat_number] = Some(*eph);
                                 sat_number += 1;
-                                println!("[DEBUG] GAL{:02} - VISIBLE! Added as #{}", i+1, sat_number);
+                                println!(
+                                    "[DEBUG] GAL{:02} - VISIBLE! Added as #{}",
+                                    i + 1,
+                                    sat_number
+                                );
                             }
                         } else {
                             elev_failed += 1;
-                            println!("[DEBUG] GAL{:02} - FAILED: elevation {:.1}° < {:.1}°", i+1, elevation.to_degrees(), elevation_mask.to_degrees());
+                            println!(
+                                "[DEBUG] GAL{:02} - FAILED: elevation {:.1}° < {:.1}°",
+                                i + 1,
+                                elevation.to_degrees(),
+                                elevation_mask.to_degrees()
+                            );
                         }
                     } else {
                         pos_failed += 1;
-                        println!("[DEBUG] GAL{:02} - FAILED: position calculation", i+1);
+                        println!("[DEBUG] GAL{:02} - FAILED: position calculation", i + 1);
                     }
                 }
             }
             println!("[DEBUG] Galileo summary: checked={}, valid_failed={}, mask_failed={}, pos_failed={}, elev_failed={}, visible={}", 
                      total_checked, valid_failed, mask_failed, pos_failed, elev_failed, sat_number);
             println!("[INFO]\tFound {} visible Galileo satellites", sat_number);
-            
+
             // Подробная таблица видимых Galileo спутников как в C-версии
             if sat_number > 0 {
                 println!("┌─────┬─────┬──────────┬──────────┬─────────────┬──────────┐");
                 println!("│ PRN │ SV  │ Elev(°)  │ Azim(°)  │ Doppler(Hz) │ Range(m) │");
                 println!("├─────┼─────┼──────────┼──────────┼─────────────┼──────────┤");
-                
+
                 for j in 0..sat_number {
                     if let Some(eph) = &self.gal_eph_visible[j] {
                         // Для Galileo используем секунды недели в шкале GST
@@ -1468,34 +2217,54 @@ impl IFDataGen {
                         let transmit_time = (gal_now.MilliSeconds as f64) / 1000.0;
                         let mut sat_pos_vel = KinematicInfo::default();
                         let mut eph_mut = *eph;
-                        
-                        if crate::coordinate::gps_sat_pos_speed_eph(GnssSystem::GalileoSystem, transmit_time, &mut eph_mut, &mut sat_pos_vel, None) {
+
+                        if crate::coordinate::gps_sat_pos_speed_eph(
+                            GnssSystem::GalileoSystem,
+                            transmit_time,
+                            &mut eph_mut,
+                            &mut sat_pos_vel,
+                            None,
+                        ) {
                             let mut elevation = 0.0;
                             let mut azimuth = 0.0;
-                            crate::coordinate::sat_el_az_from_positions(&cur_pos, &sat_pos_vel, &mut elevation, &mut azimuth);
-                            
-                            let range = ((sat_pos_vel.x - cur_pos.x).powi(2) + 
-                                        (sat_pos_vel.y - cur_pos.y).powi(2) + 
-                                        (sat_pos_vel.z - cur_pos.z).powi(2)).sqrt();
-                            
+                            crate::coordinate::sat_el_az_from_positions(
+                                &cur_pos,
+                                &sat_pos_vel,
+                                &mut elevation,
+                                &mut azimuth,
+                            );
+
+                            let range = ((sat_pos_vel.x - cur_pos.x).powi(2)
+                                + (sat_pos_vel.y - cur_pos.y).powi(2)
+                                + (sat_pos_vel.z - cur_pos.z).powi(2))
+                            .sqrt();
+
                             // Вычисление Doppler частоты для Galileo E1
                             let los_x = (sat_pos_vel.x - cur_pos.x) / range;
                             let los_y = (sat_pos_vel.y - cur_pos.y) / range;
                             let los_z = (sat_pos_vel.z - cur_pos.z) / range;
-                            let radial_velocity = los_x * sat_pos_vel.vx + los_y * sat_pos_vel.vy + los_z * sat_pos_vel.vz;
-                            let doppler_hz = -radial_velocity * 1575.42e6 / crate::constants::LIGHT_SPEED;
-                            
-                            println!("│ E{:2} │ {:3} │ {:8.1} │ {:8.1} │ {:11.1} │ {:8.0} │", 
-                                    eph.svid, eph.svid, 
-                                    elevation.to_degrees(), azimuth.to_degrees(), 
-                                    doppler_hz, range);
+                            let radial_velocity = los_x * sat_pos_vel.vx
+                                + los_y * sat_pos_vel.vy
+                                + los_z * sat_pos_vel.vz;
+                            let doppler_hz =
+                                -radial_velocity * 1575.42e6 / crate::constants::LIGHT_SPEED;
+
+                            println!(
+                                "│ E{:2} │ {:3} │ {:8.1} │ {:8.1} │ {:11.1} │ {:8.0} │",
+                                eph.svid,
+                                eph.svid,
+                                elevation.to_degrees(),
+                                azimuth.to_degrees(),
+                                doppler_hz,
+                                range
+                            );
                         }
                     }
                 }
                 println!("└─────┴─────┴──────────┴──────────┴─────────────┴──────────┘");
                 println!();
             }
-            
+
             sat_number
         } else {
             0
@@ -1505,28 +2274,32 @@ impl IFDataGen {
         self.glo_sat_number = if self.output_param.CompactConfig.should_parse_glonass() {
             let mut sat_number = 0;
             let elevation_mask = self.output_param.ElevationMask;
-            
+
             for i in 0..TOTAL_GLO_SAT {
                 if let Some(eph) = &self.glo_eph[i] {
                     if eph.flag == 0 {
                         continue;
                     }
-                    
+
                     if (self.output_param.GlonassMaskOut & (1u32 << i)) != 0 {
                         continue;
                     }
-                    
+
                     let transmit_time = (glonass_time.MilliSeconds as f64) / 1000.0;
                     if let Some(sat_pos) = self.glonass_sat_pos_speed_eph(transmit_time, eph) {
                         let mut elevation = 0.0;
                         let mut azimuth = 0.0;
-                        crate::coordinate::sat_el_az_from_positions(&cur_pos, &sat_pos, &mut elevation, &mut azimuth);
-                        
-                        if elevation >= elevation_mask
-                            && sat_number < TOTAL_GLO_SAT {
-                                self.glo_eph_visible[sat_number] = Some(*eph);
-                                sat_number += 1;
-                            }
+                        crate::coordinate::sat_el_az_from_positions(
+                            &cur_pos,
+                            &sat_pos,
+                            &mut elevation,
+                            &mut azimuth,
+                        );
+
+                        if elevation >= elevation_mask && sat_number < TOTAL_GLO_SAT {
+                            self.glo_eph_visible[sat_number] = Some(*eph);
+                            sat_number += 1;
+                        }
                     }
                 }
             }
@@ -1558,8 +2331,13 @@ impl IFDataGen {
         Ok(())
     }
 
-    fn create_satellite_signals(&mut self, nav_bit_array: &Vec<Option<UnifiedNavData>>, cur_pos: KinematicInfo) -> Result<Vec<Option<Box<SatIfSignal>>>, Box<dyn std::error::Error>> {
-        let mut sat_if_signals: Vec<Option<Box<SatIfSignal>>> = (0..TOTAL_SAT_CHANNEL).map(|_| None).collect();
+    fn create_satellite_signals(
+        &mut self,
+        nav_bit_array: &Vec<Option<UnifiedNavData>>,
+        cur_pos: KinematicInfo,
+    ) -> Result<Vec<Option<Box<SatIfSignal>>>, Box<dyn std::error::Error>> {
+        let mut sat_if_signals: Vec<Option<Box<SatIfSignal>>> =
+            (0..TOTAL_SAT_CHANNEL).map(|_| None).collect();
         let mut total_channel_number = 0;
 
         println!("[INFO]\tUsing Rayon parallelization for satellite processing");
@@ -1573,21 +2351,43 @@ impl IFDataGen {
         self.display_enabled_signals();
 
         // Count total signals per system
-        let (gps_signal_count, bds_signal_count, gal_signal_count, glo_signal_count) = self.count_signals_per_system();
+        let (gps_signal_count, bds_signal_count, gal_signal_count, glo_signal_count) =
+            self.count_signals_per_system();
 
-        self.display_signals_summary_table(gps_signal_count, bds_signal_count, gal_signal_count, glo_signal_count);
+        self.display_signals_summary_table(
+            gps_signal_count,
+            bds_signal_count,
+            gal_signal_count,
+            glo_signal_count,
+        );
 
         // Create satellite signal instances for each system
-        total_channel_number = self.create_gps_signals(&mut sat_if_signals, total_channel_number, nav_bit_array, cur_pos)?;
-        total_channel_number = self.create_bds_signals(&mut sat_if_signals, total_channel_number, nav_bit_array, cur_pos)?;
-        total_channel_number = self.create_galileo_signals(&mut sat_if_signals, total_channel_number, nav_bit_array, cur_pos)?;
-        total_channel_number = self.create_glonass_signals(&mut sat_if_signals, total_channel_number, nav_bit_array)?;
+        total_channel_number = self.create_gps_signals(
+            &mut sat_if_signals,
+            total_channel_number,
+            nav_bit_array,
+            cur_pos,
+        )?;
+        total_channel_number = self.create_bds_signals(
+            &mut sat_if_signals,
+            total_channel_number,
+            nav_bit_array,
+            cur_pos,
+        )?;
+        total_channel_number = self.create_galileo_signals(
+            &mut sat_if_signals,
+            total_channel_number,
+            nav_bit_array,
+            cur_pos,
+        )?;
+        total_channel_number =
+            self.create_glonass_signals(&mut sat_if_signals, total_channel_number, nav_bit_array)?;
 
         Ok(sat_if_signals)
     }
 
     /// Генерирует промежуточно-частотные (IF) данные ГНСС сигналов
-    /// 
+    ///
     /// Основной алгоритм синтеза IF сигналов:
     /// 1. Инициализация параметров выборки (samples_per_ms из частоты дискретизации)
     /// 2. Генерация шумовой составляющей (thermal noise + системный шум)
@@ -1595,13 +2395,19 @@ impl IFDataGen {
     /// 4. Суммирование спутниковых сигналов с учетом мощности и доплеровского сдвига
     /// 5. Применение автоматической регулировки усиления (AGC)
     /// 6. Квантование в формат IQ4/IQ8 для записи в файл
-    /// 
+    ///
     /// Критические оптимизации:
     /// - AVX-512 векторизация для ≥8 спутников (50-100x ускорение)
     /// - Rayon параллелизм на уровне спутников и выборок
     /// - Кэширование параметров спутников (обновление каждые 50мс)
     /// - Адаптивный AGC против клиппирования сигнала
-    fn generate_if_signal(&mut self, if_file: &mut BufWriter<File>, sat_if_signals: &mut Vec<Option<Box<SatIfSignal>>>, mut cur_pos: KinematicInfo, trajectory_duration_s: f64) -> Result<(), Box<dyn std::error::Error>> {
+    fn generate_if_signal(
+        &mut self,
+        if_file: &mut BufWriter<File>,
+        sat_if_signals: &mut Vec<Option<Box<SatIfSignal>>>,
+        mut cur_pos: KinematicInfo,
+        trajectory_duration_s: f64,
+    ) -> Result<(), Box<dyn std::error::Error>> {
         // Расчет количества выборок на миллисекунду
         // SampleFreq в Hz (например, 5_000_000 Hz = 5000 выборок/мс)
         // Определяет временное разрешение цифрового приемника
@@ -1613,71 +2419,98 @@ impl IFDataGen {
         let mut quant_array = vec![0u8; samples_per_ms * 2];
 
         // Calculate total data size and setup progress tracking
-        // Используем переданное время траектории из JSON пресета  
+        // Используем переданное время траектории из JSON пресета
         let total_duration_ms = (trajectory_duration_s * 1000.0) as i32;
-        println!("[INFO]\tUsing trajectory duration: {:.1}s ({} ms)", trajectory_duration_s, total_duration_ms);
-        let bytes_per_ms = samples_per_ms as f64 * if self.output_param.Format == OutputFormat::OutputFormatIQ4 { 1.0 } else { 2.0 };
+        println!(
+            "[INFO]\tUsing trajectory duration: {:.1}s ({} ms)",
+            trajectory_duration_s, total_duration_ms
+        );
+        let bytes_per_ms = samples_per_ms as f64
+            * if self.output_param.Format == OutputFormat::OutputFormatIQ4 {
+                1.0
+            } else {
+                2.0
+            };
         let total_mb = (total_duration_ms as f64 * bytes_per_ms) / (1024.0 * 1024.0);
         let mut length = 0;
         let mut total_clipped_samples = 0i64;
         let mut total_samples = 0i64;
         let mut agc_gain = 1.0; // Automatic gain control
-        
+
         // PERFORMANCE OPTIMIZATION: Use real GNSS signal generation with optimizations
         let debug_mode = false; // Always use full signal generation
-        // TODO: Make max_satellites configurable via command line or JSON
-        // For now, None means use all available satellites (restore original behavior)
+                                // TODO: Make max_satellites configurable via command line or JSON
+                                // For now, None means use all available satellites (restore original behavior)
         let max_satellites_for_debug: Option<usize> = None; // Use all satellites (was 3)
 
         println!("[INFO]\tStarting signal generation loop...");
-        println!("[INFO]\tSignal Duration: {:.2} s", total_duration_ms as f64 / 1000.0);
+        println!(
+            "[INFO]\tSignal Duration: {:.2} s",
+            total_duration_ms as f64 / 1000.0
+        );
         println!("[INFO]\tSignal Size: {:.2} MB", total_mb);
-        println!("[INFO]\tSignal Data format: {}", if self.output_param.Format == OutputFormat::OutputFormatIQ4 { "IQ4" } else { "IQ8" });
-        println!("[INFO]\tSignal Center freq: {:.4} MHz", self.output_param.CenterFreq as f64 / 1_000_000.0);
-        println!("[INFO]\tSignal Sample rate: {:.2} MHz", self.output_param.SampleFreq as f64 / 1_000_000.0);
-        
+        println!(
+            "[INFO]\tSignal Data format: {}",
+            if self.output_param.Format == OutputFormat::OutputFormatIQ4 {
+                "IQ4"
+            } else {
+                "IQ8"
+            }
+        );
+        println!(
+            "[INFO]\tSignal Center freq: {:.4} MHz",
+            self.output_param.CenterFreq as f64 / 1_000_000.0
+        );
+        println!(
+            "[INFO]\tSignal Sample rate: {:.2} MHz",
+            self.output_param.SampleFreq as f64 / 1_000_000.0
+        );
+
         if debug_mode {
             println!("[PERF]\tDEBUG MODE: Using fast test signals instead of full GNSS generation");
         }
         println!();
 
         let start_time = Instant::now();
-        
+
         println!("[INFO]\tStarting main generation loop...");
-        
+
         // РЕВОЛЮЦИОННЫЙ РЕЖИМ: Истинная параллелизация спутников (включен по умолчанию)
         if std::env::var("GNSS_PARALLEL_MODE").unwrap_or("true".to_string()) == "true" {
             let signals_owned = std::mem::take(sat_if_signals);
             return self.generate_with_true_parallelization(
                 if_file,
-                signals_owned, 
+                signals_owned,
                 total_duration_ms,
                 samples_per_ms,
-                self.cur_time
+                self.cur_time,
             );
         }
-        
+
         let mut iteration_count = 0;
-        
+
         while length < total_duration_ms {
             iteration_count += 1;
             if iteration_count <= 5 {
-                println!("[DEBUG]\tGeneration iteration {}, current length: {} ms / {} ms total", iteration_count, length, total_duration_ms);
+                println!(
+                    "[DEBUG]\tGeneration iteration {}, current length: {} ms / {} ms total",
+                    iteration_count, length, total_duration_ms
+                );
             }
-            
+
             // Step to next millisecond
             self.step_to_next_ms(&mut cur_pos)?;
-            
+
             // OPTIMIZATION: Update satellite parameters less frequently for better performance
             // Satellite positions change very slowly, so update every 50ms instead of every 10ms for 5x fewer calculations
             let should_update_sat_params = (length % 50) == 0;
             if should_update_sat_params {
                 self.update_sat_params_optimized(cur_pos)?;
             }
-            
+
             // PERFORMANCE OPTIMIZATION: Use simple test signal for debugging
             // TODO: Re-enable full signal generation after debugging is complete
-            
+
             if debug_mode {
                 // Generate simple test pattern instead of complex GNSS signals
                 // This is 100x faster for debugging purposes
@@ -1685,9 +2518,11 @@ impl IFDataGen {
                     // Simple sine wave test signal + noise
                     let phase = (j as f64) * 2.0 * std::f64::consts::PI / 1000.0; // 1kHz test tone
                     let amplitude = 0.1; // Low amplitude test signal
-                    // УСКОРЕНИЕ: используем FastMath вместо стандартных sin/cos
-                    noise_array[j].real = crate::fastmath::FastMath::fast_sin(phase) * amplitude + (rand::random::<f64>() - 0.5) * 0.01;
-                    noise_array[j].imag = crate::fastmath::FastMath::fast_cos(phase) * amplitude + (rand::random::<f64>() - 0.5) * 0.01;
+                                         // УСКОРЕНИЕ: используем FastMath вместо стандартных sin/cos
+                    noise_array[j].real = crate::fastmath::FastMath::fast_sin(phase) * amplitude
+                        + (rand::random::<f64>() - 0.5) * 0.01;
+                    noise_array[j].imag = crate::fastmath::FastMath::fast_cos(phase) * amplitude
+                        + (rand::random::<f64>() - 0.5) * 0.01;
                 }
             } else {
                 // Full GNSS signal generation (slower but accurate)
@@ -1698,35 +2533,42 @@ impl IFDataGen {
                 // CRITICAL OPTIMIZATION: Generate satellite signals more efficiently
                 let sat_start = std::time::Instant::now();
                 let current_time = self.cur_time;
-                
+
                 // Use all available satellites or limit for debugging if specified
                 let active_sats = if let Some(limit) = max_satellites_for_debug {
                     sat_if_signals.len().min(limit)
                 } else {
                     sat_if_signals.len() // Use all satellites
                 };
-                
+
                 // РЕВОЛЮЦИОННАЯ ОПТИМИЗАЦИЯ: AVX-512 + CUDA + Rayon параллелизация
                 let sat_process_start = std::time::Instant::now();
-                
+
                 // Создаем AVX-512 процессор для супер-быстрой обработки
                 let avx512_processor = SafeAvx512Processor::new();
-                
+
                 // SUPER-OPTIMIZATION: Используем AVX-512 для массовой обработки спутников
                 // ТЕСТИРОВАНИЕ: Снизили порог с 16 до 8 спутников для активации AVX-512
                 if avx512_processor.is_available() && active_sats >= 8 {
                     // AVX-512 путь: используем для всех спутников с оптимальной логикой
-                    if length == 0 { // Показываем только один раз в начале
-                        println!("[AVX512] 🚀 Активирован AVX-512 для {} спутников!", active_sats);
+                    if length == 0 {
+                        // Показываем только один раз в начале
+                        println!(
+                            "[AVX512] 🚀 Активирован AVX-512 для {} спутников!",
+                            active_sats
+                        );
                     }
-                    
+
                     // Обрабатываем все спутники с AVX-512 ускорением
                     sat_if_signals[..active_sats]
                         .par_iter_mut()
                         .for_each(|sig_option| {
                             if let Some(ref mut sig) = sig_option {
                                 // AVX-512 ускоренная генерация для всех спутников
-                                sig.get_if_sample_avx512_accelerated(current_time, &avx512_processor);
+                                sig.get_if_sample_avx512_accelerated(
+                                    current_time,
+                                    &avx512_processor,
+                                );
                             }
                         });
                 } else {
@@ -1745,30 +2587,27 @@ impl IFDataGen {
 
                 // OPTIMIZED: Parallel signal accumulation with rayon + AVX-512 optimization
                 let accumulation_start = std::time::Instant::now();
-                noise_array
-                    .par_iter_mut()
-                    .enumerate()
-                    .for_each(|(j, sum)| {
-                        // Accumulate all satellite signals efficiently
-                        for sig in sat_if_signals.iter().take(active_sats).flatten() {
-                            if j < sig.sample_array.len() {
-                                let sample = sig.sample_array[j];
-                                sum.real += sample.real;
-                                sum.imag += sample.imag;
-                            }
+                noise_array.par_iter_mut().enumerate().for_each(|(j, sum)| {
+                    // Accumulate all satellite signals efficiently
+                    for sig in sat_if_signals.iter().take(active_sats).flatten() {
+                        if j < sig.sample_array.len() {
+                            let sample = sig.sample_array[j];
+                            sum.real += sample.real;
+                            sum.imag += sample.imag;
                         }
-                        
-                        // Apply AGC
-                        sum.real *= agc_gain;
-                        sum.imag *= agc_gain;
-                    });
+                    }
+
+                    // Apply AGC
+                    sum.real *= agc_gain;
+                    sum.imag *= agc_gain;
+                });
                 let accumulation_duration = accumulation_start.elapsed();
                 let sat_total_duration = sat_start.elapsed();
-                
+
                 // Детальная статистика каждые 1000 миллисекунд
                 if length % 1000 == 0 {
-                    println!("[TIMING_DETAIL] ms {}: Noise: {:.3}ms, SatProcess: {:.3}ms, Accumulation: {:.3}ms, Total: {:.3}ms", 
-                        length, 
+                    println!("[TIMING_DETAIL] ms {}: Noise: {:.3}ms, SatProcess: {:.3}ms, Accumulation: {:.3}ms, Total: {:.3}ms",
+                        length,
                         noise_duration.as_millis(),
                         sat_process_duration.as_millis(),
                         accumulation_duration.as_millis(),
@@ -1779,24 +2618,39 @@ impl IFDataGen {
             let quant_start = std::time::Instant::now();
             let mut clipped_in_block = 0;
             if self.output_param.Format == OutputFormat::OutputFormatIQ4 {
-                Self::quant_samples_iq4(&noise_array, &mut quant_array[..samples_per_ms], &mut clipped_in_block);
+                Self::quant_samples_iq4(
+                    &noise_array,
+                    &mut quant_array[..samples_per_ms],
+                    &mut clipped_in_block,
+                );
                 let bytes_written = if_file.write(&quant_array[..samples_per_ms])?;
-                if iteration_count <= 5 { // Debug first few writes
-                    println!("[DEBUG]\tWrote {} bytes (IQ4) to file at iteration {}, ms {}", bytes_written, iteration_count, length);
+                if iteration_count <= 5 {
+                    // Debug first few writes
+                    println!(
+                        "[DEBUG]\tWrote {} bytes (IQ4) to file at iteration {}, ms {}",
+                        bytes_written, iteration_count, length
+                    );
                 }
             } else {
                 Self::quant_samples_iq8(&noise_array, &mut quant_array, &mut clipped_in_block);
                 let bytes_written = if_file.write(&quant_array)?;
-                if iteration_count <= 5 { // Debug first few writes
-                    println!("[DEBUG]\tWrote {} bytes (IQ8) to file at iteration {}, ms {}", bytes_written, iteration_count, length);
+                if iteration_count <= 5 {
+                    // Debug first few writes
+                    println!(
+                        "[DEBUG]\tWrote {} bytes (IQ8) to file at iteration {}, ms {}",
+                        bytes_written, iteration_count, length
+                    );
                 }
             }
             let quant_duration = quant_start.elapsed();
-            
-            // Детальная статистика I/O каждые 1000 миллисекунд  
+
+            // Детальная статистика I/O каждые 1000 миллисекунд
             if length % 1000 == 0 {
-                println!("[TIMING_DETAIL] ms {}: Quantization+I/O: {:.3}ms", 
-                    length, quant_duration.as_millis());
+                println!(
+                    "[TIMING_DETAIL] ms {}: Quantization+I/O: {:.3}ms",
+                    length,
+                    quant_duration.as_millis()
+                );
             }
 
             // Update statistics
@@ -1809,7 +2663,11 @@ impl IFDataGen {
                 if clipping_rate > 0.01 {
                     // If more than 1% clipping
                     agc_gain *= 0.95; // Reduce gain by 5%
-                    println!("[WARNING]\tAGC: Clipping {:.2}%, reducing gain to {:.3}", clipping_rate * 100.0, agc_gain);
+                    println!(
+                        "[WARNING]\tAGC: Clipping {:.2}%, reducing gain to {:.3}",
+                        clipping_rate * 100.0,
+                        agc_gain
+                    );
                     total_clipped_samples = 0; // reset statistics
                     total_samples = 0;
                 } else if clipping_rate < 0.001 && agc_gain < 1.0 {
@@ -1818,7 +2676,11 @@ impl IFDataGen {
                     if agc_gain > 1.0 {
                         agc_gain = 1.0;
                     }
-                    println!("[WARNING]\tAGC: Clipping {:.2}%, increasing gain to {:.3}", clipping_rate * 100.0, agc_gain);
+                    println!(
+                        "[WARNING]\tAGC: Clipping {:.2}%, increasing gain to {:.3}",
+                        clipping_rate * 100.0,
+                        agc_gain
+                    );
                     total_clipped_samples = 0; // reset statistics
                     total_samples = 0;
                 }
@@ -1827,14 +2689,32 @@ impl IFDataGen {
             length += 1;
             // Reduce progress output frequency for better performance during debugging
             if debug_mode && (length % 50) == 0 {
-                self.display_progress(length, total_duration_ms, total_mb, bytes_per_ms, start_time);
+                self.display_progress(
+                    length,
+                    total_duration_ms,
+                    total_mb,
+                    bytes_per_ms,
+                    start_time,
+                );
             } else if !debug_mode && (length % 10) == 0 {
-                self.display_progress(length, total_duration_ms, total_mb, bytes_per_ms, start_time);
+                self.display_progress(
+                    length,
+                    total_duration_ms,
+                    total_mb,
+                    bytes_per_ms,
+                    start_time,
+                );
             }
         }
 
         self.display_final_progress(total_duration_ms, total_mb);
-        self.display_completion_stats(total_samples, total_clipped_samples, agc_gain, start_time, total_mb);
+        self.display_completion_stats(
+            total_samples,
+            total_clipped_samples,
+            agc_gain,
+            start_time,
+            total_mb,
+        );
 
         // Flush buffer to ensure all data is written to file
         if_file.flush()?;
@@ -1847,63 +2727,72 @@ impl IFDataGen {
     /// Обрабатывает данные по блокам, записывая сразу в файл
     /// РЕШАЕТ ПРОБЛЕМУ ПАМЯТИ: Для 300s (3GB) обрабатывает по 1s блокам
     fn generate_with_true_parallelization(
-        &mut self, 
+        &mut self,
         if_file: &mut BufWriter<File>,
-        mut sat_if_signals: Vec<Option<Box<SatIfSignal>>>, 
+        mut sat_if_signals: Vec<Option<Box<SatIfSignal>>>,
         total_duration_ms: i32,
         samples_per_ms: usize,
-        start_time_gnss: GnssTime
+        start_time_gnss: GnssTime,
     ) -> Result<(), Box<dyn std::error::Error>> {
         println!("🚀 ПАМЯТЬ-ЭФФЕКТИВНЫЙ РЕЖИМ: Потоковая параллелизация!");
-        println!("📊 Параметры: {} ms сигнала, {} samples/ms, {} спутников", 
-                 total_duration_ms, samples_per_ms, sat_if_signals.len());
-        
+        println!(
+            "📊 Параметры: {} ms сигнала, {} samples/ms, {} спутников",
+            total_duration_ms,
+            samples_per_ms,
+            sat_if_signals.len()
+        );
+
         // СТРАТЕГИЯ: Обрабатываем по блокам 1000ms (1 секунда)
         const BLOCK_SIZE_MS: i32 = 1000;
-        let estimated_mb_total = (total_duration_ms as f64 * samples_per_ms as f64 * 2.0) / (1024.0 * 1024.0);
-        println!("🎯 Общий размер данных: {:.1} MB, обработка блоками по {} ms", estimated_mb_total, BLOCK_SIZE_MS);
-        
+        let estimated_mb_total =
+            (total_duration_ms as f64 * samples_per_ms as f64 * 2.0) / (1024.0 * 1024.0);
+        println!(
+            "🎯 Общий размер данных: {:.1} MB, обработка блоками по {} ms",
+            estimated_mb_total, BLOCK_SIZE_MS
+        );
+
         let start_generation = std::time::Instant::now();
         let active_satellites = sat_if_signals.iter().filter(|s| s.is_some()).count();
         println!("🛰️  Активных спутников: {}", active_satellites);
-        
+
         // ========== ИНТЕЛЛЕКТУАЛЬНАЯ AGC (AUTOMATIC GAIN CONTROL) СИСТЕМА ==========
-        // 
+        //
         // НАЗНАЧЕНИЕ: Предотвращение клиппинга (насыщения) цифрового сигнала при большом
         // количестве активных спутников. AGC автоматически регулирует амплитуду суммарного
         // сигнала, чтобы он не превышал динамический диапазон АЦП приемника.
-        // 
+        //
         // ПРОБЛЕМА: При одновременном приеме 30+ спутников их сигналы суммируются когерентно,
         // что может привести к переполнению разрядной сетки цифрового приемника и потере данных.
-        // 
+        //
         // МАТЕМАТИЧЕСКАЯ МОДЕЛЬ РАСЧЕТА НАЧАЛЬНОГО КОЭФФИЦИЕНТА УСИЛЕНИЯ:
         // Амплитуда сигнала одного спутника зависит от его мощности (CN0) и частоты дискретизации:
-        // 
+        //
         // single_sat_amplitude = 10^((CN0_scaled - REFERENCE_CN0) / 1000) / sqrt(sample_rate)
-        // 
+        //
         // где:
         // - CN0_scaled = CN0 * 100 (например, 47 dB-Hz → 4700)
         // - REFERENCE_CN0 = 4500 (45 dB-Hz) - типичное значение для нормализации
         // - sample_rate = samples_per_ms * 1000 (частота дискретизации в Гц)
-        // 
+        //
         // Пример расчета:
         // CN0 = 47 dB-Hz → CN0_scaled = 4700
         // sample_rate = 2_048_000 Hz (2.048 МГц)
         // single_amplitude = 10^((4700-4500)/1000) / sqrt(2048000) = 10^0.2 / 1431 ≈ 0.0011
-        
+
         const REFERENCE_CN0: f64 = 4500.0; // 45 dB-Hz опорное значение вместо 3000 (30 dB-Hz)
-        
+
         // УПРОЩЕННЫЙ AGC НА ОСНОВЕ КОЛИЧЕСТВА АКТИВНЫХ СПУТНИКОВ
         // Используем уже известное количество генерируемых сигналов вместо повторной проверки
         let cn0_scaled = self.power_control.init_cn0 * 100.0;
-        let single_sat_amplitude = 10.0_f64.powf((cn0_scaled - REFERENCE_CN0) / 1000.0) / (samples_per_ms as f64).sqrt();
+        let single_sat_amplitude =
+            10.0_f64.powf((cn0_scaled - REFERENCE_CN0) / 1000.0) / (samples_per_ms as f64).sqrt();
         let total_expected_amplitude = active_satellites as f64 * single_sat_amplitude;
-        
+
         // ЦЕЛЕВАЯ АМПЛИТУДА ДЛЯ БЕЗОПАСНОЙ РАБОТЫ:
         // Оставляем 10% запас для предотвращения клиппинга при флуктуациях сигнала.
         // Максимальная амплитуда цифрового сигнала = ±1.0, целевая = 0.9
         let target_amplitude = 0.9; // 90% от максимальной амплитуды
-        
+
         // РАСЧЕТ НАЧАЛЬНОГО КОЭФФИЦИЕНТА AGC:
         // agc_gain = target_amplitude / total_expected_amplitude
         // Если ожидаемая амплитуда превышает целевую, коэффициент будет < 1.0 (ослабление)
@@ -1913,43 +2802,52 @@ impl IFDataGen {
         } else {
             1.0 // Аварийное значение при отсутствии спутников
         };
-        
+
         // ОГРАНИЧЕНИЕ ДИАПАЗОНА AGC:
         // Минимум 0.01 (-40 дБ) - предотвращает полное подавление сигнала
         // Максимум 1.0 (0 дБ) - предотвращает усиление выше номинального уровня
         let mut agc_gain = initial_agc_gain.max(0.01).min(1.0);
-        
+
         // СЧЕТЧИКИ ДЛЯ СТАТИСТИКИ И АДАПТАЦИИ:
-        let mut total_clipped_samples = 0i64;    // Общее количество клиппированных отсчетов
-        let mut total_samples_written = 0i64;    // Общее количество записанных отсчетов
-        let mut agc_samples_for_stats = 0i64;    // Отсчеты для анализа AGC (сбрасывается периодически)
-        let mut agc_clipped_for_stats = 0i64;    // Клиппированные отсчеты для анализа AGC
-        
+        let mut total_clipped_samples = 0i64; // Общее количество клиппированных отсчетов
+        let mut total_samples_written = 0i64; // Общее количество записанных отсчетов
+        let mut agc_samples_for_stats = 0i64; // Отсчеты для анализа AGC (сбрасывается периодически)
+        let mut agc_clipped_for_stats = 0i64; // Клиппированные отсчеты для анализа AGC
+
         println!("🎚️  AGC: Начальный коэффициент: {:.3} (спутников: {}, ожидаемая амплитуда: {:.3}, целевая: {:.1})", 
                  agc_gain, active_satellites, total_expected_amplitude, target_amplitude);
-        println!("📊 AGC: Расчёт на основе {} активных генерируемых сигналов", active_satellites);
-        
+        println!(
+            "📊 AGC: Расчёт на основе {} активных генерируемых сигналов",
+            active_satellites
+        );
+
         // ОСНОВНОЙ ЦИКЛ: Обработка по блокам
         let num_blocks = (total_duration_ms + BLOCK_SIZE_MS - 1) / BLOCK_SIZE_MS;
-        
+
         // ========== АДАПТИВНАЯ КАЛИБРОВКА AGC ПО ПЕРВОМУ БЛОКУ ==========
         let mut calibration_done = false;
-        
+
         for block_idx in 0..num_blocks {
             let block_start_ms = block_idx * BLOCK_SIZE_MS;
             let block_end_ms = std::cmp::min(block_start_ms + BLOCK_SIZE_MS, total_duration_ms);
             let block_duration_ms = block_end_ms - block_start_ms;
-            
-            print!("\r📦 Блок {}/{}: {} - {} ms ({} ms)...", 
-                     block_idx + 1, num_blocks, block_start_ms, block_end_ms, block_duration_ms);
+
+            print!(
+                "\r📦 Блок {}/{}: {} - {} ms ({} ms)...",
+                block_idx + 1,
+                num_blocks,
+                block_start_ms,
+                block_end_ms,
+                block_duration_ms
+            );
             std::io::stdout().flush().unwrap();
-            
+
             let block_start_time = start_time_gnss.add_milliseconds(block_start_ms as f64);
-            
+
             // РЕВОЛЮЦИЯ! Каждый спутник работает параллельно на блок времени
             // Убираем промежуточные сообщения для чистого вывода
             let generation_start = std::time::Instant::now();
-            
+
             // Используем Rayon для параллельной обработки каждого спутника
             sat_if_signals
                 .par_iter_mut()
@@ -1957,20 +2855,25 @@ impl IFDataGen {
                 .for_each(|(sat_idx, sat_option)| {
                     if let Some(ref mut boxed_satellite) = sat_option {
                         // Каждый спутник генерирует сигнал для этого блока времени
-                        boxed_satellite.generate_block_signal_parallel(block_start_time, block_duration_ms, samples_per_ms, self.output_param.SampleFreq as f64);
+                        boxed_satellite.generate_block_signal_parallel(
+                            block_start_time,
+                            block_duration_ms,
+                            samples_per_ms,
+                            self.output_param.SampleFreq as f64,
+                        );
                     }
                 });
-        
+
             let generation_duration = generation_start.elapsed();
             // Убираем промежуточные сообщения
-            
+
             // ПОТОКОВОЕ НАКОПЛЕНИЕ и запись для этого блока
             // Убираем промежуточные сообщения
             let block_samples = block_duration_ms as usize * samples_per_ms;
-            
+
             // Буфер для накопления данных блока (не весь файл!)
             let mut block_signal = vec![ComplexNumber::from_parts(0.0, 0.0); block_samples];
-            
+
             // Накапливаем сигналы всех спутников для этого блока с глобальным AGC
             // TODO: Реализовать индивидуальную амплитуду для каждого спутника в будущем
             for sample_idx in 0..block_samples {
@@ -1979,11 +2882,11 @@ impl IFDataGen {
                         if let Some(block_data) = &satellite.block_data {
                             if sample_idx < block_data.len() {
                                 let mut sat_sample = block_data[sample_idx];
-                                
+
                                 // ПРИМЕНЯЕМ ГЛОБАЛЬНЫЙ AGC К КАЖДОМУ СПУТНИКУ ПЕРЕД СУММИРОВАНИЕМ
                                 sat_sample.real *= agc_gain;
                                 sat_sample.imag *= agc_gain;
-                                
+
                                 block_signal[sample_idx].real += sat_sample.real;
                                 block_signal[sample_idx].imag += sat_sample.imag;
                             }
@@ -1991,118 +2894,123 @@ impl IFDataGen {
                     }
                 }
             }
-            
-                // ========== ПРЕДВАРИТЕЛЬНАЯ КАЛИБРОВКА AGC НА ПЕРВОМ БЛОКЕ ==========
-            // 
+
+            // ========== ПРЕДВАРИТЕЛЬНАЯ КАЛИБРОВКА AGC НА ПЕРВОМ БЛОКЕ ==========
+            //
             // НАЗНАЧЕНИЕ: Корректировка теоретически рассчитанного коэффициента AGC
             // на основе реальной амплитуды сгенерированного сигнала.
-            // 
+            //
             // НЕОБХОДИМОСТЬ: Теоретическая модель может не учитывать:
             // - Особенности генерации кодов разных спутниковых систем
             // - Различия в мощности сигналов разных спутников
             // - Фазовые соотношения между спутниками в конкретный момент времени
             // - Особенности модуляции (BPSK, BOC, AltBOC)
-            // 
+            //
             // МЕТОД: Анализ первых 1000 отсчетов сигнала для определения:
             // - Максимальной амплитуды (пиковое значение)
             // - Средней амплитуды (RMS-подобная оценка)
             if !calibration_done && block_idx == 0 {
-                let mut max_amplitude = 0.0f64;      // Максимальная мгновенная амплитуда
-                let mut amplitude_sum = 0.0f64;      // Сумма амплитуд для расчета среднего
-                
+                let mut max_amplitude = 0.0f64; // Максимальная мгновенная амплитуда
+                let mut amplitude_sum = 0.0f64; // Сумма амплитуд для расчета среднего
+
                 // Анализируем первые 1000 отсчетов (≈0.5 мс при 2 МГц дискретизации)
                 // Этого достаточно для статистически значимой оценки амплитуды
                 let calibration_samples = block_signal.len().min(1000);
-                
+
                 for sample in &block_signal[..calibration_samples] {
                     // Вычисляем модуль комплексного числа: |I + jQ| = √(I² + Q²)
                     let amplitude = (sample.real * sample.real + sample.imag * sample.imag).sqrt();
                     max_amplitude = max_amplitude.max(amplitude);
                     amplitude_sum += amplitude;
                 }
-                
+
                 let avg_amplitude = amplitude_sum / calibration_samples as f64;
-                
+
                 // РАСЧЕТ КАЛИБРОВОЧНОГО КОЭФФИЦИЕНТА:
                 // Если максимальная реальная амплитуда превышает целевую,
                 // уменьшаем коэффициент для предотвращения клиппинга
                 let calibrated_gain = if max_amplitude > 0.0 {
                     (target_amplitude / max_amplitude)
-                        .min(1.0)     // Не усиливаем выше номинала
-                        .max(0.001)   // Предотвращаем полное подавление
+                        .min(1.0) // Не усиливаем выше номинала
+                        .max(0.001) // Предотвращаем полное подавление
                 } else {
-                    agc_gain  // Оставляем исходный коэффициент при нулевом сигнале
+                    agc_gain // Оставляем исходный коэффициент при нулевом сигнале
                 };
-                
+
                 // ПРИМЕНЕНИЕ КАЛИБРОВКИ:
                 // Корректируем коэффициент только при значительном расхождении (>10%)
                 // для избежания излишних корректировок от шума
                 if (calibrated_gain - agc_gain).abs() > 0.1 {
-                    println!("🔧 КАЛИБРОВКА AGC: Реальная макс. амплитуда: {:.3}, средняя: {:.3}", 
-                             max_amplitude, avg_amplitude);
-                    println!("🔧 AGC скорректирован: {:.3} → {:.3} (изменение {:.1}%)", 
-                             agc_gain, calibrated_gain, 
-                             (calibrated_gain - agc_gain) / agc_gain * 100.0);
+                    println!(
+                        "🔧 КАЛИБРОВКА AGC: Реальная макс. амплитуда: {:.3}, средняя: {:.3}",
+                        max_amplitude, avg_amplitude
+                    );
+                    println!(
+                        "🔧 AGC скорректирован: {:.3} → {:.3} (изменение {:.1}%)",
+                        agc_gain,
+                        calibrated_gain,
+                        (calibrated_gain - agc_gain) / agc_gain * 100.0
+                    );
                     agc_gain = calibrated_gain;
                 }
-                
+
                 calibration_done = true; // Калибровка выполняется только один раз
             }
 
             // ========== КВАНТОВАНИЕ И ЗАПИСЬ БЛОКА В ФАЙЛ ==========
-            // 
+            //
             // НАЗНАЧЕНИЕ: Преобразование комплексных отсчетов с плавающей точкой в 8-битные
             // целые IQ компоненты для совместимости с приемниками и программными определяемыми радио.
-            // 
+            //
             // ФОРМАТ IQ8: Каждый отсчет представляется как пара 8-битных целых чисел:
             // - I (софазная компонента): -128 до +127
             // - Q (квадратурная компонента): -128 до +127
-            // 
+            //
             // МАСШТАБИРОВАНИЕ: Отсчеты с плавающей точкой [-1.0, +1.0] масштабируются к [-127, +127]
             // Множитель 127 обеспечивает оптимальное использование динамического диапазона
             let write_start = std::time::Instant::now();
-            let mut iq8_data = Vec::with_capacity(block_samples * 2);  // I и Q компоненты
-            let mut clipped_in_block = 0;  // Счетчик клиппированных отсчетов в текущем блоке
-            
+            let mut iq8_data = Vec::with_capacity(block_samples * 2); // I и Q компоненты
+            let mut clipped_in_block = 0; // Счетчик клиппированных отсчетов в текущем блоке
+
             for sample in &block_signal {
                 // МАСШТАБИРОВАНИЕ И ОГРАНИЧЕНИЕ ДИАПАЗОНА:
                 // Преобразование [-1.0, +1.0] → [-128, +127] с ограничением
                 let i_scaled = (sample.real * 127.0).max(-128.0).min(127.0) as i8;
                 let q_scaled = (sample.imag * 127.0).max(-128.0).min(127.0) as i8;
-                
+
                 // ОБНАРУЖЕНИЕ КЛИППИНГА:
                 // Клиппинг происходит, когда амплитуда сигнала превышает динамический диапазон
                 // Проверяем до масштабирования для точного подсчета
                 if sample.real.abs() > 1.0 || sample.imag.abs() > 1.0 {
                     clipped_in_block += 1;
                 }
-                
+
                 // УПАКОВКА В IQ8 ФОРМАТ:
                 // Приведение i8 к u8 для сохранения в файл (сдвиг на 128)
                 iq8_data.push(i_scaled as u8);
                 iq8_data.push(q_scaled as u8);
             }
-            
+
             // Записываем блок в файл
             if_file.write_all(&iq8_data)?;
-            
+
             total_clipped_samples += clipped_in_block as i64;
             total_samples_written += block_samples as i64 * 2; // I + Q
-            
+
             // Обновляем счетчики AGC
             agc_clipped_for_stats += clipped_in_block as i64;
             agc_samples_for_stats += block_samples as i64 * 2; // I + Q
-            
+
             // ========== ИНТЕЛЛЕКТУАЛЬНЫЙ АДАПТИВНЫЙ AGC МОНИТОРИНГ ==========
-            // 
+            //
             // НАЗНАЧЕНИЕ: Непрерывное отслеживание уровня клиппинга и автоматическая
             // корректировка коэффициента усиления для поддержания оптимального уровня сигнала.
-            // 
+            //
             // ПРИНЦИП РАБОТЫ:
             // 1. Мониторинг каждого блока (1000 мс) для быстрой реакции
             // 2. Агрессивное снижение при критическом клиппинге
             // 3. Осторожное восстановление при низком клиппинге
-            // 
+            //
             // КЛИППИНГ КАК МЕТРИКА КАЧЕСТВА:
             // - 0-1%: Оптимальные условия, можно медленно увеличивать усиление
             // - 1-5%: Мягкое снижение для предотвращения дальнейшего ухудшения
@@ -2113,44 +3021,57 @@ impl IFDataGen {
                 // РАСЧЕТ КОЭФФИЦИЕНТА КЛИППИНГА:
                 // Отношение клиппированных отсчетов к общему числу отсчетов в текущем блоке
                 let agc_clipping_rate = agc_clipped_for_stats as f64 / agc_samples_for_stats as f64;
-                
+
                 // ========== АДАПТИВНАЯ ЛОГИКА КОРРЕКЦИИ ==========
-                
+
                 // КРИТИЧЕСКИЙ УРОВЕНЬ (>50%): Немедленное агрессивное вмешательство
                 // При таком уровне клиппинга сигнал полностью искажается
                 if agc_clipping_rate > 0.5 {
-                    agc_gain *= 0.7;  // Снижаем на 30% (-3.1 дБ)
-                    println!("[AGC] 🔥 КРИТИЧЕСКИЙ клиппинг {:.1}%! Экстренное снижение до {:.3}", 
-                             agc_clipping_rate * 100.0, agc_gain);
+                    agc_gain *= 0.7; // Снижаем на 30% (-3.1 дБ)
+                    println!(
+                        "[AGC] 🔥 КРИТИЧЕСКИЙ клиппинг {:.1}%! Экстренное снижение до {:.3}",
+                        agc_clipping_rate * 100.0,
+                        agc_gain
+                    );
                     // Обнуляем счетчики для новой оценки на следующем блоке
                     agc_clipped_for_stats = 0;
                     agc_samples_for_stats = 0;
-                    
+
                 // ВЫСОКИЙ УРОВЕНЬ (20-50%): Быстрое вмешательство
                 } else if agc_clipping_rate > 0.2 {
-                    agc_gain *= 0.8;  // Снижаем на 20% (-1.9 дБ)
-                    println!("[AGC] ⚡ ВЫСОКИЙ клиппинг {:.1}%! Быстрое снижение до {:.3}", 
-                             agc_clipping_rate * 100.0, agc_gain);
+                    agc_gain *= 0.8; // Снижаем на 20% (-1.9 дБ)
+                    println!(
+                        "[AGC] ⚡ ВЫСОКИЙ клиппинг {:.1}%! Быстрое снижение до {:.3}",
+                        agc_clipping_rate * 100.0,
+                        agc_gain
+                    );
                     agc_clipped_for_stats = 0;
                     agc_samples_for_stats = 0;
-                    
+
                 // УМЕРЕННЫЙ УРОВЕНЬ (5-20%): Умеренная коррекция
                 } else if agc_clipping_rate > 0.05 {
-                    agc_gain *= 0.9;  // Снижаем на 10% (-0.9 дБ)
-                    println!("[AGC] ⚠️  УМЕРЕННЫЙ клиппинг {:.1}%! Снижение до {:.3}", 
-                             agc_clipping_rate * 100.0, agc_gain);
+                    agc_gain *= 0.9; // Снижаем на 10% (-0.9 дБ)
+                    println!(
+                        "[AGC] ⚠️  УМЕРЕННЫЙ клиппинг {:.1}%! Снижение до {:.3}",
+                        agc_clipping_rate * 100.0,
+                        agc_gain
+                    );
                     agc_clipped_for_stats = 0;
                     agc_samples_for_stats = 0;
-                    
+
                 // МЯГКИЙ УРОВЕНЬ (1-5%): Плавная коррекция без сброса счетчиков
                 } else if agc_clipping_rate > 0.01 {
                     agc_gain *= 0.95; // Снижаем на 5% (-0.4 дБ)
-                    println!("[AGC] 🎚️  Мягкий клиппинг {:.2}%, плавное снижение до {:.3}", 
-                             agc_clipping_rate * 100.0, agc_gain);
+                    println!(
+                        "[AGC] 🎚️  Мягкий клиппинг {:.2}%, плавное снижение до {:.3}",
+                        agc_clipping_rate * 100.0,
+                        agc_gain
+                    );
                     // НЕ сбрасываем счетчики для постепенного накопления статистики
-                    
-                // ОПТИМАЛЬНЫЕ УСЛОВИЯ (<0.1%): Медленное восстановление с ограничениями
-                } else if agc_clipping_rate < 0.001 && agc_gain < 0.8 && (block_start_ms % 500) == 0 {
+
+                    // ОПТИМАЛЬНЫЕ УСЛОВИЯ (<0.1%): Медленное восстановление с ограничениями
+                } else if agc_clipping_rate < 0.001 && agc_gain < 0.8 && (block_start_ms % 500) == 0
+                {
                     // ОСОБЕННОСТИ ВОССТАНОВЛЕНИЯ:
                     // - Только при очень низком клиппинге (<0.1%)
                     // - Только если коэффициент сильно понижен (<0.8)
@@ -2159,25 +3080,33 @@ impl IFDataGen {
                     if agc_gain > 1.0 {
                         agc_gain = 1.0; // Никогда не превышаем номинальный уровень
                     }
-                    println!("[AGC] 📈 Оптимальные условия ({:.3}%), медленное восстановление до {:.3}", 
-                             agc_clipping_rate * 100.0, agc_gain);
+                    println!(
+                        "[AGC] 📈 Оптимальные условия ({:.3}%), медленное восстановление до {:.3}",
+                        agc_clipping_rate * 100.0,
+                        agc_gain
+                    );
                 }
-                
+
                 // ОКОНЧАТЕЛЬНОЕ ОГРАНИЧЕНИЕ ДИАПАЗОНА:
                 // Принудительно ограничиваем коэффициент в безопасных пределах
                 agc_gain = agc_gain.max(0.001).min(1.0); // [-60 дБ, 0 дБ]
             }
-            
+
             let write_duration = write_start.elapsed();
-            print!("\r💾 Блок {}/{} записан: {:.1} MB за {:.0}ms генерации + {:.0}ms записи     ", 
-                     block_idx + 1, num_blocks, iq8_data.len() as f64 / (1024.0 * 1024.0), 
-                     generation_duration.as_secs_f64() * 1000.0, write_duration.as_secs_f64() * 1000.0);
+            print!(
+                "\r💾 Блок {}/{} записан: {:.1} MB за {:.0}ms генерации + {:.0}ms записи     ",
+                block_idx + 1,
+                num_blocks,
+                iq8_data.len() as f64 / (1024.0 * 1024.0),
+                generation_duration.as_secs_f64() * 1000.0,
+                write_duration.as_secs_f64() * 1000.0
+            );
             std::io::stdout().flush().unwrap();
         }
-        
+
         // Переходим на новую строку после завершения всех блоков
         println!();
-        
+
         // Финальная статистика
         let total_duration = start_generation.elapsed();
         println!("===============================================================================");
@@ -2186,29 +3115,42 @@ impl IFDataGen {
         println!("🎯 Время генерации: {:.3}s", total_duration.as_secs_f64());
         println!("📊 Всего сэмплов: {}", total_samples_written / 2);
         println!("📁 Всего байт: {}", total_samples_written);
-        println!("⚡ Скорость: {:.1} MS/s", (total_samples_written / 2) as f64 / total_duration.as_secs_f64() / 1e6);
-        
+        println!(
+            "⚡ Скорость: {:.1} MS/s",
+            (total_samples_written / 2) as f64 / total_duration.as_secs_f64() / 1e6
+        );
+
         if total_clipped_samples > 0 {
-            let clip_rate = total_clipped_samples as f64 / (total_samples_written / 2) as f64 * 100.0;
-            println!("⚠️  Клиппинг: {} сэмплов ({:.2}%)", total_clipped_samples, clip_rate);
+            let clip_rate =
+                total_clipped_samples as f64 / (total_samples_written / 2) as f64 * 100.0;
+            println!(
+                "⚠️  Клиппинг: {} сэмплов ({:.2}%)",
+                total_clipped_samples, clip_rate
+            );
         }
-        
+
         // ========== ФИНАЛЬНАЯ AGC СТАТИСТИКА ==========
         println!("🎚️  Финальный AGC коэффициент: {:.3}", agc_gain);
         if agc_gain < 1.0 {
-            println!("🎚️  AGC компенсировал усиление на {:.1}%", (1.0 - agc_gain) * 100.0);
+            println!(
+                "🎚️  AGC компенсировал усиление на {:.1}%",
+                (1.0 - agc_gain) * 100.0
+            );
         }
-        
+
         if_file.flush()?;
         Ok(())
     }
 
     // Helper methods
-    fn step_to_next_ms(&mut self, cur_pos: &mut KinematicInfo) -> Result<bool, Box<dyn std::error::Error>> {
+    fn step_to_next_ms(
+        &mut self,
+        cur_pos: &mut KinematicInfo,
+    ) -> Result<bool, Box<dyn std::error::Error>> {
         if !self.trajectory.get_next_pos_vel_ecef(0.001, cur_pos) {
             return Ok(true); // End of trajectory
         }
-        
+
         self.cur_time.MilliSeconds += 1;
         if self.cur_time.MilliSeconds >= WEEK_MS {
             self.cur_time.Week += 1;
@@ -2217,20 +3159,28 @@ impl IFDataGen {
 
         Ok(false)
     }
-    
+
     // OPTIMIZED: Update satellite parameters less frequently for performance
-    fn update_sat_params_optimized(&mut self, cur_pos: KinematicInfo) -> Result<(), Box<dyn std::error::Error>> {
+    fn update_sat_params_optimized(
+        &mut self,
+        cur_pos: KinematicInfo,
+    ) -> Result<(), Box<dyn std::error::Error>> {
         let (power_slice, list_count) = self.power_control.get_power_control_list(1);
         let mut power_list_owned = Vec::new();
         power_list_owned.extend_from_slice(power_slice);
-        
+
         let cur_time = self.cur_time;
         // Update satellite parameters (expensive operation)
         self.update_sat_param_list(cur_time, cur_pos, list_count, &power_list_owned, None);
         Ok(())
     }
 
-    fn get_nav_data<'a>(&self, sat_system: GnssSystem, sat_signal_index: i32, nav_bit_array: &'a Vec<Option<UnifiedNavData>>) -> Option<&'a UnifiedNavData> {
+    fn get_nav_data<'a>(
+        &self,
+        sat_system: GnssSystem,
+        sat_signal_index: i32,
+        nav_bit_array: &'a Vec<Option<UnifiedNavData>>,
+    ) -> Option<&'a UnifiedNavData> {
         const L1CA: i32 = SIGNAL_INDEX_L1CA as i32;
         const L1C: i32 = SIGNAL_INDEX_L1C as i32;
         const L2C: i32 = SIGNAL_INDEX_L2C as i32;
@@ -2250,26 +3200,22 @@ impl IFDataGen {
         const G2: i32 = SIGNAL_INDEX_G2 as i32;
 
         match sat_system {
-            GnssSystem::GpsSystem => {
-                match sat_signal_index {
-                    L1CA => nav_bit_array[DataBitType::DataBitLNav as usize].as_ref(),
-                    L1C => nav_bit_array[DataBitType::DataBitCNav2 as usize].as_ref(),
-                    L2C => nav_bit_array[DataBitType::DataBitCNav as usize].as_ref(),
-                    L2P => nav_bit_array[DataBitType::DataBitLNav as usize].as_ref(),
-                    L5 => nav_bit_array[DataBitType::DataBitL5CNav as usize].as_ref(),
-                    _ => nav_bit_array[DataBitType::DataBitLNav as usize].as_ref(),
-                }
+            GnssSystem::GpsSystem => match sat_signal_index {
+                L1CA => nav_bit_array[DataBitType::DataBitLNav as usize].as_ref(),
+                L1C => nav_bit_array[DataBitType::DataBitCNav2 as usize].as_ref(),
+                L2C => nav_bit_array[DataBitType::DataBitCNav as usize].as_ref(),
+                L2P => nav_bit_array[DataBitType::DataBitLNav as usize].as_ref(),
+                L5 => nav_bit_array[DataBitType::DataBitL5CNav as usize].as_ref(),
+                _ => nav_bit_array[DataBitType::DataBitLNav as usize].as_ref(),
             },
-            GnssSystem::BdsSystem => {
-                match sat_signal_index {
-                    B1C => nav_bit_array[DataBitType::DataBitBCNav1 as usize].as_ref(),
-                    B1I => nav_bit_array[DataBitType::DataBitD1D2 as usize].as_ref(),
-                    B2I => nav_bit_array[DataBitType::DataBitD1D2 as usize].as_ref(),
-                    B3I => nav_bit_array[DataBitType::DataBitD1D2 as usize].as_ref(),
-                    B2A => nav_bit_array[DataBitType::DataBitBCNav2 as usize].as_ref(),
-                    B2B => nav_bit_array[DataBitType::DataBitBCNav3 as usize].as_ref(),
-                    _ => nav_bit_array[DataBitType::DataBitD1D2 as usize].as_ref(),
-                }
+            GnssSystem::BdsSystem => match sat_signal_index {
+                B1C => nav_bit_array[DataBitType::DataBitBCNav1 as usize].as_ref(),
+                B1I => nav_bit_array[DataBitType::DataBitD1D2 as usize].as_ref(),
+                B2I => nav_bit_array[DataBitType::DataBitD1D2 as usize].as_ref(),
+                B3I => nav_bit_array[DataBitType::DataBitD1D2 as usize].as_ref(),
+                B2A => nav_bit_array[DataBitType::DataBitBCNav2 as usize].as_ref(),
+                B2B => nav_bit_array[DataBitType::DataBitBCNav3 as usize].as_ref(),
+                _ => nav_bit_array[DataBitType::DataBitD1D2 as usize].as_ref(),
             },
             GnssSystem::GalileoSystem => {
                 match sat_signal_index {
@@ -2279,19 +3225,21 @@ impl IFDataGen {
                     E6 => nav_bit_array[DataBitType::DataBitINav as usize].as_ref(), // E6 uses I/NAV for now
                     _ => nav_bit_array[DataBitType::DataBitINav as usize].as_ref(),
                 }
-            },
-            GnssSystem::GlonassSystem => {
-                match sat_signal_index {
-                    G1 => nav_bit_array[DataBitType::DataBitGNav as usize].as_ref(),
-                    G2 => nav_bit_array[DataBitType::DataBitGNav as usize].as_ref(),
-                    _ => nav_bit_array[DataBitType::DataBitGNav as usize].as_ref(),
-                }
+            }
+            GnssSystem::GlonassSystem => match sat_signal_index {
+                G1 => nav_bit_array[DataBitType::DataBitGNav as usize].as_ref(),
+                G2 => nav_bit_array[DataBitType::DataBitGNav as usize].as_ref(),
+                _ => nav_bit_array[DataBitType::DataBitGNav as usize].as_ref(),
             },
             _ => nav_bit_array[DataBitType::DataBitLNav as usize].as_ref(),
         }
     }
 
-    fn quant_samples_iq4(samples: &[ComplexNumber], quant_samples: &mut [u8], clipped_count: &mut i32) {
+    fn quant_samples_iq4(
+        samples: &[ComplexNumber],
+        quant_samples: &mut [u8],
+        clipped_count: &mut i32,
+    ) {
         *clipped_count = 0;
 
         for (i, sample) in samples.iter().enumerate() {
@@ -2320,7 +3268,11 @@ impl IFDataGen {
         }
     }
 
-    fn quant_samples_iq8(samples: &[ComplexNumber], quant_samples: &mut [u8], clipped_count: &mut i32) {
+    fn quant_samples_iq8(
+        samples: &[ComplexNumber],
+        quant_samples: &mut [u8],
+        clipped_count: &mut i32,
+    ) {
         *clipped_count = 0;
 
         for (i, sample) in samples.iter().enumerate() {
@@ -2359,56 +3311,206 @@ impl IFDataGen {
         // GPS signals
         if self.output_param.CompactConfig.should_parse_gps() {
             print!("\tGPS : [ ");
-            if self.output_param.CompactConfig.is_signal_enabled(crate::types::GEN_L1CA) { print!("L1CA "); }
-            if self.output_param.CompactConfig.is_signal_enabled(crate::types::GEN_L1C) { print!("L1C "); }
-            if self.output_param.CompactConfig.is_signal_enabled(crate::types::GEN_L2C) { print!("L2C "); }
-            if self.output_param.CompactConfig.is_signal_enabled(crate::types::GEN_L5) { print!("L5 "); }
+            if self
+                .output_param
+                .CompactConfig
+                .is_signal_enabled(crate::types::GEN_L1CA)
+            {
+                print!("L1CA ");
+            }
+            if self
+                .output_param
+                .CompactConfig
+                .is_signal_enabled(crate::types::GEN_L1C)
+            {
+                print!("L1C ");
+            }
+            if self
+                .output_param
+                .CompactConfig
+                .is_signal_enabled(crate::types::GEN_L2C)
+            {
+                print!("L2C ");
+            }
+            if self
+                .output_param
+                .CompactConfig
+                .is_signal_enabled(crate::types::GEN_L5)
+            {
+                print!("L5 ");
+            }
             println!("]");
         }
 
         // BDS signals
-        let bds_signals_present = self.output_param.CompactConfig.is_signal_enabled(crate::types::GEN_B1C) ||
-                                 self.output_param.CompactConfig.is_signal_enabled(crate::types::GEN_B1I) ||
-                                 self.output_param.CompactConfig.is_signal_enabled(crate::types::GEN_B2I) ||
-                                 self.output_param.CompactConfig.is_signal_enabled(crate::types::GEN_B3I) ||
-                                 self.output_param.CompactConfig.is_signal_enabled(crate::types::GEN_B2A) ||
-                                 self.output_param.CompactConfig.is_signal_enabled(crate::types::GEN_B2B) ||
-                                 self.output_param.CompactConfig.is_signal_enabled(crate::types::GEN_B2AB);
+        let bds_signals_present = self
+            .output_param
+            .CompactConfig
+            .is_signal_enabled(crate::types::GEN_B1C)
+            || self
+                .output_param
+                .CompactConfig
+                .is_signal_enabled(crate::types::GEN_B1I)
+            || self
+                .output_param
+                .CompactConfig
+                .is_signal_enabled(crate::types::GEN_B2I)
+            || self
+                .output_param
+                .CompactConfig
+                .is_signal_enabled(crate::types::GEN_B3I)
+            || self
+                .output_param
+                .CompactConfig
+                .is_signal_enabled(crate::types::GEN_B2A)
+            || self
+                .output_param
+                .CompactConfig
+                .is_signal_enabled(crate::types::GEN_B2B)
+            || self
+                .output_param
+                .CompactConfig
+                .is_signal_enabled(crate::types::GEN_B2AB);
         if bds_signals_present {
             print!("\tBDS : [ ");
-            if self.output_param.CompactConfig.is_signal_enabled(crate::types::GEN_B1C) { print!("B1C "); }
-            if self.output_param.CompactConfig.is_signal_enabled(crate::types::GEN_B1I) { print!("B1I "); }
-            if self.output_param.CompactConfig.is_signal_enabled(crate::types::GEN_B2I) { print!("B2I "); }
-            if self.output_param.CompactConfig.is_signal_enabled(crate::types::GEN_B2A) { print!("B2a "); }
-            if self.output_param.CompactConfig.is_signal_enabled(crate::types::GEN_B2B) { print!("B2b "); }
-            if self.output_param.CompactConfig.is_signal_enabled(crate::types::GEN_B3I) { print!("B3I "); }
-            if self.output_param.CompactConfig.is_signal_enabled(crate::types::GEN_B2AB) { print!("B2AB "); }
+            if self
+                .output_param
+                .CompactConfig
+                .is_signal_enabled(crate::types::GEN_B1C)
+            {
+                print!("B1C ");
+            }
+            if self
+                .output_param
+                .CompactConfig
+                .is_signal_enabled(crate::types::GEN_B1I)
+            {
+                print!("B1I ");
+            }
+            if self
+                .output_param
+                .CompactConfig
+                .is_signal_enabled(crate::types::GEN_B2I)
+            {
+                print!("B2I ");
+            }
+            if self
+                .output_param
+                .CompactConfig
+                .is_signal_enabled(crate::types::GEN_B2A)
+            {
+                print!("B2a ");
+            }
+            if self
+                .output_param
+                .CompactConfig
+                .is_signal_enabled(crate::types::GEN_B2B)
+            {
+                print!("B2b ");
+            }
+            if self
+                .output_param
+                .CompactConfig
+                .is_signal_enabled(crate::types::GEN_B3I)
+            {
+                print!("B3I ");
+            }
+            if self
+                .output_param
+                .CompactConfig
+                .is_signal_enabled(crate::types::GEN_B2AB)
+            {
+                print!("B2AB ");
+            }
             println!("]");
         }
 
         // Galileo signals
-        let gal_signals_present = self.output_param.CompactConfig.is_signal_enabled(crate::types::GEN_E1) ||
-                                 self.output_param.CompactConfig.is_signal_enabled(crate::types::GEN_E5A) ||
-                                 self.output_param.CompactConfig.is_signal_enabled(crate::types::GEN_E5B) ||
-                                 self.output_param.CompactConfig.is_signal_enabled(crate::types::GEN_E6);
+        let gal_signals_present = self
+            .output_param
+            .CompactConfig
+            .is_signal_enabled(crate::types::GEN_E1)
+            || self
+                .output_param
+                .CompactConfig
+                .is_signal_enabled(crate::types::GEN_E5A)
+            || self
+                .output_param
+                .CompactConfig
+                .is_signal_enabled(crate::types::GEN_E5B)
+            || self
+                .output_param
+                .CompactConfig
+                .is_signal_enabled(crate::types::GEN_E6);
         if gal_signals_present {
             print!("\tGAL : [ ");
-            if self.output_param.CompactConfig.is_signal_enabled(crate::types::GEN_E1) { print!("E1 "); }
-            if self.output_param.CompactConfig.is_signal_enabled(crate::types::GEN_E5A) { print!("E5a "); }
-            if self.output_param.CompactConfig.is_signal_enabled(crate::types::GEN_E5B) { print!("E5b "); }
-            if self.output_param.CompactConfig.is_signal_enabled(crate::types::GEN_E6) { print!("E6 "); }
+            if self
+                .output_param
+                .CompactConfig
+                .is_signal_enabled(crate::types::GEN_E1)
+            {
+                print!("E1 ");
+            }
+            if self
+                .output_param
+                .CompactConfig
+                .is_signal_enabled(crate::types::GEN_E5A)
+            {
+                print!("E5a ");
+            }
+            if self
+                .output_param
+                .CompactConfig
+                .is_signal_enabled(crate::types::GEN_E5B)
+            {
+                print!("E5b ");
+            }
+            if self
+                .output_param
+                .CompactConfig
+                .is_signal_enabled(crate::types::GEN_E6)
+            {
+                print!("E6 ");
+            }
             println!("]");
         }
 
         // GLONASS signals
-        let glo_signals_present = self.output_param.CompactConfig.is_signal_enabled(crate::types::GEN_G1) ||
-                                 self.output_param.CompactConfig.is_signal_enabled(crate::types::GEN_G2) ||
-                                 self.output_param.CompactConfig.is_signal_enabled(crate::types::GEN_G3);
+        let glo_signals_present = self
+            .output_param
+            .CompactConfig
+            .is_signal_enabled(crate::types::GEN_G1)
+            || self
+                .output_param
+                .CompactConfig
+                .is_signal_enabled(crate::types::GEN_G2)
+            || self
+                .output_param
+                .CompactConfig
+                .is_signal_enabled(crate::types::GEN_G3);
         if glo_signals_present {
             print!("\tGLO : [ ");
-            if self.output_param.CompactConfig.is_signal_enabled(crate::types::GEN_G1) { print!("G1 "); }
-            if self.output_param.CompactConfig.is_signal_enabled(crate::types::GEN_G2) { print!("G2 "); }
-            if self.output_param.CompactConfig.is_signal_enabled(crate::types::GEN_G3) { print!("G3 "); }
+            if self
+                .output_param
+                .CompactConfig
+                .is_signal_enabled(crate::types::GEN_G1)
+            {
+                print!("G1 ");
+            }
+            if self
+                .output_param
+                .CompactConfig
+                .is_signal_enabled(crate::types::GEN_G2)
+            {
+                print!("G2 ");
+            }
+            if self
+                .output_param
+                .CompactConfig
+                .is_signal_enabled(crate::types::GEN_G3)
+            {
+                print!("G3 ");
+            }
             println!("]");
         }
         println!();
@@ -2421,57 +3523,219 @@ impl IFDataGen {
         let mut glo_signal_count = 0;
 
         // Count GPS signals
-        if self.output_param.CompactConfig.is_signal_enabled(crate::types::GEN_L1CA) { gps_signal_count += 1; }
-        if self.output_param.CompactConfig.is_signal_enabled(crate::types::GEN_L1C) { gps_signal_count += 1; }
-        if self.output_param.CompactConfig.is_signal_enabled(crate::types::GEN_L2C) { gps_signal_count += 1; }
-        if self.output_param.CompactConfig.is_signal_enabled(crate::types::GEN_L2P) { gps_signal_count += 1; }
-        if self.output_param.CompactConfig.is_signal_enabled(crate::types::GEN_L5) { gps_signal_count += 1; }
+        if self
+            .output_param
+            .CompactConfig
+            .is_signal_enabled(crate::types::GEN_L1CA)
+        {
+            gps_signal_count += 1;
+        }
+        if self
+            .output_param
+            .CompactConfig
+            .is_signal_enabled(crate::types::GEN_L1C)
+        {
+            gps_signal_count += 1;
+        }
+        if self
+            .output_param
+            .CompactConfig
+            .is_signal_enabled(crate::types::GEN_L2C)
+        {
+            gps_signal_count += 1;
+        }
+        if self
+            .output_param
+            .CompactConfig
+            .is_signal_enabled(crate::types::GEN_L2P)
+        {
+            gps_signal_count += 1;
+        }
+        if self
+            .output_param
+            .CompactConfig
+            .is_signal_enabled(crate::types::GEN_L5)
+        {
+            gps_signal_count += 1;
+        }
 
         // Count BDS signals
-        if self.output_param.CompactConfig.is_signal_enabled(crate::types::GEN_B1C) { bds_signal_count += 1; }
-        if self.output_param.CompactConfig.is_signal_enabled(crate::types::GEN_B1I) { bds_signal_count += 1; }
-        if self.output_param.CompactConfig.is_signal_enabled(crate::types::GEN_B2I) { bds_signal_count += 1; }
-        if self.output_param.CompactConfig.is_signal_enabled(crate::types::GEN_B3I) { bds_signal_count += 1; }
-        if self.output_param.CompactConfig.is_signal_enabled(crate::types::GEN_B2A) { bds_signal_count += 1; }
-        if self.output_param.CompactConfig.is_signal_enabled(crate::types::GEN_B2B) { bds_signal_count += 1; }
-        if self.output_param.CompactConfig.is_signal_enabled(crate::types::GEN_B2AB) { bds_signal_count += 1; }
+        if self
+            .output_param
+            .CompactConfig
+            .is_signal_enabled(crate::types::GEN_B1C)
+        {
+            bds_signal_count += 1;
+        }
+        if self
+            .output_param
+            .CompactConfig
+            .is_signal_enabled(crate::types::GEN_B1I)
+        {
+            bds_signal_count += 1;
+        }
+        if self
+            .output_param
+            .CompactConfig
+            .is_signal_enabled(crate::types::GEN_B2I)
+        {
+            bds_signal_count += 1;
+        }
+        if self
+            .output_param
+            .CompactConfig
+            .is_signal_enabled(crate::types::GEN_B3I)
+        {
+            bds_signal_count += 1;
+        }
+        if self
+            .output_param
+            .CompactConfig
+            .is_signal_enabled(crate::types::GEN_B2A)
+        {
+            bds_signal_count += 1;
+        }
+        if self
+            .output_param
+            .CompactConfig
+            .is_signal_enabled(crate::types::GEN_B2B)
+        {
+            bds_signal_count += 1;
+        }
+        if self
+            .output_param
+            .CompactConfig
+            .is_signal_enabled(crate::types::GEN_B2AB)
+        {
+            bds_signal_count += 1;
+        }
 
         // Count Galileo signals
-        if self.output_param.CompactConfig.is_signal_enabled(crate::types::GEN_E1) { gal_signal_count += 1; }
-        if self.output_param.CompactConfig.is_signal_enabled(crate::types::GEN_E5A) { gal_signal_count += 1; }
-        if self.output_param.CompactConfig.is_signal_enabled(crate::types::GEN_E5B) { gal_signal_count += 1; }
-        if self.output_param.CompactConfig.is_signal_enabled(crate::types::GEN_E6) { gal_signal_count += 1; }
+        if self
+            .output_param
+            .CompactConfig
+            .is_signal_enabled(crate::types::GEN_E1)
+        {
+            gal_signal_count += 1;
+        }
+        if self
+            .output_param
+            .CompactConfig
+            .is_signal_enabled(crate::types::GEN_E5A)
+        {
+            gal_signal_count += 1;
+        }
+        if self
+            .output_param
+            .CompactConfig
+            .is_signal_enabled(crate::types::GEN_E5B)
+        {
+            gal_signal_count += 1;
+        }
+        if self
+            .output_param
+            .CompactConfig
+            .is_signal_enabled(crate::types::GEN_E6)
+        {
+            gal_signal_count += 1;
+        }
 
         // Count GLONASS signals
-        if self.output_param.CompactConfig.is_signal_enabled(crate::types::GEN_G1) { glo_signal_count += 1; }
-        if self.output_param.CompactConfig.is_signal_enabled(crate::types::GEN_G2) { glo_signal_count += 1; }
-        if self.output_param.CompactConfig.is_signal_enabled(crate::types::GEN_G3) { glo_signal_count += 1; }
+        if self
+            .output_param
+            .CompactConfig
+            .is_signal_enabled(crate::types::GEN_G1)
+        {
+            glo_signal_count += 1;
+        }
+        if self
+            .output_param
+            .CompactConfig
+            .is_signal_enabled(crate::types::GEN_G2)
+        {
+            glo_signal_count += 1;
+        }
+        if self
+            .output_param
+            .CompactConfig
+            .is_signal_enabled(crate::types::GEN_G3)
+        {
+            glo_signal_count += 1;
+        }
 
-        (gps_signal_count, bds_signal_count, gal_signal_count, glo_signal_count)
+        (
+            gps_signal_count,
+            bds_signal_count,
+            gal_signal_count,
+            glo_signal_count,
+        )
     }
 
-    fn display_signals_summary_table(&self, gps_signal_count: usize, bds_signal_count: usize, gal_signal_count: usize, glo_signal_count: usize) {
+    fn display_signals_summary_table(
+        &self,
+        gps_signal_count: usize,
+        bds_signal_count: usize,
+        gal_signal_count: usize,
+        glo_signal_count: usize,
+    ) {
         println!("Signals Summary Table:");
         println!("+---------------+-------------+--------------+------------------------------+");
         println!("| Constellation | Visible SVs | Signals / SV | Total Signals / Visible SVs |");
         println!("+---------------+-------------+--------------+------------------------------+");
-        println!("| GPS           | {:11} | {:12} | {:28} |", self.gps_sat_number, gps_signal_count, self.gps_sat_number * gps_signal_count);
-        println!("| BeiDou        | {:11} | {:12} | {:28} |", self.bds_sat_number, bds_signal_count, self.bds_sat_number * bds_signal_count);
-        println!("| Galileo       | {:11} | {:12} | {:28} |", self.gal_sat_number, gal_signal_count, self.gal_sat_number * gal_signal_count);
-        println!("| GLONASS       | {:11} | {:12} | {:28} |", self.glo_sat_number, glo_signal_count, self.glo_sat_number * glo_signal_count);
+        println!(
+            "| GPS           | {:11} | {:12} | {:28} |",
+            self.gps_sat_number,
+            gps_signal_count,
+            self.gps_sat_number * gps_signal_count
+        );
+        println!(
+            "| BeiDou        | {:11} | {:12} | {:28} |",
+            self.bds_sat_number,
+            bds_signal_count,
+            self.bds_sat_number * bds_signal_count
+        );
+        println!(
+            "| Galileo       | {:11} | {:12} | {:28} |",
+            self.gal_sat_number,
+            gal_signal_count,
+            self.gal_sat_number * gal_signal_count
+        );
+        println!(
+            "| GLONASS       | {:11} | {:12} | {:28} |",
+            self.glo_sat_number,
+            glo_signal_count,
+            self.glo_sat_number * glo_signal_count
+        );
         println!("+---------------+-------------+--------------+------------------------------+");
 
-        let total_visible_svs = self.gps_sat_number + self.bds_sat_number + self.gal_sat_number + self.glo_sat_number;
-        let total_channels = self.gps_sat_number * gps_signal_count + self.bds_sat_number * bds_signal_count + 
-                           self.gal_sat_number * gal_signal_count + self.glo_sat_number * glo_signal_count;
-        println!("Total Visible SVs = {}, Total channels = {}\n", total_visible_svs, total_channels);
+        let total_visible_svs =
+            self.gps_sat_number + self.bds_sat_number + self.gal_sat_number + self.glo_sat_number;
+        let total_channels = self.gps_sat_number * gps_signal_count
+            + self.bds_sat_number * bds_signal_count
+            + self.gal_sat_number * gal_signal_count
+            + self.glo_sat_number * glo_signal_count;
+        println!(
+            "Total Visible SVs = {}, Total channels = {}\n",
+            total_visible_svs, total_channels
+        );
     }
 
-    fn display_progress(&self, length: i32, total_duration_ms: i32, total_mb: f64, bytes_per_ms: f64, start_time: Instant) {
+    fn display_progress(
+        &self,
+        length: i32,
+        total_duration_ms: i32,
+        total_mb: f64,
+        bytes_per_ms: f64,
+        start_time: Instant,
+    ) {
         let elapsed = start_time.elapsed().as_millis() as u64;
         let percentage = length as f64 / total_duration_ms as f64 * 100.0;
         let current_mb = (length as f64 * bytes_per_ms) / (1024.0 * 1024.0);
-        let mb_per_sec = if elapsed > 0 { (current_mb * 1000.0) / elapsed as f64 } else { 0.0 };
+        let mb_per_sec = if elapsed > 0 {
+            (current_mb * 1000.0) / elapsed as f64
+        } else {
+            0.0
+        };
 
         // Calculate estimated time remaining
         let eta_ms = if percentage > 0.0 && elapsed > 0 {
@@ -2490,7 +3754,10 @@ impl IFDataGen {
         print!("\r[");
         for k in 0..bar_width {
             if k >= center_pos && k < center_pos + progress_str_len {
-                print!("{}", progress_str.chars().nth(k - center_pos).unwrap_or(' '));
+                print!(
+                    "{}",
+                    progress_str.chars().nth(k - center_pos).unwrap_or(' ')
+                );
             } else if k < progress {
                 print!("=");
             } else if k == progress && percentage < 100.0 {
@@ -2516,8 +3783,10 @@ impl IFDataGen {
             "ETA: --   ".to_string()
         };
 
-        print!("] {}/{} ms | {:.2}/{:.2} MB | {:.2} MB/s | {}",
-               length, total_duration_ms, current_mb, total_mb, mb_per_sec, eta_str);
+        print!(
+            "] {}/{} ms | {:.2}/{:.2} MB | {:.2} MB/s | {}",
+            length, total_duration_ms, current_mb, total_mb, mb_per_sec, eta_str
+        );
         std::io::stdout().flush().unwrap();
     }
 
@@ -2530,22 +3799,35 @@ impl IFDataGen {
                 print!("=");
             }
         }
-        println!("] {}/{} ms | {:.2}/{:.2} MB | COMPLETED: --",
-                total_duration_ms, total_duration_ms, total_mb, total_mb);
+        println!(
+            "] {}/{} ms | {:.2}/{:.2} MB | COMPLETED: --",
+            total_duration_ms, total_duration_ms, total_mb, total_mb
+        );
     }
 
-    fn display_completion_stats(&self, total_samples: i64, total_clipped_samples: i64, agc_gain: f64, start_time: Instant, final_mb: f64) {
+    fn display_completion_stats(
+        &self,
+        total_samples: i64,
+        total_clipped_samples: i64,
+        agc_gain: f64,
+        start_time: Instant,
+        final_mb: f64,
+    ) {
         let duration = start_time.elapsed();
-        let avg_mb_per_sec = if duration.as_millis() > 0 { 
-            (final_mb * 1000.0) / duration.as_millis() as f64 
-        } else { 
-            0.0 
+        let avg_mb_per_sec = if duration.as_millis() > 0 {
+            (final_mb * 1000.0) / duration.as_millis() as f64
+        } else {
+            0.0
         };
 
         println!("\n[INFO]\tIF Signal generation completed!");
         println!("------------------------------------------------------------------");
         println!("[INFO]\tTotal samples: {}", total_samples);
-        println!("[INFO]\tClipped samples: {} ({:.4}%)", total_clipped_samples, total_clipped_samples as f64 / total_samples as f64 * 100.0);
+        println!(
+            "[INFO]\tClipped samples: {} ({:.4}%)",
+            total_clipped_samples,
+            total_clipped_samples as f64 / total_samples as f64 * 100.0
+        );
         println!("[INFO]\tFinal AGC gain: {:.3}", agc_gain);
         if total_clipped_samples as f64 / total_samples as f64 > 0.05 {
             println!("[WARNING]\tHigh clipping rate! Consider reducing initPower in JSON config.");
@@ -2557,10 +3839,16 @@ impl IFDataGen {
     }
 
     // Placeholder methods that need to be implemented based on the actual types and interfaces
-    fn assign_parameters(&mut self, object: &JsonObject, utc_time: &mut UtcTime, start_pos: &mut LlaPosition, start_vel: &mut LocalSpeed) -> Result<(), Box<dyn std::error::Error>> {
+    fn assign_parameters(
+        &mut self,
+        object: &JsonObject,
+        utc_time: &mut UtcTime,
+        start_pos: &mut LlaPosition,
+        start_vel: &mut LocalSpeed,
+    ) -> Result<(), Box<dyn std::error::Error>> {
         // Упрощенная версия - устанавливаем значения по умолчанию
         // В полной реализации здесь должен быть парсинг JSON объекта
-        
+
         // Устанавливаем значения по умолчанию
         utc_time.Year = 2024;
         utc_time.Month = 1;
@@ -2568,40 +3856,47 @@ impl IFDataGen {
         utc_time.Hour = 0;
         utc_time.Minute = 0;
         utc_time.Second = 0.0;
-        
+
         // Начальная позиция (пример - Москва)
         start_pos.lat = 55.7558f64.to_radians(); // широта в радианах
-        start_pos.lon = 37.6173f64.to_radians(); // долгота в радианах  
+        start_pos.lon = 37.6173f64.to_radians(); // долгота в радианах
         start_pos.alt = 156.0; // высота в метрах
-        
+
         // Начальная скорость (неподвижная)
         start_vel.ve = 0.0;
         start_vel.vn = 0.0;
         start_vel.vu = 0.0;
         start_vel.speed = 0.0;
         start_vel.course = 0.0;
-        
+
         // Параметры выходного файла
         let default_filename = b"output.bin\0";
         let copy_len = default_filename.len().min(256);
         self.output_param.filename[..copy_len].copy_from_slice(&default_filename[..copy_len]);
-        
+
         self.output_param.SampleFreq = 4000000; // 4 MHz
         self.output_param.CenterFreq = 1575420000; // L1 frequency
         self.output_param.Interval = 1000; // 1 second
-        
+
         // TODO: Реализовать полный парсинг JSON когда JsonObject API будет доступен
-        
+
         println!("[INFO] JSON parameters loaded successfully");
         Ok(())
     }
 
     /// Определяет видимые спутники на основе позиции, времени и маски угла места
     /// Возвращает количество видимых спутников и заполняет массив эфемерид
-    fn get_visible_satellite(&self, cur_pos: KinematicInfo, cur_time: GnssTime, system: GnssSystem, eph: &[Option<GpsEphemeris>], eph_visible: &mut [Option<GpsEphemeris>]) -> usize {
+    fn get_visible_satellite(
+        &self,
+        cur_pos: KinematicInfo,
+        cur_time: GnssTime,
+        system: GnssSystem,
+        eph: &[Option<GpsEphemeris>],
+        eph_visible: &mut [Option<GpsEphemeris>],
+    ) -> usize {
         let mut sat_number = 0;
         let elevation_mask = self.output_param.ElevationMask;
-        
+
         // Получаем маску исключений для конкретной системы
         let mask_out = match system {
             GnssSystem::GpsSystem => self.output_param.GpsMaskOut as u64,
@@ -2609,96 +3904,110 @@ impl IFDataGen {
             GnssSystem::GalileoSystem => self.output_param.GalileoMaskOut,
             _ => 0,
         };
-        
+
         for (i, eph_opt) in eph.iter().enumerate() {
             if let Some(ephemeris) = eph_opt {
                 // Проверяем состояние эфемерид и здоровье спутника
                 if (ephemeris.valid & 1) == 0 || ephemeris.health != 0 {
                     continue;
                 }
-                
+
                 // Проверяем маску исключений
                 if (mask_out & (1u64 << i)) != 0 {
                     continue;
                 }
-                
+
                 // Вычисляем позицию спутника в текущий момент времени
                 let mut sat_pos_vel = KinematicInfo::default();
-                
-                // КАК В C ВЕРСИИ: передаем только секунды недели  
+
+                // КАК В C ВЕРСИИ: передаем только секунды недели
                 let gps_time_seconds = (cur_time.MilliSeconds as f64) / 1000.0;
-                
+
                 // Вызов функции расчета позиции спутника (упрощенный)
                 // В полной реализации: gps_sat_pos_speed_eph(system, gps_time_seconds, ephemeris, &mut sat_pos_vel)
                 // УСКОРЕНИЕ: используем FastMath для тригонометрии в критическом цикле орбит
                 let mean_anomaly = ephemeris.M0 + ephemeris.n * gps_time_seconds;
                 sat_pos_vel.x = ephemeris.axis * crate::fastmath::FastMath::fast_cos(mean_anomaly);
                 sat_pos_vel.y = ephemeris.axis * crate::fastmath::FastMath::fast_sin(mean_anomaly);
-                sat_pos_vel.z = ephemeris.axis * crate::fastmath::FastMath::fast_sin(ephemeris.i0) * crate::fastmath::FastMath::fast_sin(mean_anomaly);
-                
+                sat_pos_vel.z = ephemeris.axis
+                    * crate::fastmath::FastMath::fast_sin(ephemeris.i0)
+                    * crate::fastmath::FastMath::fast_sin(mean_anomaly);
+
                 // Вычисляем угол места (elevation) от текущей позиции до спутника
                 let dx = sat_pos_vel.x - cur_pos.x;
-                let dy = sat_pos_vel.y - cur_pos.y; 
+                let dy = sat_pos_vel.y - cur_pos.y;
                 let dz = sat_pos_vel.z - cur_pos.z;
-                let distance = (dx*dx + dy*dy + dz*dz).sqrt();
+                let distance = (dx * dx + dy * dy + dz * dz).sqrt();
                 let elevation = (dz / distance).asin().to_degrees();
-                
+
                 // Проверяем маску угла места
-                if elevation >= elevation_mask
-                    && sat_number < eph_visible.len() {
-                        eph_visible[sat_number] = Some(*ephemeris);
-                        sat_number += 1;
-                    }
-                
+                if elevation >= elevation_mask && sat_number < eph_visible.len() {
+                    eph_visible[sat_number] = Some(*ephemeris);
+                    sat_number += 1;
+                }
+
                 // Ограничиваем количество для простоты
                 if sat_number >= 12 {
                     break;
                 }
             }
         }
-        
+
         sat_number
     }
 
     /// Определяет видимые спутники ГЛОНАСС
     /// Аналогично get_visible_satellite, но для системы ГЛОНАСС с учетом слотов
-    fn get_glonass_visible_satellite(&self, cur_pos: KinematicInfo, glonass_time: GlonassTime, eph: &[Option<GlonassEphemeris>], eph_visible: &mut [Option<GlonassEphemeris>]) -> usize {
+    fn get_glonass_visible_satellite(
+        &self,
+        cur_pos: KinematicInfo,
+        glonass_time: GlonassTime,
+        eph: &[Option<GlonassEphemeris>],
+        eph_visible: &mut [Option<GlonassEphemeris>],
+    ) -> usize {
         let mut sat_number = 0;
         let elevation_mask = self.output_param.ElevationMask;
         let mask_out = self.output_param.GlonassMaskOut;
-        
+
         for (i, eph_opt) in eph.iter().enumerate() {
             if let Some(ephemeris) = eph_opt {
                 // Проверяем флаг активности спутника
                 if ephemeris.flag == 0 {
                     continue;
                 }
-                
+
                 // Проверяем маску исключений
                 if (mask_out & (1u32 << i)) != 0 {
                     continue;
                 }
-                
+
                 // Упрощенный расчет видимости
                 // TODO: Нужен полный расчет с glonass_sat_pos_speed_eph
                 if sat_number < eph_visible.len() {
                     eph_visible[sat_number] = Some(*ephemeris);
                     sat_number += 1;
                 }
-                
+
                 // Ограничиваем количество
                 if sat_number >= 12 {
                     break;
                 }
             }
         }
-        
+
         sat_number
     }
 
-    fn update_sat_param_list(&mut self, cur_time: GnssTime, cur_pos: KinematicInfo, list_count: usize, power_list: &[SignalPower], iono_param: Option<&IonoParam>) {
+    fn update_sat_param_list(
+        &mut self,
+        cur_time: GnssTime,
+        cur_pos: KinematicInfo,
+        list_count: usize,
+        power_list: &[SignalPower],
+        iono_param: Option<&IonoParam>,
+    ) {
         // Обновление параметров спутников на основе текущего времени и позиции
-        
+
         // Обновляем параметры GPS спутников
         for i in 0..self.gps_sat_number {
             if let Some(ref mut _eph) = self.gps_eph_visible[i] {
@@ -2706,21 +4015,21 @@ impl IFDataGen {
                 let _sat_pos = [0.0; 3];
                 let _sat_speed = [0.0; 3];
                 let _clock_correction = 0.0;
-                
+
                 // Рассчитываем позицию и скорость спутника
                 // Вызов через публичные функции из satellite_param модуля
                 // (satellite_param::gps_sat_pos_speed_eph, satellite_param::gps_iono_delay)
                 // Для полной реализации необходимо сделать эти функции публичными
             }
         }
-        
+
         // Обновляем параметры GLONASS спутников
         for i in 0..self.glo_sat_number {
             if let Some(ref mut _eph) = self.glo_eph_visible[i] {
                 let _sat_pos = [0.0; 3];
                 let _sat_speed = [0.0; 3];
                 let _clock_correction = 0.0;
-                
+
                 // Создаем GLONASS время из GPS времени
                 let glonass_time = GlonassTime {
                     LeapYear: 2023, // Placeholder год
@@ -2728,12 +4037,12 @@ impl IFDataGen {
                     MilliSeconds: (cur_time.MilliSeconds % (24 * 60 * 60 * 1000)),
                     SubMilliSeconds: 0.0,
                 };
-                
+
                 // Рассчитываем позицию GLONASS спутника
                 // Вызов satellite_param::glonass_sat_pos_speed_eph для полной реализации
             }
         }
-        
+
         // Обновляем мощность сигналов из списка управления мощностью
         if list_count > 0 && !power_list.is_empty() {
             // Применяем настройки мощности к видимым спутникам
@@ -2748,50 +4057,50 @@ impl IFDataGen {
     fn convert_glonass_to_gps_ephemeris(&self, glo_eph: &GlonassEphemeris) -> GpsEphemeris {
         // Конвертация эфемерид ГЛОНАСС в формат GPS для унифицированной обработки
         // ГЛОНАСС использует декартовы координаты, GPS - кеплеровы элементы
-        
+
         let mut gps_eph = GpsEphemeris::new();
-        
+
         // Базовые параметры времени
         gps_eph.toe = (glo_eph.tb as f64 * 15.0 * 60.0) as i32; // tb в 15-минутных интервалах
         gps_eph.toc = (glo_eph.tb as f64 * 15.0 * 60.0) as i32;
-        
+
         // Номер спутника (используем svid)
         gps_eph.svid = glo_eph.n;
-        
+
         // Параметры здоровья и точности
         gps_eph.health = if glo_eph.flag != 0 { 0 } else { 1 };
         gps_eph.ura = 2; // Примерная точность ГЛОНАСС (i16)
-        
+
         // Коррекция часов (ГЛОНАСС использует линейную модель)
         gps_eph.af0 = -glo_eph.tn; // Смещение часов
         gps_eph.af1 = glo_eph.gamma; // Относительное отклонение частоты
         gps_eph.af2 = 0.0; // ГЛОНАСС не использует квадратичный член
-        
+
         // Орбитальные параметры требуют преобразования из декартовых координат
         // в кеплеровы элементы - это сложное преобразование
         // Для упрощения используем приближенные значения
-        
+
         // Позиция в км -> м
         let pos_x = glo_eph.x * 1000.0;
-        let pos_y = glo_eph.y * 1000.0; 
+        let pos_y = glo_eph.y * 1000.0;
         let pos_z = glo_eph.z * 1000.0;
-        
+
         // Скорость в км/с -> м/с
         let vel_x = glo_eph.vx * 1000.0;
         let vel_y = glo_eph.vy * 1000.0;
         let vel_z = glo_eph.vz * 1000.0;
-        
+
         // Упрощенное преобразование - радиус орбиты
         let r = (pos_x * pos_x + pos_y * pos_y + pos_z * pos_z).sqrt();
         gps_eph.sqrtA = (r / 1000.0).sqrt(); // Приблизительно корень из большой полуоси
-        
+
         // Примерные значения для других параметров орбиты
         gps_eph.ecc = 0.001; // Малый эксцентриситет для ГЛОНАСС
         gps_eph.i0 = (pos_z / r).asin(); // Приближенное наклонение
         gps_eph.omega0 = pos_y.atan2(pos_x); // Долгота восходящего узла
         gps_eph.w = 0.0; // Аргумент перигея (w, не omega)
         gps_eph.M0 = 0.0; // Средняя аномалия
-        
+
         // Поправки орбиты (для ГЛОНАСС не применимы)
         gps_eph.delta_n = 0.0;
         gps_eph.cuc = 0.0;
@@ -2802,10 +4111,10 @@ impl IFDataGen {
         gps_eph.cis = 0.0;
         gps_eph.omega_dot = 0.0;
         gps_eph.idot = 0.0;
-        
+
         // Флаг валидности
         gps_eph.valid = if glo_eph.flag != 0 { 1 } else { 0 };
-        
+
         gps_eph
     }
 
@@ -2817,20 +4126,32 @@ impl IFDataGen {
     // Вспомогательные методы для assign_parameters (упрощенная версия)
     // В полной реализации здесь должен быть полный парсер JSON параметров
 
-    fn create_gps_signals(&mut self, sat_if_signals: &mut Vec<Option<Box<SatIfSignal>>>, mut total_channel_number: usize, nav_bit_array: &Vec<Option<UnifiedNavData>>, cur_pos: KinematicInfo) -> Result<usize, Box<dyn std::error::Error>> {
+    fn create_gps_signals(
+        &mut self,
+        sat_if_signals: &mut Vec<Option<Box<SatIfSignal>>>,
+        mut total_channel_number: usize,
+        nav_bit_array: &Vec<Option<UnifiedNavData>>,
+        cur_pos: KinematicInfo,
+    ) -> Result<usize, Box<dyn std::error::Error>> {
         for i in 0..self.gps_sat_number {
             if let Some(eph) = &self.gps_eph_visible[i] {
                 // Рассчитываем параметры спутника для правильного доплера
-                let position_lla = ecef_to_lla(&cur_pos); 
+                let position_lla = ecef_to_lla(&cur_pos);
                 let gps_time = self.cur_time; // используем текущее время
-                
+
                 let default_iono = IonoParam {
-                    a0: 0.0, a1: 0.0, a2: 0.0, a3: 0.0,
-                    b0: 0.0, b1: 0.0, b2: 0.0, b3: 0.0,
-                    flag: 0
+                    a0: 0.0,
+                    a1: 0.0,
+                    a2: 0.0,
+                    a3: 0.0,
+                    b0: 0.0,
+                    b1: 0.0,
+                    b2: 0.0,
+                    b3: 0.0,
+                    flag: 0,
                 };
                 let iono_param = self.nav_data.get_gps_iono().unwrap_or(&default_iono);
-                
+
                 crate::satellite_param::get_satellite_param(
                     &cur_pos,
                     &position_lla,
@@ -2838,9 +4159,9 @@ impl IFDataGen {
                     GnssSystem::GpsSystem,
                     eph,
                     &iono_param,
-                    &mut self.gps_sat_param[eph.svid as usize - 1]
+                    &mut self.gps_sat_param[eph.svid as usize - 1],
                 );
-                
+
                 // Check each GPS signal
                 let gps_signals = [
                     (SIGNAL_INDEX_L1CA, crate::types::GEN_L1CA),
@@ -2849,24 +4170,48 @@ impl IFDataGen {
                     (SIGNAL_INDEX_L2P, crate::types::GEN_L2P),
                     (SIGNAL_INDEX_L5, crate::types::GEN_L5),
                 ];
-                
+
                 for &(signal_index, signal_mask) in &gps_signals {
-                    if self.output_param.CompactConfig.is_signal_enabled(signal_mask) {
-                        let center_freq = SIGNAL_CENTER_FREQ[GnssSystem::GpsSystem as usize][signal_index.min(7)];
+                    if self
+                        .output_param
+                        .CompactConfig
+                        .is_signal_enabled(signal_mask)
+                    {
+                        let center_freq =
+                            SIGNAL_CENTER_FREQ[GnssSystem::GpsSystem as usize][signal_index.min(7)];
                         // Добавляем Doppler для создания реальной IF частоты
-                        let doppler = get_doppler(&self.gps_sat_param[eph.svid as usize - 1], signal_index);
-                        let if_freq = ((center_freq + doppler) - self.output_param.CenterFreq as f64) as i32;
-                        if eph.svid <= 3 { // Отладка для первых 3 спутников
+                        let doppler =
+                            get_doppler(&self.gps_sat_param[eph.svid as usize - 1], signal_index);
+                        let if_freq =
+                            ((center_freq + doppler) - self.output_param.CenterFreq as f64) as i32;
+                        if eph.svid <= 3 {
+                            // Отладка для первых 3 спутников
                             println!("[DEBUG] GPS G{:02}: center_freq={:.0} Hz, doppler={:.1} Hz, CenterFreq={} Hz, if_freq={} Hz", 
                                     eph.svid, center_freq, doppler, self.output_param.CenterFreq, if_freq);
                         }
-                        let mut new_signal = SatIfSignal::new(self.output_param.SampleFreq, if_freq, GnssSystem::GpsSystem, signal_index as i32, eph.svid);
-                        
-                        let nav_data = self.get_nav_data(GnssSystem::GpsSystem, signal_index as i32, nav_bit_array);
+                        // SatIfSignal expects number of samples per millisecond, not Hz
+                        let samples_per_ms = self.output_param.SampleFreq / 1000;
+                        let mut new_signal = SatIfSignal::new(
+                            samples_per_ms,
+                            if_freq,
+                            GnssSystem::GpsSystem,
+                            signal_index as i32,
+                            eph.svid,
+                        );
+
+                        let nav_data = self.get_nav_data(
+                            GnssSystem::GpsSystem,
+                            signal_index as i32,
+                            nav_bit_array,
+                        );
                         // Cloning the boxed trait object
                         let nav_data_clone = nav_data.cloned();
 
-                        new_signal.init_state(self.cur_time, &self.gps_sat_param[eph.svid as usize - 1], nav_data_clone);
+                        new_signal.init_state(
+                            self.cur_time,
+                            &self.gps_sat_param[eph.svid as usize - 1],
+                            nav_data_clone,
+                        );
                         sat_if_signals[total_channel_number] = Some(Box::new(new_signal));
                         total_channel_number += 1;
                     }
@@ -2876,25 +4221,39 @@ impl IFDataGen {
         Ok(total_channel_number)
     }
 
-    fn create_bds_signals(&mut self, sat_if_signals: &mut Vec<Option<Box<SatIfSignal>>>, mut total_channel_number: usize, nav_bit_array: &Vec<Option<UnifiedNavData>>, cur_pos: KinematicInfo) -> Result<usize, Box<dyn std::error::Error>> {
+    fn create_bds_signals(
+        &mut self,
+        sat_if_signals: &mut Vec<Option<Box<SatIfSignal>>>,
+        mut total_channel_number: usize,
+        nav_bit_array: &Vec<Option<UnifiedNavData>>,
+        cur_pos: KinematicInfo,
+    ) -> Result<usize, Box<dyn std::error::Error>> {
         for i in 0..self.bds_sat_number {
             if let Some(eph) = &self.bds_eph_visible[i] {
                 // Рассчитываем параметры спутника для правильного доплера
-                let position_lla = ecef_to_lla(&cur_pos); 
+                let position_lla = ecef_to_lla(&cur_pos);
                 // Используем BDT как секунды недели
                 let utc_now = crate::gnsstime::gps_time_to_utc(self.cur_time, true);
                 let bds_time = crate::gnsstime::utc_to_bds_time(utc_now);
-                
+
                 // BeiDou использует модель NeQuick или Klobuchar (используем GPS параметры как fallback)
                 let default_iono = IonoParam {
-                    a0: 0.0, a1: 0.0, a2: 0.0, a3: 0.0,
-                    b0: 0.0, b1: 0.0, b2: 0.0, b3: 0.0,
-                    flag: 0
+                    a0: 0.0,
+                    a1: 0.0,
+                    a2: 0.0,
+                    a3: 0.0,
+                    b0: 0.0,
+                    b1: 0.0,
+                    b2: 0.0,
+                    b3: 0.0,
+                    flag: 0,
                 };
-                let iono_param = self.nav_data.get_bds_iono()
+                let iono_param = self
+                    .nav_data
+                    .get_bds_iono()
                     .or_else(|| self.nav_data.get_gps_iono())
                     .unwrap_or(&default_iono);
-                
+
                 crate::satellite_param::get_satellite_param(
                     &cur_pos,
                     &position_lla,
@@ -2902,9 +4261,9 @@ impl IFDataGen {
                     GnssSystem::BdsSystem,
                     eph,
                     &iono_param,
-                    &mut self.bds_sat_param[eph.svid as usize - 1]
+                    &mut self.bds_sat_param[eph.svid as usize - 1],
                 );
-                
+
                 // Check each BDS signal
                 let bds_signals = [
                     (SIGNAL_INDEX_B1C, crate::types::GEN_B1C, 0),
@@ -2915,23 +4274,47 @@ impl IFDataGen {
                     (SIGNAL_INDEX_B2B, crate::types::GEN_B2B, 5),
                     (SIGNAL_INDEX_B2AB, crate::types::GEN_B2AB, 6),
                 ];
-                
+
                 for &(signal_index, signal_mask, freq_array_index) in &bds_signals {
-                    if self.output_param.CompactConfig.is_signal_enabled(signal_mask) {
-                        let center_freq = SIGNAL_CENTER_FREQ[GnssSystem::BdsSystem as usize][freq_array_index];
+                    if self
+                        .output_param
+                        .CompactConfig
+                        .is_signal_enabled(signal_mask)
+                    {
+                        let center_freq =
+                            SIGNAL_CENTER_FREQ[GnssSystem::BdsSystem as usize][freq_array_index];
                         // Добавляем Doppler для создания реальной IF частоты
-                        let doppler = get_doppler(&self.bds_sat_param[eph.svid as usize - 1], signal_index);
-                        let if_freq = ((center_freq + doppler) - self.output_param.CenterFreq as f64) as i32;
-                        if eph.svid <= 3 { // Отладка для первых 3 спутников
+                        let doppler =
+                            get_doppler(&self.bds_sat_param[eph.svid as usize - 1], signal_index);
+                        let if_freq =
+                            ((center_freq + doppler) - self.output_param.CenterFreq as f64) as i32;
+                        if eph.svid <= 3 {
+                            // Отладка для первых 3 спутников
                             println!("[DEBUG] BDS C{:02}: center_freq={:.0} Hz, doppler={:.1} Hz, CenterFreq={} Hz, if_freq={} Hz", 
                                     eph.svid, center_freq, doppler, self.output_param.CenterFreq, if_freq);
                         }
-                        let mut new_signal = SatIfSignal::new(self.output_param.SampleFreq, if_freq, GnssSystem::BdsSystem, signal_index as i32, eph.svid);
-                        
-                        let nav_data = self.get_nav_data(GnssSystem::BdsSystem, signal_index as i32, nav_bit_array);
+                        // SatIfSignal expects number of samples per millisecond, not Hz
+                        let samples_per_ms = self.output_param.SampleFreq / 1000;
+                        let mut new_signal = SatIfSignal::new(
+                            samples_per_ms,
+                            if_freq,
+                            GnssSystem::BdsSystem,
+                            signal_index as i32,
+                            eph.svid,
+                        );
+
+                        let nav_data = self.get_nav_data(
+                            GnssSystem::BdsSystem,
+                            signal_index as i32,
+                            nav_bit_array,
+                        );
                         let nav_data_clone = nav_data.cloned();
 
-                        new_signal.init_state(self.cur_time, &self.bds_sat_param[eph.svid as usize - 1], nav_data_clone);
+                        new_signal.init_state(
+                            self.cur_time,
+                            &self.bds_sat_param[eph.svid as usize - 1],
+                            nav_data_clone,
+                        );
                         sat_if_signals[total_channel_number] = Some(Box::new(new_signal));
                         total_channel_number += 1;
                     }
@@ -2941,25 +4324,39 @@ impl IFDataGen {
         Ok(total_channel_number)
     }
 
-    fn create_galileo_signals(&mut self, sat_if_signals: &mut Vec<Option<Box<SatIfSignal>>>, mut total_channel_number: usize, nav_bit_array: &Vec<Option<UnifiedNavData>>, cur_pos: KinematicInfo) -> Result<usize, Box<dyn std::error::Error>> {
+    fn create_galileo_signals(
+        &mut self,
+        sat_if_signals: &mut Vec<Option<Box<SatIfSignal>>>,
+        mut total_channel_number: usize,
+        nav_bit_array: &Vec<Option<UnifiedNavData>>,
+        cur_pos: KinematicInfo,
+    ) -> Result<usize, Box<dyn std::error::Error>> {
         for i in 0..self.gal_sat_number {
             if let Some(eph) = &self.gal_eph_visible[i] {
                 // Рассчитываем параметры спутника для правильного доплера
-                let position_lla = ecef_to_lla(&cur_pos); 
+                let position_lla = ecef_to_lla(&cur_pos);
                 // Используем GST как секунды недели
                 let utc_now = crate::gnsstime::gps_time_to_utc(self.cur_time, true);
                 let gal_time = crate::gnsstime::utc_to_galileo_time(utc_now);
-                
+
                 // Galileo использует модель NeQuick (используем GPS параметры как fallback)
                 let default_iono = IonoParam {
-                    a0: 0.0, a1: 0.0, a2: 0.0, a3: 0.0,
-                    b0: 0.0, b1: 0.0, b2: 0.0, b3: 0.0,
-                    flag: 0
+                    a0: 0.0,
+                    a1: 0.0,
+                    a2: 0.0,
+                    a3: 0.0,
+                    b0: 0.0,
+                    b1: 0.0,
+                    b2: 0.0,
+                    b3: 0.0,
+                    flag: 0,
                 };
-                let iono_param = self.nav_data.get_galileo_iono()
+                let iono_param = self
+                    .nav_data
+                    .get_galileo_iono()
                     .or_else(|| self.nav_data.get_gps_iono())
                     .unwrap_or(&default_iono);
-                
+
                 crate::satellite_param::get_satellite_param(
                     &cur_pos,
                     &position_lla,
@@ -2967,33 +4364,57 @@ impl IFDataGen {
                     GnssSystem::GalileoSystem,
                     eph,
                     &iono_param,
-                    &mut self.gal_sat_param[eph.svid as usize - 1]
+                    &mut self.gal_sat_param[eph.svid as usize - 1],
                 );
-                
-                // Check each Galileo signal  
+
+                // Check each Galileo signal
                 let gal_signals = [
                     (SIGNAL_INDEX_E1, crate::types::GEN_E1, 0),
-                    (SIGNAL_INDEX_E5A, crate::types::GEN_E5A, 1), 
+                    (SIGNAL_INDEX_E5A, crate::types::GEN_E5A, 1),
                     (SIGNAL_INDEX_E5B, crate::types::GEN_E5B, 2),
                     (SIGNAL_INDEX_E6, crate::types::GEN_E6, 4),
                 ];
-                
+
                 for &(signal_index, signal_mask, freq_array_index) in &gal_signals {
-                    if self.output_param.CompactConfig.is_signal_enabled(signal_mask) {
-                        let center_freq = SIGNAL_CENTER_FREQ[GnssSystem::GalileoSystem as usize][freq_array_index.min(7)];
+                    if self
+                        .output_param
+                        .CompactConfig
+                        .is_signal_enabled(signal_mask)
+                    {
+                        let center_freq = SIGNAL_CENTER_FREQ[GnssSystem::GalileoSystem as usize]
+                            [freq_array_index.min(7)];
                         // Добавляем Doppler для создания реальной IF частоты
-                        let doppler = get_doppler(&self.gal_sat_param[eph.svid as usize - 1], signal_index);
-                        let if_freq = ((center_freq + doppler) - self.output_param.CenterFreq as f64) as i32;
-                        if eph.svid <= 3 { // Отладка для первых 3 спутников
+                        let doppler =
+                            get_doppler(&self.gal_sat_param[eph.svid as usize - 1], signal_index);
+                        let if_freq =
+                            ((center_freq + doppler) - self.output_param.CenterFreq as f64) as i32;
+                        if eph.svid <= 3 {
+                            // Отладка для первых 3 спутников
                             println!("[DEBUG] GAL E{:02}: center_freq={:.0} Hz, doppler={:.1} Hz, CenterFreq={} Hz, if_freq={} Hz", 
                                     eph.svid, center_freq, doppler, self.output_param.CenterFreq, if_freq);
                         }
-                        let mut new_signal = SatIfSignal::new(self.output_param.SampleFreq, if_freq, GnssSystem::GalileoSystem, signal_index as i32, eph.svid);
-                        
-                        let nav_data = self.get_nav_data(GnssSystem::GalileoSystem, signal_index as i32, nav_bit_array);
+                        // SatIfSignal expects number of samples per millisecond, not Hz
+                        let samples_per_ms = self.output_param.SampleFreq / 1000;
+                        let mut new_signal = SatIfSignal::new(
+                            samples_per_ms,
+                            if_freq,
+                            GnssSystem::GalileoSystem,
+                            signal_index as i32,
+                            eph.svid,
+                        );
+
+                        let nav_data = self.get_nav_data(
+                            GnssSystem::GalileoSystem,
+                            signal_index as i32,
+                            nav_bit_array,
+                        );
                         let nav_data_clone = nav_data.cloned();
 
-                        new_signal.init_state(self.cur_time, &self.gal_sat_param[eph.svid as usize - 1], nav_data_clone);
+                        new_signal.init_state(
+                            self.cur_time,
+                            &self.gal_sat_param[eph.svid as usize - 1],
+                            nav_data_clone,
+                        );
                         sat_if_signals[total_channel_number] = Some(Box::new(new_signal));
                         total_channel_number += 1;
                     }
@@ -3003,7 +4424,12 @@ impl IFDataGen {
         Ok(total_channel_number)
     }
 
-    fn create_glonass_signals(&self, sat_if_signals: &mut Vec<Option<Box<SatIfSignal>>>, mut total_channel_number: usize, nav_bit_array: &Vec<Option<UnifiedNavData>>) -> Result<usize, Box<dyn std::error::Error>> {
+    fn create_glonass_signals(
+        &self,
+        sat_if_signals: &mut Vec<Option<Box<SatIfSignal>>>,
+        mut total_channel_number: usize,
+        nav_bit_array: &Vec<Option<UnifiedNavData>>,
+    ) -> Result<usize, Box<dyn std::error::Error>> {
         for i in 0..self.glo_sat_number {
             if let Some(eph) = &self.glo_eph_visible[i] {
                 // Check each GLONASS signal
@@ -3012,17 +4438,39 @@ impl IFDataGen {
                     (SIGNAL_INDEX_G2, crate::types::GEN_G2),
                     (SIGNAL_INDEX_G3, crate::types::GEN_G3),
                 ];
-                
+
                 for &(signal_index, signal_mask) in &glo_signals {
-                    if self.output_param.CompactConfig.is_signal_enabled(signal_mask) {
-                        let center_freq = SIGNAL_CENTER_FREQ[GnssSystem::GlonassSystem as usize][signal_index.min(7)] + eph.freq as f64 * 562500.0;
+                    if self
+                        .output_param
+                        .CompactConfig
+                        .is_signal_enabled(signal_mask)
+                    {
+                        let center_freq = SIGNAL_CENTER_FREQ[GnssSystem::GlonassSystem as usize]
+                            [signal_index.min(7)]
+                            + eph.freq as f64 * 562500.0;
                         let if_freq = (center_freq - self.output_param.CenterFreq as f64) as i32;
-                        let mut new_signal = SatIfSignal::new(self.output_param.SampleFreq, if_freq, GnssSystem::GlonassSystem, signal_index as i32, eph.n);
-                        
-                        let nav_data = self.get_nav_data(GnssSystem::GlonassSystem, signal_index as i32, nav_bit_array);
+                        // SatIfSignal expects number of samples per millisecond, not Hz
+                        let samples_per_ms = self.output_param.SampleFreq / 1000;
+                        let mut new_signal = SatIfSignal::new(
+                            samples_per_ms,
+                            if_freq,
+                            GnssSystem::GlonassSystem,
+                            signal_index as i32,
+                            eph.n,
+                        );
+
+                        let nav_data = self.get_nav_data(
+                            GnssSystem::GlonassSystem,
+                            signal_index as i32,
+                            nav_bit_array,
+                        );
                         let nav_data_clone = nav_data.cloned();
 
-                        new_signal.init_state(self.cur_time, &self.glo_sat_param[eph.n as usize - 1], nav_data_clone);
+                        new_signal.init_state(
+                            self.cur_time,
+                            &self.glo_sat_param[eph.n as usize - 1],
+                            nav_data_clone,
+                        );
                         sat_if_signals[total_channel_number] = Some(Box::new(new_signal));
                         total_channel_number += 1;
                     }
@@ -3036,47 +4484,56 @@ impl IFDataGen {
     pub fn load_config(&mut self, config_file: &str) -> Result<(), Box<dyn std::error::Error>> {
         // println!("[UNIQUE-DEBUG] load_config called with: {}", config_file);
         println!("[INFO]\tLoading JSON file: {}", config_file);
-        
+
         // Сохраняем путь к config файлу
         self.output_param.config_filename = config_file.to_string();
-        
+
         // Проверяем что файл существует
         if !std::path::Path::new(config_file).exists() {
             eprintln!("[ERROR]\tJSON file not found: {}", config_file);
             return Err("JSON file not found".into());
         }
-        
+
         println!("[INFO]\tJSON file read successfully: {}", config_file);
 
         // Парсим параметры из JSON используя чистый Rust
         let mut utc_time = UtcTime::default();
         let mut start_pos = LlaPosition::default();
         let start_vel = LocalSpeed::default();
-        
-        println!("[DEBUG] Filename before JSON parsing: {:?}", 
-                std::str::from_utf8(&self.output_param.filename[..20]).unwrap_or("invalid"));
-        
+
+        println!(
+            "[DEBUG] Filename before JSON parsing: {:?}",
+            std::str::from_utf8(&self.output_param.filename[..20]).unwrap_or("invalid")
+        );
+
         // println!("[UNIQUE-JSON-START] Starting pure Rust JSON parsing");
-        
+
         // Переменная для пути к RINEX файлу
         let mut rinex_file = String::from("Rinex_Data/rinex_v3_20251560000.rnx"); // Значение по умолчанию
-        // Стратегия выбора эпох: per_sat (по умолчанию, как в C) или global
+                                                                                  // Стратегия выбора эпох: per_sat (по умолчанию, как в C) или global
         let mut epoch_selection = String::from("per_sat");
-        
-        // УПРОЩЕННЫЙ JSON ПАРСИНГ - читаем файл напрямую и парсим нужные параметры  
+
+        // УПРОЩЕННЫЙ JSON ПАРСИНГ - читаем файл напрямую и парсим нужные параметры
         if let Ok(json_content) = std::fs::read_to_string(config_file) {
             // println!("[UNIQUE-JSON-READ] File read successfully, length: {}", json_content.len());
             if let Ok(json) = serde_json::from_str::<serde_json::Value>(&json_content) {
                 // println!("[UNIQUE-JSON-PARSE] JSON parsed successfully");
                 // Парсим время из JSON
                 if let Some(time) = json.get("time") {
-                    if let (Some(year), Some(month), Some(day), Some(hour), Some(minute), Some(second)) = (
+                    if let (
+                        Some(year),
+                        Some(month),
+                        Some(day),
+                        Some(hour),
+                        Some(minute),
+                        Some(second),
+                    ) = (
                         time.get("year").and_then(|v| v.as_i64()),
                         time.get("month").and_then(|v| v.as_i64()),
                         time.get("day").and_then(|v| v.as_i64()),
                         time.get("hour").and_then(|v| v.as_i64()),
                         time.get("minute").and_then(|v| v.as_i64()),
-                        time.get("second").and_then(|v| v.as_f64())
+                        time.get("second").and_then(|v| v.as_f64()),
                     ) {
                         utc_time.Year = year as i32;
                         utc_time.Month = month as i32;
@@ -3086,22 +4543,29 @@ impl IFDataGen {
                         utc_time.Second = second;
                     }
                 }
-                
+
                 // Парсим координаты из initPosition
                 if let Some(trajectory) = json.get("trajectory") {
                     if let Some(init_pos) = trajectory.get("initPosition") {
-                        let pos_type = init_pos.get("type").and_then(|v| v.as_str()).unwrap_or("LLA");
-                        let format = init_pos.get("format").and_then(|v| v.as_str()).unwrap_or("d");
+                        let pos_type = init_pos
+                            .get("type")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("LLA");
+                        let format = init_pos
+                            .get("format")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("d");
                         if pos_type.eq_ignore_ascii_case("LLA") {
                             if let (Some(longitude), Some(latitude), Some(altitude)) = (
                                 init_pos.get("longitude").and_then(|v| v.as_f64()),
                                 init_pos.get("latitude").and_then(|v| v.as_f64()),
-                                init_pos.get("altitude").and_then(|v| v.as_f64())
+                                init_pos.get("altitude").and_then(|v| v.as_f64()),
                             ) {
                                 // format: "d" (degrees), "rad" (radians)
                                 let (lon_rad, lat_rad) = if format.eq_ignore_ascii_case("rad") {
                                     (longitude, latitude)
-                                } else { // по умолчанию градусы
+                                } else {
+                                    // по умолчанию градусы
                                     (longitude.to_radians(), latitude.to_radians())
                                 };
                                 start_pos.lon = lon_rad;
@@ -3119,9 +4583,14 @@ impl IFDataGen {
                             if let (Some(x), Some(y), Some(z)) = (
                                 init_pos.get("x").and_then(|v| v.as_f64()),
                                 init_pos.get("y").and_then(|v| v.as_f64()),
-                                init_pos.get("z").and_then(|v| v.as_f64())
+                                init_pos.get("z").and_then(|v| v.as_f64()),
                             ) {
-                                let ecef = KinematicInfo { x, y, z, ..Default::default() };
+                                let ecef = KinematicInfo {
+                                    x,
+                                    y,
+                                    z,
+                                    ..Default::default()
+                                };
                                 let lla = ecef_to_lla(&ecef);
                                 self.start_pos = lla;
                                 println!("[INFO] Parsed position (ECEF) from JSON: x={:.1} m, y={:.1} m, z={:.1} m", x, y, z);
@@ -3129,7 +4598,7 @@ impl IFDataGen {
                         }
                     }
                 }
-                
+
                 // Парсим путь к файлу эфемерид
                 if let Some(ephemeris) = json.get("ephemeris") {
                     if let Some(name) = ephemeris.get("name").and_then(|v| v.as_str()) {
@@ -3137,7 +4606,7 @@ impl IFDataGen {
                         rinex_file = String::from(name); // Копируем путь из JSON
                     }
                 }
-                
+
                 // Парсим выходные параметры из JSON
                 if let Some(output) = json.get("output") {
                     // Парсим имя файла
@@ -3148,17 +4617,17 @@ impl IFDataGen {
                         self.output_param.filename[..len].copy_from_slice(&filename_bytes[..len]);
                         self.output_param.filename[len] = 0; // Null terminator
                     }
-                    
+
                     // Парсим частоту дискретизации (sampleFreq в MHz -> Hz)
                     if let Some(sample_freq) = output.get("sampleFreq").and_then(|v| v.as_f64()) {
                         self.output_param.SampleFreq = (sample_freq * 1e6) as i32;
                     }
-                    
+
                     // Парсим центральную частоту (centerFreq в MHz -> Hz)
                     if let Some(center_freq) = output.get("centerFreq").and_then(|v| v.as_f64()) {
                         self.output_param.CenterFreq = (center_freq * 1_000_000.0) as i32;
                     }
-                    
+
                     // Парсим формат
                     if let Some(format) = output.get("format").and_then(|v| v.as_str()) {
                         match format {
@@ -3167,31 +4636,44 @@ impl IFDataGen {
                             _ => self.output_param.Format = OutputFormat::OutputFormatIQ8,
                         }
                     }
-                    
-                    // Парсим системы спутников  
-                    if let Some(system_select) = output.get("systemSelect").and_then(|v| v.as_array()) {
+
+                    // Парсим системы спутников
+                    if let Some(system_select) =
+                        output.get("systemSelect").and_then(|v| v.as_array())
+                    {
                         use crate::types::*;
-                        
-                        
+
                         // Сброс конфигурации
                         self.output_param.CompactConfig = CompactConfig::new();
-                        
+
                         for system in system_select {
                             if let (Some(sys), Some(signal), Some(enable)) = (
                                 system.get("system").and_then(|v| v.as_str()),
                                 system.get("signal").and_then(|v| v.as_str()),
-                                system.get("enable").and_then(|v| v.as_bool())
+                                system.get("enable").and_then(|v| v.as_bool()),
                             ) {
                                 if enable {
                                     // Определяем системы для парсинга
                                     match sys {
-                                        "GPS" => self.output_param.CompactConfig.enable_system_parsing(PARSE_GPS),
-                                        "BDS" => self.output_param.CompactConfig.enable_system_parsing(PARSE_BDS),
-                                        "Galileo" => self.output_param.CompactConfig.enable_system_parsing(PARSE_GALILEO),
-                                        "GLONASS" => self.output_param.CompactConfig.enable_system_parsing(PARSE_GLONASS),
+                                        "GPS" => self
+                                            .output_param
+                                            .CompactConfig
+                                            .enable_system_parsing(PARSE_GPS),
+                                        "BDS" => self
+                                            .output_param
+                                            .CompactConfig
+                                            .enable_system_parsing(PARSE_BDS),
+                                        "Galileo" => self
+                                            .output_param
+                                            .CompactConfig
+                                            .enable_system_parsing(PARSE_GALILEO),
+                                        "GLONASS" => self
+                                            .output_param
+                                            .CompactConfig
+                                            .enable_system_parsing(PARSE_GLONASS),
                                         _ => {}
                                     }
-                                    
+
                                     // Определяем сигналы для генерации
                                     match (sys, signal) {
                                         ("GPS", "L1CA") => {
@@ -3249,43 +4731,55 @@ impl IFDataGen {
                         }
                     }
                 }
-                
+
                 // Парсим длительность траектории
                 if let Some(traj) = json.get("trajectory") {
                     if let Some(traj_list) = traj.get("trajectoryList").and_then(|v| v.as_array()) {
                         if let Some(first_traj) = traj_list.first() {
                             if let Some(time) = first_traj.get("time").and_then(|v| v.as_f64()) {
-                                self.output_param.Interval = (time * 1000.0) as i32; // секунды -> мс
+                                self.output_param.Interval = (time * 1000.0) as i32;
+                                // секунды -> мс
                             }
                         }
                     }
                 }
             }
         }
-        
-        println!("[DEBUG] Filename after JSON parsing: {:?}", 
-                std::str::from_utf8(&self.output_param.filename[..50]).unwrap_or("invalid"));
-        
+
+        println!(
+            "[DEBUG] Filename after JSON parsing: {:?}",
+            std::str::from_utf8(&self.output_param.filename[..50]).unwrap_or("invalid")
+        );
+
         // Устанавливаем время симуляции из JSON пресета
         self.cur_time = crate::gnsstime::utc_to_gps_time(utc_time, true);
-        
+
         println!("[INFO]\tParsed from JSON preset:");
-        println!("[INFO]\t  Time: {}-{:02}-{:02} {:02}:{:02}:{:06.3}", 
-                 utc_time.Year, utc_time.Month, utc_time.Day, 
-                 utc_time.Hour, utc_time.Minute, utc_time.Second);
-        println!("[INFO]\t  Duration: {:.1} s", self.output_param.Interval as f64 / 1000.0);
-        
+        println!(
+            "[INFO]\t  Time: {}-{:02}-{:02} {:02}:{:02}:{:06.3}",
+            utc_time.Year,
+            utc_time.Month,
+            utc_time.Day,
+            utc_time.Hour,
+            utc_time.Minute,
+            utc_time.Second
+        );
+        println!(
+            "[INFO]\t  Duration: {:.1} s",
+            self.output_param.Interval as f64 / 1000.0
+        );
+
         // Создаем новую траекторию
         let mut new_trajectory = crate::trajectory::CTrajectory::new();
         new_trajectory.set_init_pos_vel_lla(start_pos, start_vel, false);
         self.trajectory = new_trajectory;
-        
-        // Reset satellite masks to allow all satellites 
+
+        // Reset satellite masks to allow all satellites
         self.output_param.GpsMaskOut = 0;
         self.output_param.BdsMaskOut = 0;
         self.output_param.GalileoMaskOut = 0;
         self.output_param.GlonassMaskOut = 0;
-        
+
         // Применяем elevationMask из JSON, если задан; иначе дефолт 5°
         // Ищем output.config.elevationMask (в градусах)
         if let Ok(json_content) = std::fs::read_to_string(config_file) {
@@ -3321,21 +4815,49 @@ impl IFDataGen {
                     }
                     // elevationAdjust: true/false
                     if let Some(adj) = power.get("elevationAdjust").and_then(|v| v.as_bool()) {
-                        self.power_control.set_elevation_adjust(if adj { crate::powercontrol::ElevationAdjust::ElevationAdjustSinSqrtFade } else { crate::powercontrol::ElevationAdjust::ElevationAdjustNone });
+                        self.power_control.set_elevation_adjust(if adj {
+                            crate::powercontrol::ElevationAdjust::ElevationAdjustSinSqrtFade
+                        } else {
+                            crate::powercontrol::ElevationAdjust::ElevationAdjustNone
+                        });
                     }
                 }
                 // Маска исключений спутников: output.maskOut
-                if let Some(mask_out) = json.get("output").and_then(|o| o.get("maskOut")).and_then(|v| v.as_array()) {
+                if let Some(mask_out) = json
+                    .get("output")
+                    .and_then(|o| o.get("maskOut"))
+                    .and_then(|v| v.as_array())
+                {
                     for item in mask_out {
                         let system = item.get("system").and_then(|v| v.as_str()).unwrap_or("");
                         if let Some(svids) = item.get("svid").and_then(|v| v.as_array()) {
                             for s in svids {
                                 if let Some(svid) = s.as_i64() {
                                     match system {
-                                        "GPS" => if (1..=32).contains(&(svid as i32)) { self.output_param.GpsMaskOut |= 1 << (svid as u32 - 1); },
-                                        "BDS" => if (1..=63).contains(&(svid as i32)) { self.output_param.BdsMaskOut |= 1u64 << (svid as u64 - 1); },
-                                        "Galileo" => if (1..=50).contains(&(svid as i32)) { self.output_param.GalileoMaskOut |= 1u64 << (svid as u64 - 1); },
-                                        "GLONASS" => if (1..=24).contains(&(svid as i32)) { self.output_param.GlonassMaskOut |= 1 << (svid as u32 - 1); },
+                                        "GPS" => {
+                                            if (1..=32).contains(&(svid as i32)) {
+                                                self.output_param.GpsMaskOut |=
+                                                    1 << (svid as u32 - 1);
+                                            }
+                                        }
+                                        "BDS" => {
+                                            if (1..=63).contains(&(svid as i32)) {
+                                                self.output_param.BdsMaskOut |=
+                                                    1u64 << (svid as u64 - 1);
+                                            }
+                                        }
+                                        "Galileo" => {
+                                            if (1..=50).contains(&(svid as i32)) {
+                                                self.output_param.GalileoMaskOut |=
+                                                    1u64 << (svid as u64 - 1);
+                                            }
+                                        }
+                                        "GLONASS" => {
+                                            if (1..=24).contains(&(svid as i32)) {
+                                                self.output_param.GlonassMaskOut |=
+                                                    1 << (svid as u32 - 1);
+                                            }
+                                        }
                                         _ => {}
                                     }
                                 }
@@ -3348,15 +4870,15 @@ impl IFDataGen {
         if self.output_param.ElevationMask == 0.0 {
             self.output_param.ElevationMask = 5.0_f64.to_radians();
         }
-        
+
         // Загружаем RINEX файл с эфемеридами, используя путь из JSON
         // rinex_file уже определен выше из JSON парсинга
         if std::path::Path::new(&rinex_file).exists() {
             println!("[INFO]\tLoading RINEX ephemeris file: {}", rinex_file);
-            
+
             // Создаем CNavData для загрузки эфемерид
             let mut c_nav_data = crate::json_interpreter::CNavData::default();
-            
+
             // Определяем включенные системы из JSON конфигурации (CompactConfig)
             let mut enabled_systems = Vec::new();
             if self.output_param.CompactConfig.should_parse_gps() {
@@ -3371,49 +4893,49 @@ impl IFDataGen {
             if self.output_param.CompactConfig.should_parse_galileo() {
                 enabled_systems.push("Galileo");
             }
-            
+
             println!("[DEBUG] Using filtered RINEX loading: time={}-{:02}-{:02} {:02}:{:02}:{:02}, systems={:?}", 
                 utc_time.Year, utc_time.Month, utc_time.Day, utc_time.Hour, utc_time.Minute, utc_time.Second, enabled_systems);
-            
-            // Используем оптимизированную загрузку RINEX с фильтрацией систем из JSON  
+
+            // Используем оптимизированную загрузку RINEX с фильтрацией систем из JSON
             crate::json_interpreter::read_nav_file_filtered(
-                &mut c_nav_data, 
+                &mut c_nav_data,
                 &rinex_file,
-                Some(utc_time), // Фильтрация по времени
-                &enabled_systems // Только BeiDou система
+                Some(utc_time),   // Фильтрация по времени
+                &enabled_systems, // Только BeiDou система
             );
-            
+
             // Стратегия выбора эпох
             match epoch_selection.as_str() {
                 "global" => self.select_global_epochs_and_fill(&c_nav_data, utc_time),
                 _ => self.select_per_satellite_and_fill(&c_nav_data, utc_time),
             }
-            
+
             println!("[INFO]\tMinimal ephemeris loaded successfully");
         } else {
             println!("[ERROR]\tRINEX file not found: {}", rinex_file);
             return Err("RINEX file not found".into());
         }
-        
+
         let success = true;
-        
+
         if !success {
             return Err("Failed to parse JSON configuration".into());
         }
-        
+
         println!("[INFO]\tJSON configuration parsed successfully");
         Ok(())
     }
-    
+
     // Добавляет минимальные эфемериды GPS для демонстрации работы
     fn add_minimal_gps_ephemeris(&mut self) {
         println!("[INFO]\tAdding minimal GPS ephemeris for demonstration");
-        
-        // Убеждаемся что вектор достаточно большой  
+
+        // Убеждаемся что вектор достаточно большой
         if self.nav_data.gps_ephemeris.len() < 32 {
             self.nav_data.gps_ephemeris.resize(32, None);
         }
-        
+
         // Добавляем минимальные эфемериды для нескольких спутников
         for svid in 1..=8 {
             let mut eph = GpsEphemeris::default();
@@ -3425,62 +4947,69 @@ impl IFDataGen {
             eph.omega0 = (svid - 1) as f64 * 45.0_f64.to_radians(); // Распределяем по долготе
             eph.ecc = 0.01; // Небольшой эксцентриситет
             eph.omega_dot = -2.6e-9;
-            
+
             self.nav_data.gps_ephemeris[svid as usize - 1] = Some(eph);
         }
-        
+
         println!("[INFO]\tMinimal GPS ephemeris added for satellites 1-8");
     }
 
     pub fn initialize(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         println!("[DEBUG] Starting initialize()...");
-        
+
         // Инициализация уже выполнена при загрузке конфигурации
         // Здесь только базовая настройка системы
         self.trajectory.reset_trajectory_time();
-        
+
         println!("[DEBUG] Initializing CN0 for GPS satellites...");
         // Инициализируем CN0 для спутников
         for i in 0..TOTAL_GPS_SAT {
             self.gps_sat_param[i].CN0 = (self.power_control.init_cn0 * 100.0 + 0.5) as i32;
         }
-        
+
         println!("[DEBUG] Initializing CN0 for BeiDou satellites...");
         for i in 0..TOTAL_BDS_SAT {
             self.bds_sat_param[i].CN0 = (self.power_control.init_cn0 * 100.0 + 0.5) as i32;
         }
-        
+
         println!("[DEBUG] Initializing CN0 for Galileo satellites...");
         for i in 0..TOTAL_GAL_SAT {
             self.gal_sat_param[i].CN0 = (self.power_control.init_cn0 * 100.0 + 0.5) as i32;
         }
-        
+
         println!("[DEBUG] Initializing CN0 for GLONASS satellites...");
         for i in 0..TOTAL_GLO_SAT {
             self.glo_sat_param[i].CN0 = (self.power_control.init_cn0 * 100.0 + 0.5) as i32;
         }
-        
+
         println!("[DEBUG] initialize() completed successfully");
         Ok(())
     }
-    
+
     /// Функция интеллектуального выбора GPS эфемерид по временной близости к целевому моменту генерации
-    /// 
+    ///
     /// Реализует критически важный алгоритм выбора оптимальных эфемерид для каждого GPS спутника.
     /// Алгоритм обеспечивает максимальную точность навигационных вычислений путем выбора эфемерид
     /// с минимальным временным расстоянием до момента генерации сигнала.
-    /// 
+    ///
     /// # Параметры
     /// * `c_nav_data` - Источник навигационных данных, содержащий массив GPS эфемерид из RINEX
     /// * `utc_time` - Целевое UTC время генерации сигнала из пресета конфигурации
-    /// 
+    ///
     /// # Алгоритм временного выбора
     /// 1. Преобразование UTC времени в GPS время для корректного сравнения с toe
     /// 2. Для каждого SVID (1-32) поиск эфемериды с минимальной разностью |target_time - toe|
     /// 3. Выбор единственной "лучшей" эфемериды на спутник для обеспечения консистентности
-    fn copy_ephemeris_from_json_nav_data(&mut self, c_nav_data: &crate::json_interpreter::CNavData, utc_time: UtcTime) {
+    fn copy_ephemeris_from_json_nav_data(
+        &mut self,
+        c_nav_data: &crate::json_interpreter::CNavData,
+        utc_time: UtcTime,
+    ) {
         println!("[INFO]\tCopying GPS ephemeris from JSON CNavData");
-        println!("[DEBUG] Source has {} GPS ephemeris records", c_nav_data.gps_ephemeris.len());
+        println!(
+            "[DEBUG] Source has {} GPS ephemeris records",
+            c_nav_data.gps_ephemeris.len()
+        );
 
         use std::collections::{HashMap, HashSet};
         // Целевое время в секундах от GPS эпохи
@@ -3502,7 +5031,10 @@ impl IFDataGen {
         for &(w, toe) in &epochs {
             let epoch_abs = (w as i64) * 604800 + (toe as i64);
             let diff = (epoch_abs - target_abs).abs();
-            if diff < best_diff { best_diff = diff; best_key = Some((w, toe)); }
+            if diff < best_diff {
+                best_diff = diff;
+                best_key = Some((w, toe));
+            }
         }
 
         // Очищаем массив и заполняем только эфемеридами выбранной эпохи
@@ -3511,43 +5043,63 @@ impl IFDataGen {
             if let Some(map) = by_epoch.get(&key) {
                 for (&svid, eph) in map {
                     let idx = (svid as usize).saturating_sub(1);
-                    if idx < TOTAL_GPS_SAT { self.gps_eph[idx] = Some(*eph); }
+                    if idx < TOTAL_GPS_SAT {
+                        self.gps_eph[idx] = Some(*eph);
+                    }
                 }
-                println!("[INFO]\tGPS epoch selected: week={}, toe={} (Δt={:.1}h), sats={}", key.0, key.1, best_diff as f64 / 3600.0, map.len());
+                println!(
+                    "[INFO]\tGPS epoch selected: week={}, toe={} (Δt={:.1}h), sats={}",
+                    key.0,
+                    key.1,
+                    best_diff as f64 / 3600.0,
+                    map.len()
+                );
             }
         } else {
             println!("[WARN]\tNo GPS epochs available after grouping");
         }
 
         // Поддержка legacy: скопируем все исходные эфемериды в nav_data (как справочник)
-        if self.nav_data.gps_ephemeris.len() < 32 { self.nav_data.gps_ephemeris.resize(32, None); }
+        if self.nav_data.gps_ephemeris.len() < 32 {
+            self.nav_data.gps_ephemeris.resize(32, None);
+        }
         for eph in &c_nav_data.gps_ephemeris {
-            if (eph.svid as usize) <= 32 && eph.svid > 0 { self.nav_data.gps_ephemeris[eph.svid as usize - 1] = Some(*eph); }
+            if (eph.svid as usize) <= 32 && eph.svid > 0 {
+                self.nav_data.gps_ephemeris[eph.svid as usize - 1] = Some(*eph);
+            }
         }
     }
 
     /// Функция интеллектуального выбора BeiDou эфемерид с унифицированным алгоритмом временного отбора
-    /// 
+    ///
     /// Реализует идентичную GPS функции логику выбора оптимальных эфемерид для BeiDou спутников.
     /// Критически важно: использует GPS время для сравнения с toe, обеспечивая единообразие
     /// алгоритма выбора эфемерид для всех GNSS систем.
-    /// 
+    ///
     /// # Параметры
     /// * `c_nav_data` - Источник навигационных данных с BeiDou эфемеридами из RINEX файлов
     /// * `utc_time` - Целевое UTC время генерации из конфигурационного пресета
-    /// 
+    ///
     /// # Особенности BeiDou обработки
     /// - BeiDou использует BDT (BeiDou Time), но для единообразия алгоритма применяется GPS время
     /// - Поддерживается до TOTAL_BDS_SAT спутников (расширенная констелляция)
     /// - Применяется та же логика минимизации временной разности как для GPS
-    fn copy_beidou_ephemeris_from_json_nav_data(&mut self, c_nav_data: &crate::json_interpreter::CNavData, utc_time: UtcTime) {
+    fn copy_beidou_ephemeris_from_json_nav_data(
+        &mut self,
+        c_nav_data: &crate::json_interpreter::CNavData,
+        utc_time: UtcTime,
+    ) {
         println!("[INFO]\tCopying BeiDou ephemeris from JSON CNavData");
-        println!("[DEBUG] Source has {} BeiDou ephemeris records", c_nav_data.beidou_ephemeris.len());
-        
+        println!(
+            "[DEBUG] Source has {} BeiDou ephemeris records",
+            c_nav_data.beidou_ephemeris.len()
+        );
+
         // Целевое время в секундах от BDT эпохи
         use std::collections::{HashMap, HashSet};
         let target_bds = utc_to_bds_time(utc_time);
-        let target_abs = (target_bds.Week as i64) * 604800 + (target_bds.MilliSeconds as i64) / 1000;
+        let target_abs =
+            (target_bds.Week as i64) * 604800 + (target_bds.MilliSeconds as i64) / 1000;
 
         // Группируем по (week, toe) в BDT
         let mut by_epoch: HashMap<(i32, i32), HashMap<u8, BeiDouEphemeris>> = HashMap::new();
@@ -3563,7 +5115,10 @@ impl IFDataGen {
         for &(w, toe) in &epochs {
             let epoch_abs = (w as i64) * 604800 + (toe as i64);
             let diff = (epoch_abs - target_abs).abs();
-            if diff < best_diff { best_diff = diff; best_key = Some((w, toe)); }
+            if diff < best_diff {
+                best_diff = diff;
+                best_key = Some((w, toe));
+            }
         }
         // Заполняем self.bds_eph из выбранной эпохи
         self.bds_eph.fill(None);
@@ -3571,26 +5126,34 @@ impl IFDataGen {
             if let Some(map) = by_epoch.get(&key) {
                 for (&svid, bds) in map {
                     let idx = (svid as usize).saturating_sub(1);
-                    if idx < TOTAL_BDS_SAT { self.bds_eph[idx] = Some(bds.to_gps_ephemeris()); }
+                    if idx < TOTAL_BDS_SAT {
+                        self.bds_eph[idx] = Some(bds.to_gps_ephemeris());
+                    }
                 }
-                println!("[INFO]\tBDS epoch selected: week={}, toe={} (Δt={:.1}h), sats={}", key.0, key.1, best_diff as f64 / 3600.0, map.len());
+                println!(
+                    "[INFO]\tBDS epoch selected: week={}, toe={} (Δt={:.1}h), sats={}",
+                    key.0,
+                    key.1,
+                    best_diff as f64 / 3600.0,
+                    map.len()
+                );
             }
         } else {
             println!("[WARN]\tNo BDS epochs available after grouping");
         }
-        
+
         // Статистическая верификация: подсчет эфемерид, успешно прошедших временной отбор
         let mut verified_count = 0;
         for i in 0..TOTAL_BDS_SAT {
             if self.bds_eph[i].is_some() {
-                verified_count += 1;                          // Инкремент счетчика заполненных слотов
+                verified_count += 1; // Инкремент счетчика заполненных слотов
             }
         }
-        
+
         // Параллельное заполнение nav_data для поддержки совместимости с существующим кодом
         // BeiDou констелляция: поддерживается до 65 спутников (включая резервные орбиты)
         if self.nav_data.bds_ephemeris.len() < 65 {
-            self.nav_data.bds_ephemeris.resize(65, None);     // Выделение памяти для полной BeiDou констелляции
+            self.nav_data.bds_ephemeris.resize(65, None); // Выделение памяти для полной BeiDou констелляции
         }
         // Заполнение nav_data всеми исходными эфемеридами (без применения временной фильтрации)
         for eph in &c_nav_data.beidou_ephemeris {
@@ -3598,33 +5161,44 @@ impl IFDataGen {
                 self.nav_data.bds_ephemeris[eph.svid as usize - 1] = Some(*eph);
             }
         }
-        
-        println!("[INFO]\tSelected {} BeiDou ephemeris records using time-based algorithm", verified_count);
+
+        println!(
+            "[INFO]\tSelected {} BeiDou ephemeris records using time-based algorithm",
+            verified_count
+        );
     }
 
     /// Функция выбора Galileo эфемерид с расширенной диагностикой и унифицированным алгоритмом
-    /// 
+    ///
     /// Третья реализация унифицированного алгоритма выбора эфемерид по временной близости.
     /// Содержит расширенные диагностические возможности для отладки процесса выбора эфемерид.
     /// Обеспечивает полную совместимость алгоритма выбора между GPS, BeiDou и Galileo системами.
-    /// 
+    ///
     /// # Параметры
     /// * `c_nav_data` - Контейнер навигационных данных с Galileo эфемеридами из RINEX
     /// * `utc_time` - Эталонное UTC время для выбора оптимальных эфемерид
-    /// 
+    ///
     /// # Особенности Galileo обработки
     /// - Galileo использует GST (Galileo System Time), но алгоритм унифицирован через GPS время
     /// - Расширенная диагностика включает проверку valid/health статусов эфемерид
     /// - Ограниченный вывод отладочной информации для предотвращения спама в логах
     /// - Поддержка полной Galileo констелляции до TOTAL_GAL_SAT спутников
-    fn copy_galileo_ephemeris_from_json_nav_data(&mut self, c_nav_data: &crate::json_interpreter::CNavData, utc_time: UtcTime) {
+    fn copy_galileo_ephemeris_from_json_nav_data(
+        &mut self,
+        c_nav_data: &crate::json_interpreter::CNavData,
+        utc_time: UtcTime,
+    ) {
         println!("[INFO]\tCopying Galileo ephemeris from JSON CNavData");
-        println!("[DEBUG] Source has {} Galileo ephemeris records", c_nav_data.galileo_ephemeris.len());
-        
+        println!(
+            "[DEBUG] Source has {} Galileo ephemeris records",
+            c_nav_data.galileo_ephemeris.len()
+        );
+
         // Целевое время в секундах от GST эпохи
         use std::collections::{HashMap, HashSet};
         let target_gal = utc_to_galileo_time(utc_time);
-        let target_abs = (target_gal.Week as i64) * 604800 + (target_gal.MilliSeconds as i64) / 1000;
+        let target_abs =
+            (target_gal.Week as i64) * 604800 + (target_gal.MilliSeconds as i64) / 1000;
 
         // Группируем по (week, toe) для Galileo
         let mut by_epoch: HashMap<(i32, i32), HashMap<u8, GpsEphemeris>> = HashMap::new();
@@ -3640,7 +5214,10 @@ impl IFDataGen {
         for &(w, toe) in &epochs {
             let epoch_abs = (w as i64) * 604800 + (toe as i64);
             let diff = (epoch_abs - target_abs).abs();
-            if diff < best_diff { best_diff = diff; best_key = Some((w, toe)); }
+            if diff < best_diff {
+                best_diff = diff;
+                best_key = Some((w, toe));
+            }
         }
         // Заполняем self.gal_eph из выбранной эпохи
         self.gal_eph.fill(None);
@@ -3649,26 +5226,35 @@ impl IFDataGen {
             if let Some(map) = by_epoch.get(&key) {
                 for (&svid, eph) in map {
                     let idx = (svid as usize).saturating_sub(1);
-                    if idx < TOTAL_GAL_SAT { self.gal_eph[idx] = Some(*eph); gal_count += 1; }
+                    if idx < TOTAL_GAL_SAT {
+                        self.gal_eph[idx] = Some(*eph);
+                        gal_count += 1;
+                    }
                 }
-                println!("[INFO]\tGAL epoch selected: week={}, toe={} (Δt={:.1}h), sats={}", key.0, key.1, best_diff as f64 / 3600.0, gal_count);
+                println!(
+                    "[INFO]\tGAL epoch selected: week={}, toe={} (Δt={:.1}h), sats={}",
+                    key.0,
+                    key.1,
+                    best_diff as f64 / 3600.0,
+                    gal_count
+                );
             }
         } else {
             println!("[WARN]\tNo Galileo epochs available after grouping");
         }
-        
+
         // Финальная верификация корректности алгоритма выбора эфемерид
         let mut verified_count = 0;
         for i in 0..TOTAL_GAL_SAT {
             if self.gal_eph[i].is_some() {
-                verified_count += 1;                          // Подтверждение успешного размещения эфемериды
+                verified_count += 1; // Подтверждение успешного размещения эфемериды
             }
         }
-        
+
         // Синхронизация с nav_data структурой для обеспечения совместимости архитектуры
         // Galileo: динамическое масштабирование под актуальный размер констелляции
         if self.nav_data.gal_ephemeris.len() < TOTAL_GAL_SAT {
-            self.nav_data.gal_ephemeris.resize(TOTAL_GAL_SAT, None);  // Выделение под полную Galileo констелляцию
+            self.nav_data.gal_ephemeris.resize(TOTAL_GAL_SAT, None); // Выделение под полную Galileo констелляцию
         }
         // Полное копирование исходных данных в nav_data (дублирование без временного отбора)
         for eph in &c_nav_data.galileo_ephemeris {
@@ -3676,26 +5262,31 @@ impl IFDataGen {
                 self.nav_data.gal_ephemeris[eph.svid as usize - 1] = Some(*eph);
             }
         }
-        
+
         // Расширенная отчетность: сравнение количества обработанных и верифицированных эфемерид
-        println!("[INFO]\tCopied {} Galileo ephemeris records, verified {} in gal_eph array", gal_count, verified_count);
+        println!(
+            "[INFO]\tCopied {} Galileo ephemeris records, verified {} in gal_eph array",
+            gal_count, verified_count
+        );
     }
 
     pub fn generate_data(&mut self) -> Result<GenerationStats, Box<dyn std::error::Error>> {
         println!("[DEBUG] Starting generate_data()...");
-        
+
         // Используем стандартные данные пока не реализованы get методы
-        let utc_time = self.parse_utc_time_from_json(&self.output_param.config_filename).unwrap_or_else(|| {
-            println!("[WARNING]\tFailed to parse time from JSON, using default time");
-            UtcTime {
-                Year: 2025,
-                Month: 6,
-                Day: 5,
-                Hour: 10,
-                Minute: 5,
-                Second: 30.0
-            }
-        });
+        let utc_time = self
+            .parse_utc_time_from_json(&self.output_param.config_filename)
+            .unwrap_or_else(|| {
+                println!("[WARNING]\tFailed to parse time from JSON, using default time");
+                UtcTime {
+                    Year: 2025,
+                    Month: 6,
+                    Day: 5,
+                    Hour: 10,
+                    Minute: 5,
+                    Second: 30.0,
+                }
+            });
         let start_pos = self.start_pos;
         let start_vel = LocalSpeed::default();
         let glonass_time = utc_to_glonass_time_corrected(utc_time);
@@ -3710,7 +5301,7 @@ impl IFDataGen {
             Ok(file) => {
                 println!("[INFO]\tOutput file opened successfully.");
                 BufWriter::new(file)
-            },
+            }
             Err(_) => {
                 println!("[ERROR]\tFailed to open output file: {}", filename_str);
                 return Err("Failed to open output file".into());
@@ -3719,36 +5310,70 @@ impl IFDataGen {
 
         // Создаем навигационные биты
         let mut nav_bit_array = self.create_nav_bit_instances();
-        
+
         // Настраиваем систему
         self.setup_navigation_data(&mut nav_bit_array, utc_time, glonass_time, bds_time)?;
         self.calculate_visible_satellites(cur_pos, glonass_time)?;
 
         // Санити-проверка PVT перед генерацией: пытаемся восстановить позицию приёмника
-        let utc_now = self.parse_utc_time_from_json(&self.output_param.config_filename)
-            .unwrap_or(UtcTime { Year: 2025, Month: 6, Day: 5, Hour: 10, Minute: 5, Second: 30.0 });
+        let utc_now = self
+            .parse_utc_time_from_json(&self.output_param.config_filename)
+            .unwrap_or(UtcTime {
+                Year: 2025,
+                Month: 6,
+                Day: 5,
+                Hour: 10,
+                Minute: 5,
+                Second: 30.0,
+            });
         let gps_now = crate::gnsstime::utc_to_gps_time(utc_now, true);
         let bds_now = crate::gnsstime::utc_to_bds_time(utc_now);
         let gal_now = crate::gnsstime::utc_to_galileo_time(utc_now);
         let init_pos = cur_pos;
-        if let Some((sol_ecef, cb_s, _alt)) = pvt::solve_pvt_wls(gps_now, bds_now, gal_now,
-            &self.gps_eph_visible, &self.bds_eph_visible, &self.gal_eph_visible, init_pos) {
+        if let Some((sol_ecef, cb_s, _alt)) = pvt::solve_pvt_wls(
+            gps_now,
+            bds_now,
+            gal_now,
+            &self.gps_eph_visible,
+            &self.bds_eph_visible,
+            &self.gal_eph_visible,
+            init_pos,
+        ) {
             let sol_lla = ecef_to_lla(&sol_ecef);
             let true_lla = ecef_to_lla(&cur_pos);
-            let dx = sol_ecef.x - cur_pos.x; let dy = sol_ecef.y - cur_pos.y; let dz = sol_ecef.z - cur_pos.z;
-            let err = (dx*dx + dy*dy + dz*dz).sqrt();
-            println!("[PVT] Solution: lat={:.6} lon={:.6} alt={:.1} m; clk={:.3} ns; err={:.2} m",
-                     sol_lla.lat.to_degrees(), sol_lla.lon.to_degrees(), sol_lla.alt, cb_s*1e9, err);
-            println!("[PVT] Truth:   lat={:.6} lon={:.6} alt={:.1} m",
-                     true_lla.lat.to_degrees(), true_lla.lon.to_degrees(), true_lla.alt);
+            let dx = sol_ecef.x - cur_pos.x;
+            let dy = sol_ecef.y - cur_pos.y;
+            let dz = sol_ecef.z - cur_pos.z;
+            let err = (dx * dx + dy * dy + dz * dz).sqrt();
+            println!(
+                "[PVT] Solution: lat={:.6} lon={:.6} alt={:.1} m; clk={:.3} ns; err={:.2} m",
+                sol_lla.lat.to_degrees(),
+                sol_lla.lon.to_degrees(),
+                sol_lla.alt,
+                cb_s * 1e9,
+                err
+            );
+            println!(
+                "[PVT] Truth:   lat={:.6} lon={:.6} alt={:.1} m",
+                true_lla.lat.to_degrees(),
+                true_lla.lon.to_degrees(),
+                true_lla.alt
+            );
         } else {
             println!("[PVT] Not enough satellites for position fix (need >=4)");
         }
 
         // Создаем спутниковые сигналы и генерируем данные
         let mut sat_if_signals = self.create_satellite_signals(&nav_bit_array, cur_pos)?;
-        let trajectory_time_s = self.parse_trajectory_time_from_json(&self.output_param.config_filename).unwrap_or(10.0);
-        self.generate_if_signal(&mut if_file, &mut sat_if_signals, cur_pos, trajectory_time_s)?;
+        let trajectory_time_s = self
+            .parse_trajectory_time_from_json(&self.output_param.config_filename)
+            .unwrap_or(10.0);
+        self.generate_if_signal(
+            &mut if_file,
+            &mut sat_if_signals,
+            cur_pos,
+            trajectory_time_s,
+        )?;
 
         // Вычисляем ПРАВИЛЬНУЮ статистику
         // SampleFreq уже в Hz (5,000,000), НЕ УМНОЖАТЬ на 1e6!
@@ -3764,20 +5389,20 @@ impl IFDataGen {
 
         // Проверяем доступность аппаратных ускорителей
         let avx512_available = crate::avx512_intrinsics::Avx512Accelerator::is_available();
-        
+
         #[cfg(feature = "gpu")]
         let cuda_available = crate::cuda_acceleration::CudaGnssAccelerator::is_available();
         #[cfg(not(feature = "gpu"))]
         let cuda_available = false;
-        
+
         Ok(GenerationStats {
             total_samples,
             clipped_samples: 0,
             file_size_mb,
-            
+
             // Дополнительные данные для анализа производительности
-            total_time_ms: 0.0,  // Будет заполнено в вызывающем коде
-            signal_processing_time_ms: 0.0, 
+            total_time_ms: 0.0, // Будет заполнено в вызывающем коде
+            signal_processing_time_ms: 0.0,
             samples_generated: total_samples,
             satellites_processed: sat_if_signals.len() as u32,
             avx512_accelerated: avx512_available,
@@ -3788,13 +5413,17 @@ impl IFDataGen {
     // Satellite position calculation functions based on C implementation
     // Убрана неработающая функция gps_sat_pos_speed_eph - используется crate::coordinate::gps_sat_pos_speed_eph
 
-    fn glonass_sat_pos_speed_eph(&self, transmit_time: f64, eph: &GlonassEphemeris) -> Option<KinematicInfo> {
+    fn glonass_sat_pos_speed_eph(
+        &self,
+        transmit_time: f64,
+        eph: &GlonassEphemeris,
+    ) -> Option<KinematicInfo> {
         // Simplified GLONASS position calculation
         // In a real implementation, this would use Runge-Kutta integration
         // For now, use a simplified approach based on the orbital elements
-        
+
         Some(KinematicInfo {
-            x: eph.x * 1000.0,  // Convert from km to m
+            x: eph.x * 1000.0, // Convert from km to m
             y: eph.y * 1000.0,
             z: eph.z * 1000.0,
             vx: eph.vx * 1000.0,
@@ -3803,34 +5432,33 @@ impl IFDataGen {
         })
     }
 
-
     // Простой парсер для извлечения времени траектории из JSON
     fn parse_utc_time_from_json(&self, config_file: &str) -> Option<UtcTime> {
         use std::fs;
         let json_content = fs::read_to_string(config_file).ok()?;
-        
+
         // Simple JSON parsing for time section
         let time_start = json_content.find("\"time\": {")?;
         let time_end = json_content[time_start..].find("}")?;
         let time_section = &json_content[time_start..time_start + time_end + 1];
-        
+
         let year = Self::extract_json_field(time_section, "year")?;
         let month = Self::extract_json_field(time_section, "month")?;
         let day = Self::extract_json_field(time_section, "day")?;
         let hour = Self::extract_json_field(time_section, "hour")?;
         let minute = Self::extract_json_field(time_section, "minute")?;
         let second = Self::extract_json_field(time_section, "second")?;
-        
+
         Some(UtcTime {
             Year: year as i32,
             Month: month as i32,
             Day: day as i32,
             Hour: hour as i32,
             Minute: minute as i32,
-            Second: second
+            Second: second,
         })
     }
-    
+
     fn extract_json_field(json_section: &str, field_name: &str) -> Option<f64> {
         let field_pattern = format!("\"{}\": ", field_name);
         let start = json_section.find(&field_pattern)?;
@@ -3842,10 +5470,10 @@ impl IFDataGen {
 
     fn parse_trajectory_time_from_json(&self, config_file: &str) -> Option<f64> {
         use std::fs;
-        
+
         // Читаем JSON файл как текст
         let json_content = fs::read_to_string(config_file).ok()?;
-        
+
         // Ищем "trajectoryList" и первый "time"
         if let Some(traj_start) = json_content.find("\"trajectoryList\"") {
             let after_traj = &json_content[traj_start..];
@@ -3868,7 +5496,7 @@ impl IFDataGen {
                 }
             }
         }
-        
+
         None
     }
 }

@@ -24,10 +24,10 @@
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 pub struct SignalPower {
-    pub system: i32,    // GNSS система (GPS=0, BDS=1, Galileo=2, GLONASS=3)
-    pub svid: i32,      // ID спутника
-    pub time: i32,      // Время в миллисекундах
-    pub cn0: f64,       // Отношение сигнал/шум в дБ-Гц
+    pub system: i32, // GNSS система (GPS=0, BDS=1, Galileo=2, GLONASS=3)
+    pub svid: i32,   // ID спутника
+    pub time: i32,   // Время в миллисекундах
+    pub cn0: f64,    // Отношение сигнал/шум в дБ-Гц
 }
 
 /// Elevation adjustment types
@@ -44,22 +44,22 @@ pub enum ElevationAdjust {
 pub struct CPowerControl {
     /// Array size / Размер массива
     pub array_size: usize,
-    
+
     /// Next index for processing / Следующий индекс для обработки
     pub next_index: usize,
-    
+
     /// Power control array / Массив управления мощностью
     pub power_control_array: Vec<SignalPower>,
-    
+
     /// Time elapsed in milliseconds / Прошедшее время в миллисекундах
     pub time_elaps_ms: i32,
-    
+
     /// Elevation adjustment type / Тип коррекции по углу места
     pub adjust: ElevationAdjust,
-    
+
     /// Noise floor in dBm / Уровень шума в дБм
     pub noise_floor: f64,
-    
+
     /// Initial CN0 in dB-Hz / Начальное отношение сигнал/шум в дБ-Гц
     pub init_cn0: f64,
 }
@@ -100,13 +100,13 @@ impl CPowerControl {
         // Реализация сортировки выбором (как в C++ версии)
         for i in 0..self.array_size.saturating_sub(1) {
             let mut min_index = i;
-            
+
             for j in (i + 1)..self.array_size {
                 if self.power_control_array[j].time < self.power_control_array[min_index].time {
                     min_index = j;
                 }
             }
-            
+
             // Swap min time element to position i
             // Поменять местами элемент с минимальным временем с позицией i
             if min_index != i {
@@ -124,15 +124,15 @@ impl CPowerControl {
 
     /// Get power control list for the given time step
     /// Получить список управления мощностью для заданного временного шага
-    /// 
+    ///
     /// # Arguments
     /// * `time_step_ms` - Time step in milliseconds / Временной шаг в миллисекундах
-    /// 
+    ///
     /// # Returns
     /// * `(&[SignalPower], usize)` - Tuple of (power list slice, count) / Кортеж (срез списка мощности, количество)
     pub fn get_power_control_list(&mut self, time_step_ms: i32) -> (&[SignalPower], usize) {
         let init_index = self.next_index;
-        
+
         self.time_elaps_ms += time_step_ms;
 
         while self.next_index < self.array_size {
@@ -241,6 +241,9 @@ pub extern "C" fn set_elevation_adjust(power_control: &mut CPowerControl, adjust
 
 /// Add control element (C-compatible)
 #[no_mangle]
-pub extern "C" fn add_control_element(power_control: &mut CPowerControl, signal_power: &SignalPower) {
+pub extern "C" fn add_control_element(
+    power_control: &mut CPowerControl,
+    signal_power: &SignalPower,
+) {
     power_control.add_control_element(signal_power);
 }

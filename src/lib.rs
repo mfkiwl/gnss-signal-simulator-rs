@@ -1,5 +1,5 @@
 //! # GNSS Rust Library
-//! 
+//!
 //! Библиотека для обработки данных глобальных навигационных спутниковых систем (ГНСС/GNSS).
 //! Портирована с C++/C для работы с различными типами навигационных сообщений и сигналов
 //! спутниковых систем GPS, ГЛОНАСС, BeiDou, Galileo.
@@ -28,37 +28,37 @@ pub mod debug_positions;
 pub mod fastmath;
 pub mod fnavbit;
 // pub mod fnavbit_backup;
+pub mod cnav2bit;
+pub mod cnavbit;
+pub mod complex_number;
+pub mod constants;
+pub mod coordinate;
 pub mod gnavbit;
 pub mod gnsstime;
 pub mod ifdatagen;
-pub mod types;
+pub mod inavbit;
 pub mod json_interpreter; // Восстановлено для RINEX парсинга
 pub mod json_parser;
 pub mod l5cnavbit;
+pub mod ldpc;
 pub mod lnavbit;
+pub mod memory_code;
+pub mod nav_data; // NEW: Unified NavData enum for parallelization
 pub mod navbit;
 pub mod navdata;
-pub mod nav_data;  // NEW: Unified NavData enum for parallelization
 pub mod pilotbit;
 pub mod powercontrol;
 pub mod prngenerate;
-pub mod constants;
-pub mod memory_code;
-pub mod trajectory;
+pub mod sat_if_signal;
 pub mod satellite_param;
 pub mod satellite_signal;
-pub mod sat_if_signal;
-pub mod cnavbit;
-pub mod cnav2bit;
-pub mod complex_number;
-pub mod coordinate;
-pub mod inavbit;
-pub mod ldpc;
+pub mod trajectory;
+pub mod types;
 // МАКСИМАЛЬНОЕ АППАРАТНОЕ УСКОРЕНИЕ
 pub mod avx512_intrinsics;
+pub mod benchmarks;
 #[cfg(feature = "gpu")]
 pub mod cuda_acceleration;
-pub mod benchmarks;
 pub mod pvt;
 
 pub use almanac::*;
@@ -70,33 +70,33 @@ pub use d1d2navbit::*;
 pub use fastmath::*;
 pub use fnavbit::*;
 // pub use fnavbit_backup::*;
+pub use cnav2bit::*;
+pub use cnavbit::*;
+pub use complex_number::*;
+pub use constants::*;
+pub use coordinate::*;
 pub use gnavbit::*;
 pub use gnsstime::*;
-pub use ifdatagen::{NavBitTrait, IFDataGen, GenerationStats};
+pub use ifdatagen::{GenerationStats, IFDataGen, NavBitTrait};
 pub use types::*;
-pub use constants::*;
-pub use cnavbit::*;
-pub use cnav2bit::*;
-pub use complex_number::*;
-pub use coordinate::*;
 // ВРЕМЕННО ОТКЛЮЧЕНО: pub use json_interpreter::*;
+pub use avx512_intrinsics::*;
+pub use benchmarks::*;
+#[cfg(feature = "gpu")]
+pub use cuda_acceleration::*;
+pub use inavbit::*;
 pub use json_parser::*;
 pub use l5cnavbit::*;
+pub use ldpc::*;
 pub use lnavbit::*;
+pub use memory_code::*;
+pub use nav_data::{NavData, NavMessageType};
 pub use navbit::*;
 pub use navdata::{CNavData, NavDataType};
-pub use nav_data::{NavData, NavMessageType};
 pub use pilotbit::*;
 pub use powercontrol::*;
 pub use prngenerate::*;
-pub use memory_code::*;
-pub use trajectory::*;
+pub use sat_if_signal::*;
 pub use satellite_param::*;
 pub use satellite_signal::*;
-pub use sat_if_signal::*;
-pub use inavbit::*;
-pub use ldpc::*;
-pub use avx512_intrinsics::*;
-#[cfg(feature = "gpu")]
-pub use cuda_acceleration::*;
-pub use benchmarks::*;
+pub use trajectory::*;

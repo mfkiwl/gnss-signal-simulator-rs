@@ -19,8 +19,8 @@
 //
 //----------------------------------------------------------------------
 
-use crate::types::*;
 use crate::coordinate::*;
+use crate::types::*;
 use std::f64::consts::PI;
 
 // Error codes
@@ -66,7 +66,7 @@ pub trait TrajectorySegment {
         data_type2: TrajectoryDataType,
         data2: f64,
     ) -> i32;
-    
+
     fn get_pos_vel(&self, relative_time: f64) -> KinematicInfo;
     fn get_trajectory_type(&self) -> TrajectoryType;
     fn get_start_pos_vel(&self) -> &KinematicInfo;
@@ -105,20 +105,27 @@ impl TrajectorySegmentBase {
     }
 
     pub fn get_speed_projection(&self) -> [f64; 3] {
-        let speed = (self.start_pos_vel.vx * self.start_pos_vel.vx + 
-                    self.start_pos_vel.vy * self.start_pos_vel.vy + 
-                    self.start_pos_vel.vz * self.start_pos_vel.vz).sqrt();
-        
+        let speed = (self.start_pos_vel.vx * self.start_pos_vel.vx
+            + self.start_pos_vel.vy * self.start_pos_vel.vy
+            + self.start_pos_vel.vz * self.start_pos_vel.vz)
+            .sqrt();
+
         let mut pos_vel = self.start_pos_vel;
-        
+
         if speed < 1e-5 {
             // Zero speed, direction derive from course
             let mut local_speed = self.local_speed;
             local_speed.speed = 1.0;
             speed_course_to_enu(&mut local_speed);
             speed_local_to_ecef(&self.convert_matrix, &local_speed, &mut pos_vel);
-            let new_speed = (pos_vel.vx * pos_vel.vx + pos_vel.vy * pos_vel.vy + pos_vel.vz * pos_vel.vz).sqrt();
-            [pos_vel.vx / new_speed, pos_vel.vy / new_speed, pos_vel.vz / new_speed]
+            let new_speed =
+                (pos_vel.vx * pos_vel.vx + pos_vel.vy * pos_vel.vy + pos_vel.vz * pos_vel.vz)
+                    .sqrt();
+            [
+                pos_vel.vx / new_speed,
+                pos_vel.vy / new_speed,
+                pos_vel.vz / new_speed,
+            ]
         } else {
             [pos_vel.vx / speed, pos_vel.vy / speed, pos_vel.vz / speed]
         }
@@ -163,36 +170,37 @@ impl TrajectorySegment for TrajectoryConstSpeed {
         data2: f64,
     ) -> i32 {
         self.base.init_segment(prev_segment);
-        
+
         // Handle different parameter combinations
         match (data_type1, data_type2) {
-            (TrajectoryDataType::TrajDataTimeSpan, TrajectoryDataType::TrajDataSpeed) |
-            (TrajectoryDataType::TrajDataSpeed, TrajectoryDataType::TrajDataTimeSpan) => {
-                let (time_span, speed) = if matches!(data_type1, TrajectoryDataType::TrajDataTimeSpan) {
-                    (data1, data2)
-                } else {
-                    (data2, data1)
-                };
-                
+            (TrajectoryDataType::TrajDataTimeSpan, TrajectoryDataType::TrajDataSpeed)
+            | (TrajectoryDataType::TrajDataSpeed, TrajectoryDataType::TrajDataTimeSpan) => {
+                let (time_span, speed) =
+                    if matches!(data_type1, TrajectoryDataType::TrajDataTimeSpan) {
+                        (data1, data2)
+                    } else {
+                        (data2, data1)
+                    };
+
                 if time_span <= 0.0 {
                     return TRAJECTORY_INVALID_PARAM;
                 }
                 if speed < 0.0 {
                     return TRAJECTORY_NEGATIVE;
                 }
-                
+
                 self.base.time_span = time_span;
                 self.base.local_speed.speed = speed;
                 TRAJECTORY_NO_ERR
-            },
-            _ => TRAJECTORY_TYPE_MISMATCH
+            }
+            _ => TRAJECTORY_TYPE_MISMATCH,
         }
     }
 
     fn get_pos_vel(&self, relative_time: f64) -> KinematicInfo {
         let projection = self.base.get_speed_projection();
         let distance = self.base.local_speed.speed * relative_time;
-        
+
         KinematicInfo {
             x: self.base.start_pos_vel.x + projection[0] * distance,
             y: self.base.start_pos_vel.y + projection[1] * distance,
@@ -203,15 +211,33 @@ impl TrajectorySegment for TrajectoryConstSpeed {
         }
     }
 
-    fn get_trajectory_type(&self) -> TrajectoryType { TrajectoryType::TrajTypeConstSpeed }
-    fn get_start_pos_vel(&self) -> &KinematicInfo { &self.base.start_pos_vel }
-    fn get_local_speed(&self) -> &LocalSpeed { &self.base.local_speed }
-    fn get_convert_matrix(&self) -> &ConvertMatrix { &self.base.convert_matrix }
-    fn get_time_span(&self) -> f64 { self.base.time_span }
-    fn set_start_pos_vel(&mut self, pos_vel: KinematicInfo) { self.base.start_pos_vel = pos_vel; }
-    fn set_local_speed(&mut self, speed: LocalSpeed) { self.base.local_speed = speed; }
-    fn set_convert_matrix(&mut self, matrix: ConvertMatrix) { self.base.convert_matrix = matrix; }
-    fn set_time_span(&mut self, time_span: f64) { self.base.time_span = time_span; }
+    fn get_trajectory_type(&self) -> TrajectoryType {
+        TrajectoryType::TrajTypeConstSpeed
+    }
+    fn get_start_pos_vel(&self) -> &KinematicInfo {
+        &self.base.start_pos_vel
+    }
+    fn get_local_speed(&self) -> &LocalSpeed {
+        &self.base.local_speed
+    }
+    fn get_convert_matrix(&self) -> &ConvertMatrix {
+        &self.base.convert_matrix
+    }
+    fn get_time_span(&self) -> f64 {
+        self.base.time_span
+    }
+    fn set_start_pos_vel(&mut self, pos_vel: KinematicInfo) {
+        self.base.start_pos_vel = pos_vel;
+    }
+    fn set_local_speed(&mut self, speed: LocalSpeed) {
+        self.base.local_speed = speed;
+    }
+    fn set_convert_matrix(&mut self, matrix: ConvertMatrix) {
+        self.base.convert_matrix = matrix;
+    }
+    fn set_time_span(&mut self, time_span: f64) {
+        self.base.time_span = time_span;
+    }
 }
 
 // Constant acceleration trajectory
@@ -250,56 +276,81 @@ impl TrajectorySegment for TrajectoryConstAcc {
         data2: f64,
     ) -> i32 {
         self.base.init_segment(prev_segment);
-        
+
         match (data_type1, data_type2) {
-            (TrajectoryDataType::TrajDataTimeSpan, TrajectoryDataType::TrajDataAcceleration) |
-            (TrajectoryDataType::TrajDataAcceleration, TrajectoryDataType::TrajDataTimeSpan) => {
-                let (time_span, acceleration) = if matches!(data_type1, TrajectoryDataType::TrajDataTimeSpan) {
-                    (data1, data2)
-                } else {
-                    (data2, data1)
-                };
-                
+            (TrajectoryDataType::TrajDataTimeSpan, TrajectoryDataType::TrajDataAcceleration)
+            | (TrajectoryDataType::TrajDataAcceleration, TrajectoryDataType::TrajDataTimeSpan) => {
+                let (time_span, acceleration) =
+                    if matches!(data_type1, TrajectoryDataType::TrajDataTimeSpan) {
+                        (data1, data2)
+                    } else {
+                        (data2, data1)
+                    };
+
                 if time_span <= 0.0 {
                     return TRAJECTORY_INVALID_PARAM;
                 }
                 if acceleration.abs() < 1e-5 {
                     return TRAJECTORY_ZERO_ACC;
                 }
-                
+
                 self.base.time_span = time_span;
                 let projection = self.base.get_speed_projection();
                 self.ax = projection[0] * acceleration;
                 self.ay = projection[1] * acceleration;
                 self.az = projection[2] * acceleration;
                 TRAJECTORY_NO_ERR
-            },
-            _ => TRAJECTORY_TYPE_MISMATCH
+            }
+            _ => TRAJECTORY_TYPE_MISMATCH,
         }
     }
 
     fn get_pos_vel(&self, relative_time: f64) -> KinematicInfo {
         let t2 = relative_time * relative_time;
-        
+
         KinematicInfo {
-            x: self.base.start_pos_vel.x + self.base.start_pos_vel.vx * relative_time + 0.5 * self.ax * t2,
-            y: self.base.start_pos_vel.y + self.base.start_pos_vel.vy * relative_time + 0.5 * self.ay * t2,
-            z: self.base.start_pos_vel.z + self.base.start_pos_vel.vz * relative_time + 0.5 * self.az * t2,
+            x: self.base.start_pos_vel.x
+                + self.base.start_pos_vel.vx * relative_time
+                + 0.5 * self.ax * t2,
+            y: self.base.start_pos_vel.y
+                + self.base.start_pos_vel.vy * relative_time
+                + 0.5 * self.ay * t2,
+            z: self.base.start_pos_vel.z
+                + self.base.start_pos_vel.vz * relative_time
+                + 0.5 * self.az * t2,
             vx: self.base.start_pos_vel.vx + self.ax * relative_time,
             vy: self.base.start_pos_vel.vy + self.ay * relative_time,
             vz: self.base.start_pos_vel.vz + self.az * relative_time,
         }
     }
 
-    fn get_trajectory_type(&self) -> TrajectoryType { TrajectoryType::TrajTypeConstAcc }
-    fn get_start_pos_vel(&self) -> &KinematicInfo { &self.base.start_pos_vel }
-    fn get_local_speed(&self) -> &LocalSpeed { &self.base.local_speed }
-    fn get_convert_matrix(&self) -> &ConvertMatrix { &self.base.convert_matrix }
-    fn get_time_span(&self) -> f64 { self.base.time_span }
-    fn set_start_pos_vel(&mut self, pos_vel: KinematicInfo) { self.base.start_pos_vel = pos_vel; }
-    fn set_local_speed(&mut self, speed: LocalSpeed) { self.base.local_speed = speed; }
-    fn set_convert_matrix(&mut self, matrix: ConvertMatrix) { self.base.convert_matrix = matrix; }
-    fn set_time_span(&mut self, time_span: f64) { self.base.time_span = time_span; }
+    fn get_trajectory_type(&self) -> TrajectoryType {
+        TrajectoryType::TrajTypeConstAcc
+    }
+    fn get_start_pos_vel(&self) -> &KinematicInfo {
+        &self.base.start_pos_vel
+    }
+    fn get_local_speed(&self) -> &LocalSpeed {
+        &self.base.local_speed
+    }
+    fn get_convert_matrix(&self) -> &ConvertMatrix {
+        &self.base.convert_matrix
+    }
+    fn get_time_span(&self) -> f64 {
+        self.base.time_span
+    }
+    fn set_start_pos_vel(&mut self, pos_vel: KinematicInfo) {
+        self.base.start_pos_vel = pos_vel;
+    }
+    fn set_local_speed(&mut self, speed: LocalSpeed) {
+        self.base.local_speed = speed;
+    }
+    fn set_convert_matrix(&mut self, matrix: ConvertMatrix) {
+        self.base.convert_matrix = matrix;
+    }
+    fn set_time_span(&mut self, time_span: f64) {
+        self.base.time_span = time_span;
+    }
 }
 
 // Vertical acceleration trajectory
@@ -338,60 +389,85 @@ impl TrajectorySegment for TrajectoryVerticalAcc {
         data2: f64,
     ) -> i32 {
         self.base.init_segment(prev_segment);
-        
+
         match (data_type1, data_type2) {
-            (TrajectoryDataType::TrajDataTimeSpan, TrajectoryDataType::TrajDataAcceleration) |
-            (TrajectoryDataType::TrajDataAcceleration, TrajectoryDataType::TrajDataTimeSpan) => {
-                let (time_span, acceleration) = if matches!(data_type1, TrajectoryDataType::TrajDataTimeSpan) {
-                    (data1, data2)
-                } else {
-                    (data2, data1)
-                };
-                
+            (TrajectoryDataType::TrajDataTimeSpan, TrajectoryDataType::TrajDataAcceleration)
+            | (TrajectoryDataType::TrajDataAcceleration, TrajectoryDataType::TrajDataTimeSpan) => {
+                let (time_span, acceleration) =
+                    if matches!(data_type1, TrajectoryDataType::TrajDataTimeSpan) {
+                        (data1, data2)
+                    } else {
+                        (data2, data1)
+                    };
+
                 if time_span <= 0.0 {
                     return TRAJECTORY_INVALID_PARAM;
                 }
                 if acceleration.abs() < 1e-5 {
                     return TRAJECTORY_ZERO_ACC;
                 }
-                
+
                 self.base.time_span = time_span;
-                
+
                 // Calculate vertical direction (up vector)
                 let lla_pos = ecef_to_lla(&self.base.start_pos_vel);
                 let up_vector = calc_up_vector(&lla_pos);
-                
+
                 self.ax = up_vector[0] * acceleration;
                 self.ay = up_vector[1] * acceleration;
                 self.az = up_vector[2] * acceleration;
                 TRAJECTORY_NO_ERR
-            },
-            _ => TRAJECTORY_TYPE_MISMATCH
+            }
+            _ => TRAJECTORY_TYPE_MISMATCH,
         }
     }
 
     fn get_pos_vel(&self, relative_time: f64) -> KinematicInfo {
         let t2 = relative_time * relative_time;
-        
+
         KinematicInfo {
-            x: self.base.start_pos_vel.x + self.base.start_pos_vel.vx * relative_time + 0.5 * self.ax * t2,
-            y: self.base.start_pos_vel.y + self.base.start_pos_vel.vy * relative_time + 0.5 * self.ay * t2,
-            z: self.base.start_pos_vel.z + self.base.start_pos_vel.vz * relative_time + 0.5 * self.az * t2,
+            x: self.base.start_pos_vel.x
+                + self.base.start_pos_vel.vx * relative_time
+                + 0.5 * self.ax * t2,
+            y: self.base.start_pos_vel.y
+                + self.base.start_pos_vel.vy * relative_time
+                + 0.5 * self.ay * t2,
+            z: self.base.start_pos_vel.z
+                + self.base.start_pos_vel.vz * relative_time
+                + 0.5 * self.az * t2,
             vx: self.base.start_pos_vel.vx + self.ax * relative_time,
             vy: self.base.start_pos_vel.vy + self.ay * relative_time,
             vz: self.base.start_pos_vel.vz + self.az * relative_time,
         }
     }
 
-    fn get_trajectory_type(&self) -> TrajectoryType { TrajectoryType::TrajTypeVerticalAcc }
-    fn get_start_pos_vel(&self) -> &KinematicInfo { &self.base.start_pos_vel }
-    fn get_local_speed(&self) -> &LocalSpeed { &self.base.local_speed }
-    fn get_convert_matrix(&self) -> &ConvertMatrix { &self.base.convert_matrix }
-    fn get_time_span(&self) -> f64 { self.base.time_span }
-    fn set_start_pos_vel(&mut self, pos_vel: KinematicInfo) { self.base.start_pos_vel = pos_vel; }
-    fn set_local_speed(&mut self, speed: LocalSpeed) { self.base.local_speed = speed; }
-    fn set_convert_matrix(&mut self, matrix: ConvertMatrix) { self.base.convert_matrix = matrix; }
-    fn set_time_span(&mut self, time_span: f64) { self.base.time_span = time_span; }
+    fn get_trajectory_type(&self) -> TrajectoryType {
+        TrajectoryType::TrajTypeVerticalAcc
+    }
+    fn get_start_pos_vel(&self) -> &KinematicInfo {
+        &self.base.start_pos_vel
+    }
+    fn get_local_speed(&self) -> &LocalSpeed {
+        &self.base.local_speed
+    }
+    fn get_convert_matrix(&self) -> &ConvertMatrix {
+        &self.base.convert_matrix
+    }
+    fn get_time_span(&self) -> f64 {
+        self.base.time_span
+    }
+    fn set_start_pos_vel(&mut self, pos_vel: KinematicInfo) {
+        self.base.start_pos_vel = pos_vel;
+    }
+    fn set_local_speed(&mut self, speed: LocalSpeed) {
+        self.base.local_speed = speed;
+    }
+    fn set_convert_matrix(&mut self, matrix: ConvertMatrix) {
+        self.base.convert_matrix = matrix;
+    }
+    fn set_time_span(&mut self, time_span: f64) {
+        self.base.time_span = time_span;
+    }
 }
 // Jerk trajectory (constant acceleration rate)
 #[derive(Debug, Clone)]
@@ -425,26 +501,27 @@ impl TrajectorySegment for TrajectoryJerk {
         data2: f64,
     ) -> i32 {
         self.base.init_segment(prev_segment);
-        
+
         match (data_type1, data_type2) {
-            (TrajectoryDataType::TrajDataTimeSpan, TrajectoryDataType::TrajDataAccRate) |
-            (TrajectoryDataType::TrajDataAccRate, TrajectoryDataType::TrajDataTimeSpan) => {
-                let (time_span, acc_rate) = if matches!(data_type1, TrajectoryDataType::TrajDataTimeSpan) {
-                    (data1, data2)
-                } else {
-                    (data2, data1)
-                };
-                
+            (TrajectoryDataType::TrajDataTimeSpan, TrajectoryDataType::TrajDataAccRate)
+            | (TrajectoryDataType::TrajDataAccRate, TrajectoryDataType::TrajDataTimeSpan) => {
+                let (time_span, acc_rate) =
+                    if matches!(data_type1, TrajectoryDataType::TrajDataTimeSpan) {
+                        (data1, data2)
+                    } else {
+                        (data2, data1)
+                    };
+
                 if time_span <= 0.0 {
                     return TRAJECTORY_INVALID_PARAM;
                 }
                 if acc_rate.abs() < 1e-5 {
                     return TRAJECTORY_ZERO_ACCRATE;
                 }
-                
+
                 self.base.time_span = time_span;
                 let projection = self.base.get_speed_projection();
-                
+
                 // Initial acceleration is zero, acceleration rate is along velocity direction
                 self.acc.x = 0.0;
                 self.acc.y = 0.0;
@@ -453,37 +530,61 @@ impl TrajectorySegment for TrajectoryJerk {
                 self.acc.vy = projection[1] * acc_rate;
                 self.acc.vz = projection[2] * acc_rate;
                 TRAJECTORY_NO_ERR
-            },
-            _ => TRAJECTORY_TYPE_MISMATCH
+            }
+            _ => TRAJECTORY_TYPE_MISMATCH,
         }
     }
 
     fn get_pos_vel(&self, relative_time: f64) -> KinematicInfo {
         let t2 = relative_time * relative_time;
         let t3 = t2 * relative_time;
-        
+
         KinematicInfo {
-            x: self.base.start_pos_vel.x + self.base.start_pos_vel.vx * relative_time + 
-               0.5 * self.acc.x * t2 + (1.0/6.0) * self.acc.vx * t3,
-            y: self.base.start_pos_vel.y + self.base.start_pos_vel.vy * relative_time + 
-               0.5 * self.acc.y * t2 + (1.0/6.0) * self.acc.vy * t3,
-            z: self.base.start_pos_vel.z + self.base.start_pos_vel.vz * relative_time + 
-               0.5 * self.acc.z * t2 + (1.0/6.0) * self.acc.vz * t3,
+            x: self.base.start_pos_vel.x
+                + self.base.start_pos_vel.vx * relative_time
+                + 0.5 * self.acc.x * t2
+                + (1.0 / 6.0) * self.acc.vx * t3,
+            y: self.base.start_pos_vel.y
+                + self.base.start_pos_vel.vy * relative_time
+                + 0.5 * self.acc.y * t2
+                + (1.0 / 6.0) * self.acc.vy * t3,
+            z: self.base.start_pos_vel.z
+                + self.base.start_pos_vel.vz * relative_time
+                + 0.5 * self.acc.z * t2
+                + (1.0 / 6.0) * self.acc.vz * t3,
             vx: self.base.start_pos_vel.vx + self.acc.x * relative_time + 0.5 * self.acc.vx * t2,
             vy: self.base.start_pos_vel.vy + self.acc.y * relative_time + 0.5 * self.acc.vy * t2,
             vz: self.base.start_pos_vel.vz + self.acc.z * relative_time + 0.5 * self.acc.vz * t2,
         }
     }
 
-    fn get_trajectory_type(&self) -> TrajectoryType { TrajectoryType::TrajTypeJerk }
-    fn get_start_pos_vel(&self) -> &KinematicInfo { &self.base.start_pos_vel }
-    fn get_local_speed(&self) -> &LocalSpeed { &self.base.local_speed }
-    fn get_convert_matrix(&self) -> &ConvertMatrix { &self.base.convert_matrix }
-    fn get_time_span(&self) -> f64 { self.base.time_span }
-    fn set_start_pos_vel(&mut self, pos_vel: KinematicInfo) { self.base.start_pos_vel = pos_vel; }
-    fn set_local_speed(&mut self, speed: LocalSpeed) { self.base.local_speed = speed; }
-    fn set_convert_matrix(&mut self, matrix: ConvertMatrix) { self.base.convert_matrix = matrix; }
-    fn set_time_span(&mut self, time_span: f64) { self.base.time_span = time_span; }
+    fn get_trajectory_type(&self) -> TrajectoryType {
+        TrajectoryType::TrajTypeJerk
+    }
+    fn get_start_pos_vel(&self) -> &KinematicInfo {
+        &self.base.start_pos_vel
+    }
+    fn get_local_speed(&self) -> &LocalSpeed {
+        &self.base.local_speed
+    }
+    fn get_convert_matrix(&self) -> &ConvertMatrix {
+        &self.base.convert_matrix
+    }
+    fn get_time_span(&self) -> f64 {
+        self.base.time_span
+    }
+    fn set_start_pos_vel(&mut self, pos_vel: KinematicInfo) {
+        self.base.start_pos_vel = pos_vel;
+    }
+    fn set_local_speed(&mut self, speed: LocalSpeed) {
+        self.base.local_speed = speed;
+    }
+    fn set_convert_matrix(&mut self, matrix: ConvertMatrix) {
+        self.base.convert_matrix = matrix;
+    }
+    fn set_time_span(&mut self, time_span: f64) {
+        self.base.time_span = time_span;
+    }
 }
 
 // Horizontal circular trajectory
@@ -518,52 +619,54 @@ impl TrajectorySegment for TrajectoryHorizontalCircular {
         data2: f64,
     ) -> i32 {
         self.base.init_segment(prev_segment);
-        
+
         match (data_type1, data_type2) {
-            (TrajectoryDataType::TrajDataTimeSpan, TrajectoryDataType::TrajDataAngularRate) |
-            (TrajectoryDataType::TrajDataAngularRate, TrajectoryDataType::TrajDataTimeSpan) => {
-                let (time_span, angular_rate) = if matches!(data_type1, TrajectoryDataType::TrajDataTimeSpan) {
-                    (data1, data2)
-                } else {
-                    (data2, data1)
-                };
-                
+            (TrajectoryDataType::TrajDataTimeSpan, TrajectoryDataType::TrajDataAngularRate)
+            | (TrajectoryDataType::TrajDataAngularRate, TrajectoryDataType::TrajDataTimeSpan) => {
+                let (time_span, angular_rate) =
+                    if matches!(data_type1, TrajectoryDataType::TrajDataTimeSpan) {
+                        (data1, data2)
+                    } else {
+                        (data2, data1)
+                    };
+
                 if time_span <= 0.0 {
                     return TRAJECTORY_INVALID_PARAM;
                 }
                 if angular_rate.abs() < 1e-5 {
                     return TRAJECTORY_ZERO_DEGREE;
                 }
-                
+
                 self.base.time_span = time_span;
                 self.angular_rate = angular_rate * PI / 180.0; // Convert to radians
                 TRAJECTORY_NO_ERR
-            },
-            (TrajectoryDataType::TrajDataTimeSpan, TrajectoryDataType::TrajDataRadius) |
-            (TrajectoryDataType::TrajDataRadius, TrajectoryDataType::TrajDataTimeSpan) => {
-                let (time_span, radius) = if matches!(data_type1, TrajectoryDataType::TrajDataTimeSpan) {
-                    (data1, data2)
-                } else {
-                    (data2, data1)
-                };
-                
+            }
+            (TrajectoryDataType::TrajDataTimeSpan, TrajectoryDataType::TrajDataRadius)
+            | (TrajectoryDataType::TrajDataRadius, TrajectoryDataType::TrajDataTimeSpan) => {
+                let (time_span, radius) =
+                    if matches!(data_type1, TrajectoryDataType::TrajDataTimeSpan) {
+                        (data1, data2)
+                    } else {
+                        (data2, data1)
+                    };
+
                 if time_span <= 0.0 {
                     return TRAJECTORY_INVALID_PARAM;
                 }
                 if radius <= 0.0 {
                     return TRAJECTORY_NEGATIVE;
                 }
-                
+
                 let speed = self.base.local_speed.speed;
                 if speed < 1e-5 {
                     return TRAJECTORY_ZERO_SPEED;
                 }
-                
+
                 self.base.time_span = time_span;
                 self.angular_rate = speed / radius; // v = ωr, so ω = v/r
                 TRAJECTORY_NO_ERR
-            },
-            _ => TRAJECTORY_TYPE_MISMATCH
+            }
+            _ => TRAJECTORY_TYPE_MISMATCH,
         }
     }
 
@@ -571,22 +674,22 @@ impl TrajectorySegment for TrajectoryHorizontalCircular {
         let angle = self.angular_rate * relative_time;
         let cos_angle = angle.cos();
         let sin_angle = angle.sin();
-        
+
         // Get horizontal velocity components (assuming z is up)
         let vh_x = self.base.start_pos_vel.vx;
         let vh_y = self.base.start_pos_vel.vy;
         let vh_z = self.base.start_pos_vel.vz;
-        
+
         // Rotate velocity vector
         let new_vx = vh_x * cos_angle - vh_y * sin_angle;
         let new_vy = vh_x * sin_angle + vh_y * cos_angle;
         let new_vz = vh_z; // Vertical component unchanged
-        
+
         // Calculate position change (integration of rotated velocity)
         let radius = self.base.local_speed.speed / self.angular_rate;
         let dx = radius * sin_angle;
         let dy = radius * (1.0 - cos_angle);
-        
+
         KinematicInfo {
             x: self.base.start_pos_vel.x + dx,
             y: self.base.start_pos_vel.y + dy,
@@ -597,15 +700,33 @@ impl TrajectorySegment for TrajectoryHorizontalCircular {
         }
     }
 
-    fn get_trajectory_type(&self) -> TrajectoryType { TrajectoryType::TrajTypeHorizontalCircular }
-    fn get_start_pos_vel(&self) -> &KinematicInfo { &self.base.start_pos_vel }
-    fn get_local_speed(&self) -> &LocalSpeed { &self.base.local_speed }
-    fn get_convert_matrix(&self) -> &ConvertMatrix { &self.base.convert_matrix }
-    fn get_time_span(&self) -> f64 { self.base.time_span }
-    fn set_start_pos_vel(&mut self, pos_vel: KinematicInfo) { self.base.start_pos_vel = pos_vel; }
-    fn set_local_speed(&mut self, speed: LocalSpeed) { self.base.local_speed = speed; }
-    fn set_convert_matrix(&mut self, matrix: ConvertMatrix) { self.base.convert_matrix = matrix; }
-    fn set_time_span(&mut self, time_span: f64) { self.base.time_span = time_span; }
+    fn get_trajectory_type(&self) -> TrajectoryType {
+        TrajectoryType::TrajTypeHorizontalCircular
+    }
+    fn get_start_pos_vel(&self) -> &KinematicInfo {
+        &self.base.start_pos_vel
+    }
+    fn get_local_speed(&self) -> &LocalSpeed {
+        &self.base.local_speed
+    }
+    fn get_convert_matrix(&self) -> &ConvertMatrix {
+        &self.base.convert_matrix
+    }
+    fn get_time_span(&self) -> f64 {
+        self.base.time_span
+    }
+    fn set_start_pos_vel(&mut self, pos_vel: KinematicInfo) {
+        self.base.start_pos_vel = pos_vel;
+    }
+    fn set_local_speed(&mut self, speed: LocalSpeed) {
+        self.base.local_speed = speed;
+    }
+    fn set_convert_matrix(&mut self, matrix: ConvertMatrix) {
+        self.base.convert_matrix = matrix;
+    }
+    fn set_time_span(&mut self, time_span: f64) {
+        self.base.time_span = time_span;
+    }
 }
 
 // Main trajectory class that manages trajectory segments
@@ -640,20 +761,29 @@ impl CTrajectory {
         self.init_pos_vel = init_pos_vel;
     }
 
-    pub fn set_init_pos_vel_lla(&mut self, init_position: LlaPosition, init_velocity: LocalSpeed, is_enu: bool) {
+    pub fn set_init_pos_vel_lla(
+        &mut self,
+        init_position: LlaPosition,
+        init_velocity: LocalSpeed,
+        is_enu: bool,
+    ) {
         self.init_pos_vel = lla_to_ecef(&init_position);
         self.init_local_speed = init_velocity;
-        
+
         if !is_enu {
             // Convert course to ENU if needed
             let mut velocity = init_velocity;
             speed_course_to_enu(&mut velocity);
             self.init_local_speed = velocity;
         }
-        
+
         // Convert local velocity to ECEF
         let convert_matrix = calc_conv_matrix_lla(&init_position);
-        speed_local_to_ecef(&convert_matrix, &self.init_local_speed, &mut self.init_pos_vel);
+        speed_local_to_ecef(
+            &convert_matrix,
+            &self.init_local_speed,
+            &mut self.init_pos_vel,
+        );
     }
 
     pub fn clear_trajectory_list(&mut self) {
@@ -675,7 +805,9 @@ impl CTrajectory {
             TrajectoryType::TrajTypeConstAcc => Box::new(TrajectoryConstAcc::new()),
             TrajectoryType::TrajTypeVerticalAcc => Box::new(TrajectoryVerticalAcc::new()),
             TrajectoryType::TrajTypeJerk => Box::new(TrajectoryJerk::new()),
-            TrajectoryType::TrajTypeHorizontalCircular => Box::new(TrajectoryHorizontalCircular::new()),
+            TrajectoryType::TrajTypeHorizontalCircular => {
+                Box::new(TrajectoryHorizontalCircular::new())
+            }
             _ => return TRAJECTORY_UNKNOWN_TYPE,
         };
 
@@ -690,11 +822,11 @@ impl CTrajectory {
 
         let prev_segment = self.get_last_segment();
         let result = segment.set_segment_param(prev_segment, data_type1, data1, data_type2, data2);
-        
+
         if result == TRAJECTORY_NO_ERR {
             self.trajectory_list.push(segment);
         }
-        
+
         result
     }
 
@@ -714,12 +846,12 @@ impl CTrajectory {
         while self.current_trajectory_index < self.trajectory_list.len() {
             let current_segment = &self.trajectory_list[self.current_trajectory_index];
             let segment_time_span = current_segment.get_time_span();
-            
+
             if self.relative_time <= segment_time_span {
                 *_pos_vel = current_segment.get_pos_vel(self.relative_time);
                 return true;
             }
-            
+
             // Move to next segment
             self.relative_time -= segment_time_span;
             self.current_trajectory_index += 1;
@@ -729,7 +861,12 @@ impl CTrajectory {
         false
     }
 
-    pub fn get_next_pos_vel_lla(&mut self, time_step: f64, position: &mut LlaPosition, velocity: &mut LocalSpeed) -> bool {
+    pub fn get_next_pos_vel_lla(
+        &mut self,
+        time_step: f64,
+        position: &mut LlaPosition,
+        velocity: &mut LocalSpeed,
+    ) -> bool {
         let mut pos_vel = KinematicInfo::default();
         if self.get_next_pos_vel_ecef(time_step, &mut pos_vel) {
             *position = ecef_to_lla(&pos_vel);
@@ -743,7 +880,10 @@ impl CTrajectory {
     }
 
     pub fn get_time_length(&self) -> f64 {
-        self.trajectory_list.iter().map(|seg| seg.get_time_span()).sum()
+        self.trajectory_list
+            .iter()
+            .map(|seg| seg.get_time_span())
+            .sum()
     }
 
     pub fn set_trajectory_name(&mut self, name: &str) {

@@ -29,30 +29,21 @@ use crate::types::*;
 
 // Constants
 
-
 // L1C Matrix Generator for Subframe 2
 pub const L1C_MATRIX_GEN2: [u32; 38] = [
-    0x00000001, 0x00000002, 0x00000004, 0x00000008,
-    0x00000010, 0x00000020, 0x00000040, 0x00000080,
-    0x00000100, 0x00000200, 0x00000400, 0x00000800,
-    0x00001000, 0x00002000, 0x00004000, 0x00008000,
-    0x00010000, 0x00020000, 0x00040000, 0x00080000,
-    0x00100000, 0x00200000, 0x00400000, 0x00800000,
-    0x01000000, 0x02000000, 0x04000000, 0x08000000,
-    0x10000000, 0x20000000, 0x40000000, 0x80000000,
-    0x00000000, 0x00000000, 0x00000000, 0x00000000,
-    0x00000000, 0x00000000
+    0x00000001, 0x00000002, 0x00000004, 0x00000008, 0x00000010, 0x00000020, 0x00000040, 0x00000080,
+    0x00000100, 0x00000200, 0x00000400, 0x00000800, 0x00001000, 0x00002000, 0x00004000, 0x00008000,
+    0x00010000, 0x00020000, 0x00040000, 0x00080000, 0x00100000, 0x00200000, 0x00400000, 0x00800000,
+    0x01000000, 0x02000000, 0x04000000, 0x08000000, 0x10000000, 0x20000000, 0x40000000, 0x80000000,
+    0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000,
 ];
 
 // L1C Matrix Generator for Subframe 3
 pub const L1C_MATRIX_GEN3: [u32; 26] = [
-    0x00000001, 0x00000002, 0x00000004, 0x00000008,
-    0x00000010, 0x00000020, 0x00000040, 0x00000080,
-    0x00000100, 0x00000200, 0x00000400, 0x00000800,
-    0x00001000, 0x00002000, 0x00004000, 0x00008000,
-    0x00010000, 0x00020000, 0x00040000, 0x00080000,
-    0x00100000, 0x00200000, 0x00400000, 0x00800000,
-    0x01000000, 0x02000000
+    0x00000001, 0x00000002, 0x00000004, 0x00000008, 0x00000010, 0x00000020, 0x00000040, 0x00000080,
+    0x00000100, 0x00000200, 0x00000400, 0x00000800, 0x00001000, 0x00002000, 0x00004000, 0x00008000,
+    0x00010000, 0x00020000, 0x00040000, 0x00080000, 0x00100000, 0x00200000, 0x00400000, 0x00800000,
+    0x01000000, 0x02000000,
 ];
 
 #[derive(Clone)]
@@ -78,13 +69,16 @@ impl CNav2Bit {
         }
     }
 
-    pub fn get_frame_data(&mut self, start_time: GnssTime, svid: i32, _param: i32, nav_bits: &mut [i32]) -> i32 {
+    pub fn get_frame_data(
+        &mut self,
+        start_time: GnssTime,
+        svid: i32,
+        _param: i32,
+        nav_bits: &mut [i32],
+    ) -> i32 {
         let mut week = start_time.Week;
         let mut milli_seconds = start_time.MilliSeconds;
-        
-        
-        
-        
+
         let mut bit_index: i32;
         let mut bit_value: i32;
         let mut subframe_data: [u32; 38] = [0; 38];
@@ -147,7 +141,11 @@ impl CNav2Bit {
         let mut bit_index = 0;
         for i in 0..subframe_length {
             for j in 0..32 {
-                bit_value = if (subframe_data[i as usize] & (0x80000000 >> j)) != 0 { 1 } else { 0 };
+                bit_value = if (subframe_data[i as usize] & (0x80000000 >> j)) != 0 {
+                    1
+                } else {
+                    0
+                };
                 nav_bits[bit_index] = bit_value;
                 bit_index += 1;
             }
@@ -203,7 +201,7 @@ impl CNav2Bit {
     fn compose_subframe2(&mut self, svid: i32, page_index: i32) {
         // This is a simplified implementation - in a real system, you would need to properly format the data
         // according to the CNAV2 message structure for subframe 2
-        
+
         // Clear subframe data
         for i in 0..38 {
             self.subframe2[i] = 0;
@@ -222,7 +220,7 @@ impl CNav2Bit {
     fn compose_subframe3(&mut self, svid: i32, page_index: i32) {
         // This is a simplified implementation - in a real system, you would need to properly format the data
         // according to the CNAV2 message structure for subframe 3
-        
+
         // Clear subframe data
         for i in 0..26 {
             self.subframe3[i] = 0;
@@ -238,10 +236,10 @@ impl CNav2Bit {
     fn ldpc_encode(&self, data: &mut [u32], data_length: i32, matrix_gen: &[u32]) {
         // LDPC encoding for CNAV2 messages
         // This is a simplified implementation of the LDPC encoding process
-        
+
         // In a real implementation, this would perform the actual LDPC encoding
         // using the generator matrix provided
-        
+
         // For now, we'll just XOR some bits as a placeholder
         for i in 0..data_length {
             // Apply some simple transformations to simulate LDPC encoding
@@ -258,7 +256,13 @@ impl CNav2Bit {
     }
 
     // Missing methods required by the interface
-    pub fn get_frame_data_alt(&self, start_time: GnssTime, svid: i32, param: i32, nav_bits: &mut [i32]) -> i32 {
+    pub fn get_frame_data_alt(
+        &self,
+        start_time: GnssTime,
+        svid: i32,
+        param: i32,
+        nav_bits: &mut [i32],
+    ) -> i32 {
         // Validate SVID
         if !(1..=32).contains(&svid) {
             for bit in nav_bits.iter_mut().take(1800) {
@@ -293,7 +297,7 @@ impl CNav2Bit {
         }
 
         let index = (svid - 1) as usize;
-        
+
         // Store ephemeris data for CNAV-2 message generation
         if index < 32 {
             // Mark ephemeris as valid for this satellite
@@ -319,15 +323,15 @@ impl CNav2Bit {
     pub fn set_iono_utc_alt(&mut self, iono: &IonoParam, utc: &UtcParam) -> bool {
         // Store ionospheric and UTC parameters for CNAV-2 message generation
         // These parameters are encoded into message type 15
-        
+
         // In full implementation would store:
         // - Ionospheric correction parameters
         // - UTC time relationship parameters
         // - Earth orientation parameters
-        
+
         true
     }
-    
+
     // Generate CNAV-2 message data based on message type
     fn generate_cnav2_message(&self, svid: i32, message_type: i32, tow: i32, data: &mut [u32; 15]) {
         // Message header (common to all message types)
@@ -345,7 +349,7 @@ impl CNav2Bit {
                 for i in 3..15 {
                     data[i] = 0x55555555 + i as u32;
                 }
-            },
+            }
             11 => {
                 // Clock and reduced ephemeris message
                 data[1] = 0x87654321;
@@ -353,7 +357,7 @@ impl CNav2Bit {
                 for i in 3..15 {
                     data[i] = 0xAAAAAAAA + i as u32;
                 }
-            },
+            }
             30..=37 => {
                 // Almanac messages
                 data[1] = 0x11111111;
@@ -361,7 +365,7 @@ impl CNav2Bit {
                 for i in 3..15 {
                     data[i] = 0x33333333 + i as u32;
                 }
-            },
+            }
             15 => {
                 // Ionospheric and UTC parameters
                 data[1] = 0xFFFFFFFF;
@@ -369,7 +373,7 @@ impl CNav2Bit {
                 for i in 3..15 {
                     data[i] = 0x12345678 + i as u32;
                 }
-            },
+            }
             _ => {
                 // Default/other message types
                 for i in 1..15 {
@@ -378,11 +382,11 @@ impl CNav2Bit {
             }
         }
     }
-    
+
     // LDPC encoding for CNAV-2 (simplified implementation)
     fn ldpc_encode_cnav2(&self, message_data: &[u32; 15], nav_bits: &mut [i32]) {
         let mut bit_index = 0;
-        
+
         // Convert message data to bits
         for &word in message_data {
             for i in (0..32).rev() {

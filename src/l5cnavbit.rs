@@ -45,21 +45,26 @@ fn count1(n: u8) -> u8 {
 
 // Interleave matrix for L5 CNAV
 static INTERLEAVE_MATRIX: [usize; 300] = [
-      0,  50, 100, 150, 200, 250,   1,  51, 101, 151, 201, 251,   2,  52, 102, 152, 202, 252,   3,  53, 103, 153, 203, 253,   4,  54, 104, 154, 204, 254,
-      5,  55, 105, 155, 205, 255,   6,  56, 106, 156, 206, 256,   7,  57, 107, 157, 207, 257,   8,  58, 108, 158, 208, 258,   9,  59, 109, 159, 209, 259,
-     10,  60, 110, 160, 210, 260,  11,  61, 111, 161, 211, 261,  12,  62, 112, 162, 212, 262,  13,  63, 113, 163, 213, 263,  14,  64, 114, 164, 214, 264,
-     15,  65, 115, 165, 215, 265,  16,  66, 116, 166, 216, 266,  17,  67, 117, 167, 217, 267,  18,  68, 118, 168, 218, 268,  19,  69, 119, 169, 219, 269,
-     20,  70, 120, 170, 220, 270,  21,  71, 121, 171, 221, 271,  22,  72, 122, 172, 222, 272,  23,  73, 123, 173, 223, 273,  24,  74, 124, 174, 224, 274,
-     25,  75, 125, 175, 225, 275,  26,  76, 126, 176, 226, 276,  27,  77, 127, 177, 227, 277,  28,  78, 128, 178, 228, 278,  29,  79, 129, 179, 229, 279,
-     30,  80, 130, 180, 230, 280,  31,  81, 131, 181, 231, 281,  32,  82, 132, 182, 232, 282,  33,  83, 133, 183, 233, 283,  34,  84, 134, 184, 234, 284,
-     35,  85, 135, 185, 235, 285,  36,  86, 136, 186, 236, 286,  37,  87, 137, 187, 237, 287,  38,  88, 138, 188, 238, 288,  39,  89, 139, 189, 239, 289,
-     40,  90, 140, 190, 240, 290,  41,  91, 141, 191, 241, 291,  42,  92, 142, 192, 242, 292,  43,  93, 143, 193, 243, 293,  44,  94, 144, 194, 244, 294,
-     45,  95, 145, 195, 245, 295,  46,  96, 146, 196, 246, 296,  47,  97, 147, 197, 247, 297,  48,  98, 148, 198, 248, 298,  49,  99, 149, 199, 249, 299,
+    0, 50, 100, 150, 200, 250, 1, 51, 101, 151, 201, 251, 2, 52, 102, 152, 202, 252, 3, 53, 103,
+    153, 203, 253, 4, 54, 104, 154, 204, 254, 5, 55, 105, 155, 205, 255, 6, 56, 106, 156, 206, 256,
+    7, 57, 107, 157, 207, 257, 8, 58, 108, 158, 208, 258, 9, 59, 109, 159, 209, 259, 10, 60, 110,
+    160, 210, 260, 11, 61, 111, 161, 211, 261, 12, 62, 112, 162, 212, 262, 13, 63, 113, 163, 213,
+    263, 14, 64, 114, 164, 214, 264, 15, 65, 115, 165, 215, 265, 16, 66, 116, 166, 216, 266, 17,
+    67, 117, 167, 217, 267, 18, 68, 118, 168, 218, 268, 19, 69, 119, 169, 219, 269, 20, 70, 120,
+    170, 220, 270, 21, 71, 121, 171, 221, 271, 22, 72, 122, 172, 222, 272, 23, 73, 123, 173, 223,
+    273, 24, 74, 124, 174, 224, 274, 25, 75, 125, 175, 225, 275, 26, 76, 126, 176, 226, 276, 27,
+    77, 127, 177, 227, 277, 28, 78, 128, 178, 228, 278, 29, 79, 129, 179, 229, 279, 30, 80, 130,
+    180, 230, 280, 31, 81, 131, 181, 231, 281, 32, 82, 132, 182, 232, 282, 33, 83, 133, 183, 233,
+    283, 34, 84, 134, 184, 234, 284, 35, 85, 135, 185, 235, 285, 36, 86, 136, 186, 236, 286, 37,
+    87, 137, 187, 237, 287, 38, 88, 138, 188, 238, 288, 39, 89, 139, 189, 239, 289, 40, 90, 140,
+    190, 240, 290, 41, 91, 141, 191, 241, 291, 42, 92, 142, 192, 242, 292, 43, 93, 143, 193, 243,
+    293, 44, 94, 144, 194, 244, 294, 45, 95, 145, 195, 245, 295, 46, 96, 146, 196, 246, 296, 47,
+    97, 147, 197, 247, 297, 48, 98, 148, 198, 248, 298, 49, 99, 149, 199, 249, 299,
 ];
 
 // Import types from other modules
-use crate::{GpsEphemeris, GpsAlmanac, IonoParam, UtcParam};
 use crate::types::GnssTime;
+use crate::{GpsAlmanac, GpsEphemeris, IonoParam, UtcParam};
 // use crate::constants::*; // Unused import
 
 // Main L5CNavBit structure
@@ -107,7 +112,13 @@ impl L5CNavBit {
     // each super frame has 8 message 31 each has 4 reduced amlamanc
     // each super frame has 32 message 37, message index 3 contains SV01 to SV24, message index 2 contains SV25 to SV32
     // Param is used to distinguish from Dc in L2C and D5 in L5 (0 for L2C, 1 for L5)
-    pub fn get_frame_data(&mut self, start_time: GnssTime, svid: i32, _param: i32, nav_bits: &mut [i32; 600]) -> i32 {
+    pub fn get_frame_data(
+        &mut self,
+        start_time: GnssTime,
+        svid: i32,
+        _param: i32,
+        nav_bits: &mut [i32; 600],
+    ) -> i32 {
         if !(1..=32).contains(&svid) {
             nav_bits.fill(0);
             return -1;
@@ -134,21 +145,21 @@ impl L5CNavBit {
         let mut uncoded_bits = [0i32; 300];
         let mut crc_block = [0u32; 9]; // 262 bits
         let mut payload_data = [0u32; 8]; // 238 bits
-        
+
         self.get_message_payload(svid, message_type, &mut payload_data);
-        
+
         // Assemble 262-bit block for CRC
         crc_block[0] = ((message_type as u32) & 0x3F) << 26;
         crc_block[0] |= ((tow as u32) & 0x1FFFF) << 9;
         crc_block[0] |= (0u32 & 1) << 8;
-        
+
         // Copy payload
         for i in 0..238 {
             if (payload_data[i / 32] >> (31 - (i % 32))) & 1 != 0 {
                 crc_block[(i + 24) / 32] |= 1 << (31 - ((i + 24) % 32));
             }
         }
-        
+
         let crc_result = self.crc24q_encode(&crc_block, 262);
 
         // Assemble 300 bits
@@ -244,7 +255,7 @@ impl L5CNavBit {
         int_value = self.unscale_int(utc_param.A2, -68);
         self.utc_message[1] |= self.compose_bits(int_value, 17, 7);
         self.utc_message[1] |= self.compose_bits(utc_param.TLS.into(), 9, 8);
-        self.utc_message[1] |= self.compose_bits(utc_param.tot.into(), 1, 8); // UtcParam->tot has scale factor of 2^12, so leaving 8LSB as 0 for scale factor 2^4 
+        self.utc_message[1] |= self.compose_bits(utc_param.tot.into(), 1, 8); // UtcParam->tot has scale factor of 2^12, so leaving 8LSB as 0 for scale factor 2^4
         self.utc_message[2] = self.compose_bits(utc_param.WN.into(), 12, 13);
         self.utc_message[2] |= self.compose_bits((utc_param.WNLSF >> 1).into(), 0, 12);
         self.utc_message[3] = self.compose_bits(utc_param.WNLSF.into(), 31, 1);
@@ -283,7 +294,7 @@ impl L5CNavBit {
         // CRC-24Q polynomial: 0x1864CFB
         let polynomial = 0x1864CFB;
         let mut crc = 0u32;
-        
+
         for i in 0..bit_length {
             let bit = (data[i / 32] >> (31 - (i % 32))) & 1;
             let msb = (crc >> 23) & 1;
@@ -292,7 +303,7 @@ impl L5CNavBit {
                 crc ^= polynomial;
             }
         }
-        
+
         // Final 24 XOR operations
         for _ in 0..24 {
             let msb = (crc >> 23) & 1;
@@ -301,7 +312,7 @@ impl L5CNavBit {
                 crc ^= polynomial;
             }
         }
-        
+
         crc & 0xFFFFFF
     }
 
@@ -374,7 +385,7 @@ impl L5CNavBit {
         // This is composed into ClockData and DelayData arrays.
         // We compose the payload for MT30 (bits 39-135)
         let mut mt30_buf = [0u32; 4]; // 97 bits of data payload
-        // toc (11 bits, 39-49)
+                                      // toc (11 bits, 39-49)
         let temp_uval_ll = (ephemeris.toc as f64 / 300.0) as u64;
         mt30_buf[1] |= ((temp_uval_ll & 0x7FF) << 10) as u32;
         // af0 (26 bits, 50-75)
@@ -388,7 +399,7 @@ impl L5CNavBit {
         // af2 (10 bits, 96-105)
         let temp_val_ll = (ephemeris.af2 * 2.0_f64.powi(59)).round() as i64;
         mt30_buf[3] |= (((temp_val_ll as u64) & 0x3FF) << 18) as u32;
-        
+
         // The original code splits this into ClockData and DelayData.
         // Based on GetMessageData, ClockData holds the first 4 DWORDs of the message.
         clock_data[0] = mt30_buf[0];
@@ -419,8 +430,17 @@ impl L5CNavBit {
         reduced_alm_data: &mut u32,
         midi_alm_data: &mut [u32; 6],
     ) -> i32 {
-        midi_alm_data[0] = Self::compose_bits_static(if almanac.valid != 0 { almanac.svid.into() } else { 0 }, 26, 6);
-        midi_alm_data[0] |= Self::compose_bits_static(if almanac.valid != 0 { 0 } else { 7 }, 23, 3);
+        midi_alm_data[0] = Self::compose_bits_static(
+            if almanac.valid != 0 {
+                almanac.svid.into()
+            } else {
+                0
+            },
+            26,
+            6,
+        );
+        midi_alm_data[0] |=
+            Self::compose_bits_static(if almanac.valid != 0 { 0 } else { 7 }, 23, 3);
         let uint_value = Self::unscale_uint_static(almanac.ecc, -16);
         midi_alm_data[0] |= Self::compose_bits_static(uint_value as i32, 12, 11);
         let int_value = Self::unscale_int_static((almanac.i0 - NORMINAL_I0) / PI, -14);
@@ -443,7 +463,12 @@ impl L5CNavBit {
         let int_value = Self::unscale_int_static(almanac.af1, -37);
         midi_alm_data[3] |= Self::compose_bits_static(int_value, 0, 10);
 
-        *reduced_alm_data = ((if almanac.valid != 0 { almanac.svid.into() } else { 0 }) as u32) << 25;
+        *reduced_alm_data = ((if almanac.valid != 0 {
+            almanac.svid.into()
+        } else {
+            0
+        }) as u32)
+            << 25;
         let double_value = almanac.sqrtA * almanac.sqrtA - A_REF;
         let int_value = (double_value / 512.0 + 0.5) as i32;
         *reduced_alm_data |= Self::compose_bits_static(int_value, 17, 8);
@@ -460,28 +485,32 @@ impl L5CNavBit {
         data.fill(0);
 
         match message_type {
-            10 => { // Ephemeris 1
+            10 => {
+                // Ephemeris 1
                 data[..8].copy_from_slice(&self.eph_message[(svid - 1) as usize][0][..8]);
-            },
-            11 => { // Ephemeris 2
+            }
+            11 => {
+                // Ephemeris 2
                 data[..8].copy_from_slice(&self.eph_message[(svid - 1) as usize][1][..8]);
-            },
-            30 => { // Clock, TGD, Iono
+            }
+            30 => {
+                // Clock, TGD, Iono
                 data[..4].copy_from_slice(&self.clock_message[(svid - 1) as usize]);
                 data[3] |= self.delay_message[(svid - 1) as usize][0];
                 data[4] |= self.delay_message[(svid - 1) as usize][1];
                 data[4] |= self.iono_message[0];
                 data[5] |= self.iono_message[1];
                 data[6] |= self.iono_message[2];
-            },
-            37 => { // Almanac
+            }
+            37 => {
+                // Almanac
                 data[1] |= (self.toa as u32 >> 13) & 0xFF;
                 data[2] |= ((self.toa as u32) & 0x1F) << 27;
                 data[2] |= self.midi_alm[(svid - 1) as usize][0];
                 data[3] = self.midi_alm[(svid - 1) as usize][1];
                 data[4] = self.midi_alm[(svid - 1) as usize][2];
                 data[5] = self.midi_alm[(svid - 1) as usize][3];
-            },
+            }
             _ => {}
         }
     }

@@ -25,17 +25,17 @@
 //
 //----------------------------------------------------------------------
 
+use crate::gnsstime::utc_to_glonass_time;
+use crate::gps_time_to_utc;
 use crate::types::*;
 use crate::COMPOSE_BITS;
-use crate::{gps_time_to_utc};
-use crate::gnsstime::utc_to_glonass_time;
 // use crate::constants::*; // Unused import
 
 #[derive(Clone)]
 pub struct GNavBit {
-    pub StringEph: [[[u32; 3]; 4]; 24],     // 24 satellites, 4 strings, 3 words each
-    pub StringAlm: [[[u32; 3]; 11]; 24],    // 24 satellites, 11 almanac strings, 3 words each
-    pub last_bit: [i32; 24],                // Last bit for each satellite
+    pub StringEph: [[[u32; 3]; 4]; 24], // 24 satellites, 4 strings, 3 words each
+    pub StringAlm: [[[u32; 3]; 11]; 24], // 24 satellites, 11 almanac strings, 3 words each
+    pub last_bit: [i32; 24],            // Last bit for each satellite
 }
 
 impl GNavBit {
@@ -47,7 +47,13 @@ impl GNavBit {
         }
     }
 
-    pub fn get_frame_data(&self, start_time: GnssTime, svid: i32, _param: i32, nav_bits: &mut [i32]) -> i32 {
+    pub fn get_frame_data(
+        &self,
+        start_time: GnssTime,
+        svid: i32,
+        _param: i32,
+        nav_bits: &mut [i32],
+    ) -> i32 {
         let mut data = [0u32; 3];
         let mut data_bits = [0i32; 85];
 
@@ -119,11 +125,11 @@ impl GNavBit {
     pub fn set_ephemeris(&mut self, svid: i32, eph: &GpsEphemeris) -> i32 {
         // Convert GPS ephemeris to GLONASS ephemeris format
         let glo_eph = self.convert_gps_to_glonass_ephemeris(eph);
-        
+
         if !(1..=24).contains(&svid) || glo_eph.flag == 0 {
             return 0;
         }
-        
+
         Self::ComposeStringEph(&glo_eph, &mut self.StringEph[(svid - 1) as usize]);
         svid
     }
@@ -162,16 +168,12 @@ impl GNavBit {
                             let (left, right) = alm_slice.split_at_mut(string - 4);
                             (&mut left[string - 5], &mut right[0])
                         };
-                        Self::ComposeStringAlm(
-                            &glo_alm[target_sat],
-                            target_sat + 1,
-                            even,
-                            odd,
-                        );
+                        Self::ComposeStringAlm(&glo_alm[target_sat], target_sat + 1, even, odd);
                     }
 
                     // Add string number and satellite number
-                    self.StringAlm[sat][string - 5][0] |= ((string << 16) | ((target_sat + 1) << 8)) as u32;
+                    self.StringAlm[sat][string - 5][0] |=
+                        ((string << 16) | ((target_sat + 1) << 8)) as u32;
                     self.StringAlm[sat][string - 4][0] |= ((string + 1) << 16) as u32;
                 }
             }
@@ -180,7 +182,11 @@ impl GNavBit {
         0
     }
 
-    pub fn set_iono_utc(&mut self, _iono_param: Option<&IonoParam>, utc_param: Option<&UtcParam>) -> i32 {
+    pub fn set_iono_utc(
+        &mut self,
+        _iono_param: Option<&IonoParam>,
+        utc_param: Option<&UtcParam>,
+    ) -> i32 {
         let mut na = 0u32;
         let tau_c = 0i32;
         let mut n4 = 0u32;
@@ -234,15 +240,15 @@ impl GNavBit {
         string[0][0] |= COMPOSE_BITS!(ephemeris.Bn, 16, 1); // Bn (position 80)
         string[0][0] |= COMPOSE_BITS!(ephemeris.P & 0x3, 14, 2); // P1 (positions 77-78)
         string[0][0] |= COMPOSE_BITS!(ephemeris.tk / 30, 2, 12);
-        
+
         let uint_value = (ephemeris.x.abs() / 2.0_f64.powi(-11)).round() as u32;
         string[0][0] |= COMPOSE_BITS!(uint_value >> 25, 0, 2);
         string[0][1] = COMPOSE_BITS!(uint_value, 7, 25);
-        
+
         let int_value = (ephemeris.vx / 2.0_f64.powi(-20)).round() as i32;
         string[0][1] |= COMPOSE_BITS!(int_value >> 18, 0, 7);
         string[0][2] = COMPOSE_BITS!(int_value, 14, 18);
-        
+
         let int_value = (ephemeris.ax / 2.0_f64.powi(-30)).round() as i32;
         string[0][2] |= COMPOSE_BITS!(int_value, 9, 5);
 
@@ -251,45 +257,45 @@ impl GNavBit {
         string[1][0] |= COMPOSE_BITS!(ephemeris.Bn >> 1, 14, 3); // Bn (positions 78-80, upper 3 bits)
         string[1][0] |= COMPOSE_BITS!((ephemeris.P >> 2) & 0x1, 13, 1); // P2 (position 77)
         string[1][0] |= COMPOSE_BITS!(ephemeris.tb / 900, 7, 7);
-        
+
         let uint_value = (ephemeris.y.abs() / 2.0_f64.powi(-11)).round() as u32;
         string[1][0] |= COMPOSE_BITS!(uint_value >> 21, 0, 7);
         string[1][1] = COMPOSE_BITS!(uint_value, 12, 20);
-        
+
         let int_value = (ephemeris.vy / 2.0_f64.powi(-20)).round() as i32;
         string[1][1] |= COMPOSE_BITS!(int_value, 0, 12);
         string[1][2] = COMPOSE_BITS!(int_value >> 12, 20, 12);
-        
+
         let int_value = (ephemeris.ay / 2.0_f64.powi(-30)).round() as i32;
         string[1][2] |= COMPOSE_BITS!(int_value, 15, 5);
 
         // String 3
         string[2][0] = COMPOSE_BITS!(3, 17, 4); // m (positions 81-84)
         string[2][0] |= COMPOSE_BITS!((ephemeris.P >> 3) & 0x1, 16, 1); // P3 (position 80)
-        
+
         let int_value = (ephemeris.gamma / 2.0_f64.powi(-40)).round() as i32;
         string[2][0] |= COMPOSE_BITS!(int_value, 5, 11); // γn(tb) (positions 69-79)
         string[2][0] |= COMPOSE_BITS!(0, 4, 1); // ln (position 65) - currently 0
         string[2][0] |= COMPOSE_BITS!((ephemeris.P >> 4) & 0x3, 2, 2); // P (positions 66-67)
-        
+
         let uint_value = (ephemeris.z.abs() / 2.0_f64.powi(-11)).round() as u32;
         string[2][0] |= COMPOSE_BITS!(uint_value >> 23, 0, 5);
         string[2][1] = COMPOSE_BITS!(uint_value, 10, 22);
-        
+
         let int_value = (ephemeris.vz / 2.0_f64.powi(-20)).round() as i32;
         string[2][1] |= COMPOSE_BITS!(int_value, 0, 10);
         string[2][2] = COMPOSE_BITS!(int_value >> 10, 22, 14);
-        
+
         let int_value = (ephemeris.az / 2.0_f64.powi(-30)).round() as i32;
         string[2][2] |= COMPOSE_BITS!(int_value, 17, 5);
 
         // String 4
         string[3][0] = COMPOSE_BITS!(4, 17, 4);
-        
+
         let int_value = (ephemeris.tn / 2.0_f64.powi(-30)).round() as i32;
         string[3][0] |= COMPOSE_BITS!(int_value >> 5, 0, 17);
         string[3][1] = COMPOSE_BITS!(int_value, 27, 5);
-        
+
         let int_value = (ephemeris.dtn / 2.0_f64.powi(-30)).round() as i32;
         string[3][1] |= COMPOSE_BITS!(int_value, 22, 5);
         string[3][1] |= COMPOSE_BITS!(ephemeris.En, 17, 5);
@@ -302,7 +308,12 @@ impl GNavBit {
         0
     }
 
-    fn ComposeStringAlm(almanac: &GlonassAlmanac, _slot: usize, stream_even: &mut [u32; 3], stream_odd: &mut [u32; 3]) -> i32 {
+    fn ComposeStringAlm(
+        almanac: &GlonassAlmanac,
+        _slot: usize,
+        stream_even: &mut [u32; 3],
+        stream_odd: &mut [u32; 3],
+    ) -> i32 {
         if almanac.flag == 0 {
             stream_even[0] = 0;
             stream_even[1] = 0;
@@ -316,23 +327,23 @@ impl GNavBit {
         stream_even[0] = COMPOSE_BITS!(if almanac.flag != 0 { 0 } else { 1 }, 15, 1);
         stream_even[0] |= COMPOSE_BITS!(1, 13, 2);
         stream_even[0] |= COMPOSE_BITS!(almanac.freq & 0x1F, 8, 5);
-        
+
         let mut uint_value = Self::UnscaleInt(almanac.clock_error.abs(), -18) as u32;
         uint_value |= if almanac.clock_error < 0.0 { 1 << 9 } else { 0 };
         stream_even[0] |= COMPOSE_BITS!(uint_value >> 2, 0, 8);
 
         stream_even[1] = COMPOSE_BITS!(uint_value, 30, 2);
-        
+
         let mut uint_value = Self::UnscaleUint(almanac.lambda.abs(), -20);
         uint_value |= if almanac.lambda < 0.0 { 1 << 20 } else { 0 };
         stream_even[1] |= COMPOSE_BITS!(uint_value, 9, 21);
-        
+
         let mut uint_value = Self::UnscaleUint(almanac.di.abs(), -20);
         uint_value |= if almanac.di < 0.0 { 1 << 17 } else { 0 };
         stream_even[1] |= COMPOSE_BITS!(uint_value >> 9, 0, 9);
 
         stream_even[2] = COMPOSE_BITS!(uint_value, 23, 9);
-        
+
         let uint_value = Self::UnscaleUint(almanac.ecc, -20);
         stream_even[2] |= COMPOSE_BITS!(uint_value, 8, 15);
 
@@ -342,13 +353,13 @@ impl GNavBit {
 
         let uint_value = Self::UnscaleUint(almanac.t, -5);
         stream_odd[1] = COMPOSE_BITS!(uint_value, 11, 21);
-        
+
         let mut uint_value = Self::UnscaleUint(almanac.dt.abs(), -9);
         uint_value |= if almanac.dt < 0.0 { 1 << 21 } else { 0 };
         stream_odd[1] |= COMPOSE_BITS!(uint_value >> 11, 0, 11);
 
         stream_odd[2] = COMPOSE_BITS!(uint_value, 21, 11);
-        
+
         let mut uint_value = Self::UnscaleUint(almanac.dt_dot.abs(), -14);
         uint_value |= if almanac.dt_dot < 0.0 { 1 << 6 } else { 0 };
         stream_odd[2] |= COMPOSE_BITS!(uint_value, 14, 7);
@@ -372,17 +383,32 @@ impl GNavBit {
 
         // Calculate parity bits p1-p7 based on ICD
         for i in 0..85 {
-            if ((i + 1) % 2) != 0 { parity[0] ^= data_bits[i] as u8; } // p1
-            if (i.div_ceil(2) % 2) != 0 { parity[1] ^= data_bits[i] as u8; } // p2
-            if (((i + 1) / 4) % 2) != 0 { parity[2] ^= data_bits[i] as u8; } // p3
-            if (((i + 1) / 8) % 2) != 0 { parity[3] ^= data_bits[i] as u8; } // p4
-            if (((i + 1) / 16) % 2) != 0 { parity[4] ^= data_bits[i] as u8; } // p5
-            if (((i + 1) / 32) % 2) != 0 { parity[5] ^= data_bits[i] as u8; } // p6
-            if (((i + 1) / 64) % 2) != 0 { parity[6] ^= data_bits[i] as u8; } // p7
+            if ((i + 1) % 2) != 0 {
+                parity[0] ^= data_bits[i] as u8;
+            } // p1
+            if (i.div_ceil(2) % 2) != 0 {
+                parity[1] ^= data_bits[i] as u8;
+            } // p2
+            if (((i + 1) / 4) % 2) != 0 {
+                parity[2] ^= data_bits[i] as u8;
+            } // p3
+            if (((i + 1) / 8) % 2) != 0 {
+                parity[3] ^= data_bits[i] as u8;
+            } // p4
+            if (((i + 1) / 16) % 2) != 0 {
+                parity[4] ^= data_bits[i] as u8;
+            } // p5
+            if (((i + 1) / 32) % 2) != 0 {
+                parity[5] ^= data_bits[i] as u8;
+            } // p6
+            if (((i + 1) / 64) % 2) != 0 {
+                parity[6] ^= data_bits[i] as u8;
+            } // p7
         }
 
         // p8 is the overall parity of data bits + p1-p7
-        parity[7] = parity[0] ^ parity[1] ^ parity[2] ^ parity[3] ^ parity[4] ^ parity[5] ^ parity[6];
+        parity[7] =
+            parity[0] ^ parity[1] ^ parity[2] ^ parity[3] ^ parity[4] ^ parity[5] ^ parity[6];
         for i in 0..85 {
             parity[7] ^= data_bits[i] as u8;
         }

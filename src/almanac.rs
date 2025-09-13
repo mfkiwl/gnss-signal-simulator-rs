@@ -16,50 +16,52 @@
 //! - Расчет видимости спутников
 //! - Валидация данных альманахов
 
+use std::f64::consts::PI;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
-use std::f64::consts::PI;
 
 use crate::constants::*;
-use crate::types::*;
-use crate::gnsstime::{utc_to_glonass_time, utc_to_galileo_time};
 use crate::coordinate::{glonass_sat_pos_speed_eph, gps_sat_pos_speed_eph};
+use crate::gnsstime::{utc_to_galileo_time, utc_to_glonass_time};
+use crate::types::*;
 
 /// Определяет тип альманаха по первой строке файла
-/// 
+///
 /// Анализирует формат данных для различных GNSS систем:
 /// - GPS: строки начинаются с '*' (стандартный формат SEM)
 /// - Galileo: строки начинаются с '<' (XML формат)  
 /// - ГЛОНАСС: определяется по формату даты XX.XX.XXXX
-/// 
+///
 /// # Параметры
 /// - `file`: Открытый файл для чтения
-/// 
+///
 /// # Возвращает
 /// Тип альманаха или AlmanacUnknown при ошибке определения
 pub fn check_almanac_type(file: &mut File) -> AlmanacType {
     let mut reader = BufReader::new(file);
     let mut line = String::new();
-    
+
     if reader.read_line(&mut line).is_err() {
         return AlmanacType::AlmanacUnknown;
     }
 
     if line.starts_with('*') {
-        AlmanacType::AlmanacGps  // Формат SEM для GPS
+        AlmanacType::AlmanacGps // Формат SEM для GPS
     } else if line.starts_with('<') {
-        AlmanacType::AlmanacGalileo  // XML формат для Galileo
+        AlmanacType::AlmanacGalileo // XML формат для Galileo
     } else {
         // Проверяем формат ГЛОНАСС по второму параметру (дате)
         let parts: Vec<&str> = line.split_whitespace().collect();
         if parts.len() < 2 {
             return AlmanacType::AlmanacUnknown;
         }
-        
+
         let second_param = parts[1];
         // ГЛОНАСС дата имеет формат DD.MM.YYYY
-        if second_param.len() >= 6 && second_param.chars().nth(2) == Some('.') && 
-           second_param.chars().nth(5) == Some('.') {
+        if second_param.len() >= 6
+            && second_param.chars().nth(2) == Some('.')
+            && second_param.chars().nth(5) == Some('.')
+        {
             AlmanacType::AlmanacGlonass
         } else {
             AlmanacType::AlmanacUnknown
@@ -68,15 +70,15 @@ pub fn check_almanac_type(file: &mut File) -> AlmanacType {
 }
 
 /// Читает GPS альманах из файла формата SEM
-/// 
+///
 /// Парсит файл альманаха GPS в стандартном формате SEM (Satellite Ephemeris Message).
 /// Каждая запись спутника начинается со строки, содержащей '*'.
 /// Альманах содержит упрощенные орбитальные параметры для долгосрочного планирования.
-/// 
+///
 /// # Параметры  
 /// - `file`: Файл альманаха для чтения
 /// - `almanac`: Массив для хранения альманахов (32 спутника GPS)
-/// 
+///
 /// # Возвращает
 /// Количество успешно прочитанных альманахов спутников
 pub fn read_almanac_gps(mut file: File, almanac: &mut [GpsAlmanac; 32]) -> i32 {
@@ -88,7 +90,7 @@ pub fn read_almanac_gps(mut file: File, almanac: &mut [GpsAlmanac; 32]) -> i32 {
         if bytes_read == 0 {
             break;
         }
-        
+
         if line.starts_with('*') {
             if let Some(svid) = get_almanac_gps(&mut reader) {
                 if svid.svid > 0 && svid.svid <= 32 {
@@ -111,80 +113,132 @@ pub fn get_almanac_gps(reader: &mut BufReader<&mut File>) -> Option<GpsAlmanac> 
     let mut line = String::new();
 
     // Read SVID
-    if reader.read_line(&mut line).is_err() { return None; }
-    if line.len() < 28 { return None; }
+    if reader.read_line(&mut line).is_err() {
+        return None;
+    }
+    if line.len() < 28 {
+        return None;
+    }
     alm.svid = line[27..].trim().parse().ok()?;
     line.clear();
 
     // Read Health
-    if reader.read_line(&mut line).is_err() { return None; }
-    if line.len() < 28 { return None; }
+    if reader.read_line(&mut line).is_err() {
+        return None;
+    }
+    if line.len() < 28 {
+        return None;
+    }
     alm.health = line[27..].trim().parse().ok()?;
     line.clear();
 
     // Read Eccentricity
-    if reader.read_line(&mut line).is_err() { return None; }
-    if line.len() < 28 { return None; }
+    if reader.read_line(&mut line).is_err() {
+        return None;
+    }
+    if line.len() < 28 {
+        return None;
+    }
     alm.ecc = line[27..].trim().parse().ok()?;
     line.clear();
 
     // Read TOA
-    if reader.read_line(&mut line).is_err() { return None; }
-    if line.len() < 28 { return None; }
+    if reader.read_line(&mut line).is_err() {
+        return None;
+    }
+    if line.len() < 28 {
+        return None;
+    }
     alm.toa = line[27..].trim().parse().ok()?;
     line.clear();
 
     // Read Inclination
-    if reader.read_line(&mut line).is_err() { return None; }
-    if line.len() < 28 { return None; }
+    if reader.read_line(&mut line).is_err() {
+        return None;
+    }
+    if line.len() < 28 {
+        return None;
+    }
     alm.i0 = line[27..].trim().parse().ok()?;
     line.clear();
 
     // Read Omega dot
-    if reader.read_line(&mut line).is_err() { return None; }
-    if line.len() < 28 { return None; }
+    if reader.read_line(&mut line).is_err() {
+        return None;
+    }
+    if line.len() < 28 {
+        return None;
+    }
     alm.omega_dot = line[27..].trim().parse().ok()?;
     line.clear();
 
     // Read sqrt(A)
-    if reader.read_line(&mut line).is_err() { return None; }
-    if line.len() < 28 { return None; }
+    if reader.read_line(&mut line).is_err() {
+        return None;
+    }
+    if line.len() < 28 {
+        return None;
+    }
     alm.sqrtA = line[27..].trim().parse().ok()?;
     line.clear();
 
     // Read Omega0
-    if reader.read_line(&mut line).is_err() { return None; }
-    if line.len() < 28 { return None; }
+    if reader.read_line(&mut line).is_err() {
+        return None;
+    }
+    if line.len() < 28 {
+        return None;
+    }
     alm.omega0 = line[27..].trim().parse().ok()?;
     line.clear();
 
     // Read w
-    if reader.read_line(&mut line).is_err() { return None; }
-    if line.len() < 28 { return None; }
+    if reader.read_line(&mut line).is_err() {
+        return None;
+    }
+    if line.len() < 28 {
+        return None;
+    }
     alm.w = line[27..].trim().parse().ok()?;
     line.clear();
 
     // Read M0
-    if reader.read_line(&mut line).is_err() { return None; }
-    if line.len() < 28 { return None; }
+    if reader.read_line(&mut line).is_err() {
+        return None;
+    }
+    if line.len() < 28 {
+        return None;
+    }
     alm.M0 = line[27..].trim().parse().ok()?;
     line.clear();
 
     // Read af0
-    if reader.read_line(&mut line).is_err() { return None; }
-    if line.len() < 28 { return None; }
+    if reader.read_line(&mut line).is_err() {
+        return None;
+    }
+    if line.len() < 28 {
+        return None;
+    }
     alm.af0 = line[27..].trim().parse().ok()?;
     line.clear();
 
     // Read af1
-    if reader.read_line(&mut line).is_err() { return None; }
-    if line.len() < 28 { return None; }
+    if reader.read_line(&mut line).is_err() {
+        return None;
+    }
+    if line.len() < 28 {
+        return None;
+    }
     alm.af1 = line[27..].trim().parse().ok()?;
     line.clear();
 
     // Read week
-    if reader.read_line(&mut line).is_err() { return None; }
-    if line.len() < 28 { return None; }
+    if reader.read_line(&mut line).is_err() {
+        return None;
+    }
+    if line.len() < 28 {
+        return None;
+    }
     alm.week = line[27..].trim().parse().ok()?;
 
     alm.health = 0;
@@ -226,7 +280,7 @@ pub fn get_almanac_bds(reader: &mut BufReader<&mut File>) -> Option<GpsAlmanac> 
     }
 
     let mut alm = GpsAlmanac::default();
-    
+
     alm.svid = parts[0].parse().ok()?;
     alm.ecc = parts[1].parse().ok()?;
     alm.toa = parts[2].parse().ok()?;
@@ -246,8 +300,14 @@ pub fn get_almanac_bds(reader: &mut BufReader<&mut File>) -> Option<GpsAlmanac> 
 
     alm.health = 0;
     alm.flag = if alm.sqrtA > 6000.0 {
-        if alm.i0 > 0.5 { 2 } else { 1 }
-    } else { 3 };
+        if alm.i0 > 0.5 {
+            2
+        } else {
+            1
+        }
+    } else {
+        3
+    };
     alm.valid = 1;
 
     Some(alm)
@@ -262,12 +322,14 @@ pub fn read_almanac_galileo(mut file: File, almanac: &mut [GpsAlmanac; 36]) -> i
 
     // Find WN from header
     while let Ok(bytes_read) = reader.read_line(&mut line) {
-        if bytes_read == 0 { break; }
-        
+        if bytes_read == 0 {
+            break;
+        }
+
         if line.contains("</header>") {
             break;
         }
-        
+
         if let Some(start) = line.find("<issueDate>") {
             let date_str = &line[start + 11..];
             let parts: Vec<&str> = date_str.split('-').collect();
@@ -275,7 +337,7 @@ pub fn read_almanac_galileo(mut file: File, almanac: &mut [GpsAlmanac; 36]) -> i
                 if let (Ok(year), Ok(month), Ok(day)) = (
                     parts[0].parse::<i32>(),
                     parts[1].parse::<i32>(),
-                    parts[2].parse::<i32>()
+                    parts[2].parse::<i32>(),
                 ) {
                     utc_time.Year = year;
                     utc_time.Month = month;
@@ -295,8 +357,10 @@ pub fn read_almanac_galileo(mut file: File, almanac: &mut [GpsAlmanac; 36]) -> i
     }
 
     while let Ok(bytes_read) = reader.read_line(&mut line) {
-        if bytes_read == 0 { break; }
-        
+        if bytes_read == 0 {
+            break;
+        }
+
         if line.contains("<svAlmanac>") {
             if let Some(alm) = get_almanac_galileo(&mut reader, time.Week) {
                 if alm.svid > 0 && alm.svid <= 36 {
@@ -321,12 +385,14 @@ pub fn get_almanac_galileo(reader: &mut BufReader<&mut File>, ref_week: i32) -> 
     let mut line = String::new();
 
     while let Ok(bytes_read) = reader.read_line(&mut line) {
-        if bytes_read == 0 { break; }
-        
+        if bytes_read == 0 {
+            break;
+        }
+
         if line.contains("</svAlmanac>") {
             break;
         }
-        
+
         if let Some(start) = line.find("<SVID>") {
             let value_str = &line[start + 6..];
             if let Some(end) = value_str.find('<') {
@@ -393,7 +459,7 @@ pub fn get_almanac_galileo(reader: &mut BufReader<&mut File>, ref_week: i32) -> 
                 data = value_str[..end].trim().parse().unwrap_or(0);
             }
         }
-        
+
         line.clear();
     }
 
@@ -424,8 +490,10 @@ pub fn read_almanac_glonass(mut file: File, almanac: &mut [GlonassAlmanac; 24]) 
         if slot > 0 && slot <= 24 {
             alm_count += 1;
             let idx = (slot - 1) as usize;
-            if (almanac[idx].flag & 1) == 0 || 
-               (alm.leap_year * 1461 + alm.day) > (almanac[idx].leap_year * 1461 + almanac[idx].day) {
+            if (almanac[idx].flag & 1) == 0
+                || (alm.leap_year * 1461 + alm.day)
+                    > (almanac[idx].leap_year * 1461 + almanac[idx].day)
+            {
                 almanac[idx] = alm;
             }
         }
@@ -515,17 +583,27 @@ pub fn get_almanac_from_ephemeris(eph: &GpsEphemeris, week: i32, toa: i32) -> Gp
     } else {
         convert_almanac_from_ephemeris(&mut alm, eph, week, toa);
     }
-    
+
     alm.flag = if eph.sqrtA > 6000.0 {
-        if eph.i0 > 0.5 { 2 } else { 1 }
-    } else { 3 };
+        if eph.i0 > 0.5 {
+            2
+        } else {
+            1
+        }
+    } else {
+        3
+    };
 
     alm
 }
 
 const INCLINATION_FACTOR: f64 = 0.946_515_487_891_825_8;
 
-pub fn get_almanac_from_ephemeris_glonass(eph: &GlonassEphemeris, day: i32, leap_year: i32) -> GlonassAlmanac {
+pub fn get_almanac_from_ephemeris_glonass(
+    eph: &GlonassEphemeris,
+    day: i32,
+    leap_year: i32,
+) -> GlonassAlmanac {
     let mut alm = GlonassAlmanac::default();
     let mut pos_vel = KinematicInfo::default();
     let mut t = eph.tb as f64 - eph.z / eph.vz;
@@ -596,7 +674,12 @@ pub fn get_almanac_from_ephemeris_glonass(eph: &GlonassEphemeris, day: i32, leap
     alm
 }
 
-pub fn convert_almanac_from_ephemeris(alm: &mut GpsAlmanac, eph: &GpsEphemeris, week: i32, toa: i32) -> bool {
+pub fn convert_almanac_from_ephemeris(
+    alm: &mut GpsAlmanac,
+    eph: &GpsEphemeris,
+    week: i32,
+    toa: i32,
+) -> bool {
     alm.toa = toa;
     alm.week = week;
     let dt = (week - eph.week) * 604800 + (toa - eph.toe);
@@ -617,12 +700,23 @@ pub fn convert_almanac_from_ephemeris(alm: &mut GpsAlmanac, eph: &GpsEphemeris, 
     true
 }
 
-pub fn convert_almanac_from_ephemeris_geo(alm: &mut GpsAlmanac, eph: &GpsEphemeris, week: i32, toa: i32) -> bool {
+pub fn convert_almanac_from_ephemeris_geo(
+    alm: &mut GpsAlmanac,
+    eph: &GpsEphemeris,
+    week: i32,
+    toa: i32,
+) -> bool {
     let mut pos_vel = KinematicInfo::default();
 
     // Calculate satellite position and velocity at toe
     let mut eph_mut = *eph;
-    gps_sat_pos_speed_eph(GnssSystem::BdsSystem, eph.toe as f64, &mut eph_mut, &mut pos_vel, None);
+    gps_sat_pos_speed_eph(
+        GnssSystem::BdsSystem,
+        eph.toe as f64,
+        &mut eph_mut,
+        &mut pos_vel,
+        None,
+    );
 
     // Velocity compensation from ECEF to inertial coordinate
     pos_vel.vx -= pos_vel.y * CGCS2000_OMEGDOTE;
@@ -665,7 +759,7 @@ pub fn convert_almanac_from_ephemeris_geo(alm: &mut GpsAlmanac, eph: &GpsEphemer
     alm.week = week;
     alm.omega_dot = eph.omega_dot;
     alm.af1 = eph.af1;
-    
+
     let dt = (week - eph.week) * 604800 + (toa - eph.toe);
     alm.M0 = norm_angle(alm.M0 + eph.n * dt as f64);
     alm.omega0 = norm_angle(alm.omega0 + eph.omega_dot * dt as f64);
@@ -674,7 +768,14 @@ pub fn convert_almanac_from_ephemeris_geo(alm: &mut GpsAlmanac, eph: &GpsEphemer
     true
 }
 
-pub fn read_almanac(mut file: File, _system: GnssSystem, alm_gps: &mut [GpsAlmanac; 32], alm_bds: &mut [GpsAlmanac; 63], alm_gal: &mut [GpsAlmanac; 36], alm_glo: &mut [GlonassAlmanac; 24]) -> i32 {
+pub fn read_almanac(
+    mut file: File,
+    _system: GnssSystem,
+    alm_gps: &mut [GpsAlmanac; 32],
+    alm_bds: &mut [GpsAlmanac; 63],
+    alm_gal: &mut [GpsAlmanac; 36],
+    alm_glo: &mut [GlonassAlmanac; 24],
+) -> i32 {
     let alm_type = check_almanac_type(&mut file);
     match alm_type {
         AlmanacType::AlmanacGps => read_almanac_gps(file, alm_gps),
@@ -684,4 +785,3 @@ pub fn read_almanac(mut file: File, _system: GnssSystem, alm_gps: &mut [GpsAlman
         _ => 0,
     }
 }
-

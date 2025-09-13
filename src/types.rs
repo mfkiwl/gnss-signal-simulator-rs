@@ -37,8 +37,7 @@ pub enum AlmanacType {
 
 /// Перечисление поддерживаемых ГНСС систем
 /// Каждая система использует свои частоты, форматы сообщений и временные шкалы
-#[derive(Debug, Clone, Copy, PartialEq)]
-#[derive(Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub enum GnssSystem {
     /// GPS - Global Positioning System (США, L1/L2/L5 частоты, GPS время)
     #[default]
@@ -56,7 +55,6 @@ pub enum GnssSystem {
     /// NavIC - Navigation with Indian Constellation (IRNSS, Индия)
     NavICSystem,
 }
-
 
 // Signal index constants moved to constants.rs
 
@@ -148,28 +146,28 @@ pub struct GnssTime {
 
 impl GnssTime {
     /// Добавляет миллисекунды к времени ГНСС с автоматическим переносом недель
-    /// 
+    ///
     /// # Аргументы
     /// * `ms` - Количество миллисекунд для добавления (может быть отрицательным)
-    /// 
+    ///
     /// # Возвращает
     /// Новое время ГНСС с корректно обработанными переносами недель
     pub fn add_milliseconds(&self, ms: f64) -> GnssTime {
         let mut new_ms = self.MilliSeconds as f64 + ms;
         let mut new_week = self.Week;
-        
+
         // Обработка переполнения недели (604800000 мс = 1 неделя = 7*24*60*60*1000)
         while new_ms >= 604800000.0 {
             new_ms -= 604800000.0;
             new_week += 1;
         }
-        
+
         // Обработка отрицательных значений (переход к предыдущей неделе)
         while new_ms < 0.0 {
             new_ms += 604800000.0;
             new_week -= 1;
         }
-        
+
         GnssTime {
             Week: new_week,
             MilliSeconds: new_ms as i32,
@@ -316,68 +314,68 @@ pub struct GpsEphemeris {
 #[derive(Debug, Clone, Copy, Default)]
 pub struct BeiDouEphemeris {
     // управляющие поля
-    pub ura: i16,       // User Range Accuracy - точность пользовательского диапазона
-    pub iodc: u16,      // Issue of Data Clock - проблема данных часов
-    pub iode: u8,       // Issue of Data Ephemeris - проблема данных эфемерид 
-    pub svid: u8,       // Satellite Vehicle ID - идентификатор спутника (1-63)
-    pub source: u8,     // источник данных (D1/D2, B-CNAV1, B-CNAV2, B-CNAV3)
-    pub valid: u8,      // флаг валидности
-    pub flag: u16,      // дополнительные флаги
-    pub health: u16,    // статус здоровья спутника
-    pub aode: u8,       // Age of Data Ephemeris - возраст данных эфемерид (специфично для BeiDou)
-    pub aodc: u8,       // Age of Data Clock - возраст данных часов (специфично для BeiDou)
-    
+    pub ura: i16,    // User Range Accuracy - точность пользовательского диапазона
+    pub iodc: u16,   // Issue of Data Clock - проблема данных часов
+    pub iode: u8,    // Issue of Data Ephemeris - проблема данных эфемерид
+    pub svid: u8,    // Satellite Vehicle ID - идентификатор спутника (1-63)
+    pub source: u8,  // источник данных (D1/D2, B-CNAV1, B-CNAV2, B-CNAV3)
+    pub valid: u8,   // флаг валидности
+    pub flag: u16,   // дополнительные флаги
+    pub health: u16, // статус здоровья спутника
+    pub aode: u8,    // Age of Data Ephemeris - возраст данных эфемерид (специфично для BeiDou)
+    pub aodc: u8,    // Age of Data Clock - возраст данных часов (специфично для BeiDou)
+
     // временные параметры
-    pub toe: i32,       // Time of Ephemeris (секунды BDT недели)
-    pub toc: i32,       // Time of Clock (секунды BDT недели) 
-    pub top: i32,       // Time of Prediction (не используется в BeiDou)
-    pub week: i32,      // BeiDou неделя (отличается от GPS на 1356 недель)
-    pub weekh: i32,     // Week number в header (старшие биты)
-    
-    // орбитальные параметры Кеплера 
-    pub M0: f64,        // Mean Anomaly at Reference Time (рад)
-    pub delta_n: f64,   // Mean Motion Difference from Computed Value (рад/сек)
+    pub toe: i32,   // Time of Ephemeris (секунды BDT недели)
+    pub toc: i32,   // Time of Clock (секунды BDT недели)
+    pub top: i32,   // Time of Prediction (не используется в BeiDou)
+    pub week: i32,  // BeiDou неделя (отличается от GPS на 1356 недель)
+    pub weekh: i32, // Week number в header (старшие биты)
+
+    // орбитальные параметры Кеплера
+    pub M0: f64,          // Mean Anomaly at Reference Time (рад)
+    pub delta_n: f64,     // Mean Motion Difference from Computed Value (рад/сек)
     pub delta_n_dot: f64, // Rate of Mean Motion Difference (только для B-CNAV2/3)
-    pub ecc: f64,       // Eccentricity (безразмерная)
-    pub sqrtA: f64,     // Square Root of Semi-Major Axis (м^1/2)
-    pub axis_dot: f64,  // Rate of Semi-Major Axis (только для B-CNAV2/3)
-    pub omega0: f64,    // Longitude of Ascending Node at Weekly Epoch (рад)
-    pub i0: f64,        // Inclination Angle at Reference Time (рад)
-    pub w: f64,         // Argument of Perigee (рад)
-    pub omega_dot: f64, // Rate of Right Ascension (рад/сек)
-    pub idot: f64,      // Rate of Inclination Angle (рад/сек)
-    
+    pub ecc: f64,         // Eccentricity (безразмерная)
+    pub sqrtA: f64,       // Square Root of Semi-Major Axis (м^1/2)
+    pub axis_dot: f64,    // Rate of Semi-Major Axis (только для B-CNAV2/3)
+    pub omega0: f64,      // Longitude of Ascending Node at Weekly Epoch (рад)
+    pub i0: f64,          // Inclination Angle at Reference Time (рад)
+    pub w: f64,           // Argument of Perigee (рад)
+    pub omega_dot: f64,   // Rate of Right Ascension (рад/сек)
+    pub idot: f64,        // Rate of Inclination Angle (рад/сек)
+
     // гармонические коррекции орбиты
-    pub cuc: f64,       // Cosine Harmonic Correction Term to Argument of Latitude (рад)
-    pub cus: f64,       // Sine Harmonic Correction Term to Argument of Latitude (рад)
-    pub crc: f64,       // Cosine Harmonic Correction Term to Orbital Radius (м)
-    pub crs: f64,       // Sine Harmonic Correction Term to Orbital Radius (м)
-    pub cic: f64,       // Cosine Harmonic Correction Term to Inclination (рад)
-    pub cis: f64,       // Sine Harmonic Correction Term to Inclination (рад)
-    
+    pub cuc: f64, // Cosine Harmonic Correction Term to Argument of Latitude (рад)
+    pub cus: f64, // Sine Harmonic Correction Term to Argument of Latitude (рад)
+    pub crc: f64, // Cosine Harmonic Correction Term to Orbital Radius (м)
+    pub crs: f64, // Sine Harmonic Correction Term to Orbital Radius (м)
+    pub cic: f64, // Cosine Harmonic Correction Term to Inclination (рад)
+    pub cis: f64, // Sine Harmonic Correction Term to Inclination (рад)
+
     // параметры часов и задержки
-    pub af0: f64,       // SV Clock Bias Coefficient (сек)
-    pub af1: f64,       // SV Clock Drift Coefficient (сек/сек)
-    pub af2: f64,       // SV Clock Drift Rate Coefficient (сек/сек^2)
-    pub tgd1: f64,      // Equipment Group Delay для B1I сигнала (сек)
-    pub tgd2: f64,      // Equipment Group Delay для B2I сигнала (сек)
-    pub tgd_b1cp: f64,  // Differential Code Bias для B1C/P (только для B-CNAV1)
-    pub tgd_b2ap: f64,  // Differential Code Bias для B2a/P (только для B-CNAV2)
-    pub tgd_b2bp: f64,  // Differential Code Bias для B2b/P (только для B-CNAV3)
-    
+    pub af0: f64,      // SV Clock Bias Coefficient (сек)
+    pub af1: f64,      // SV Clock Drift Coefficient (сек/сек)
+    pub af2: f64,      // SV Clock Drift Rate Coefficient (сек/сек^2)
+    pub tgd1: f64,     // Equipment Group Delay для B1I сигнала (сек)
+    pub tgd2: f64,     // Equipment Group Delay для B2I сигнала (сек)
+    pub tgd_b1cp: f64, // Differential Code Bias для B1C/P (только для B-CNAV1)
+    pub tgd_b2ap: f64, // Differential Code Bias для B2a/P (только для B-CNAV2)
+    pub tgd_b2bp: f64, // Differential Code Bias для B2b/P (только для B-CNAV3)
+
     // BeiDou специфические параметры
-    pub sat_type: u8,   // Тип спутника: GEO(0), IGSO(1), MEO(2)
-    pub urai: u8,       // User Range Accuracy Index (0-15)
+    pub sat_type: u8,       // Тип спутника: GEO(0), IGSO(1), MEO(2)
+    pub urai: u8,           // User Range Accuracy Index (0-15)
     pub integrity_flag: u8, // Integrity flag (специфично для BeiDou)
-    
+
     // производные переменные (вычисляемые)
-    pub axis: f64,      // большая полуось (м)
-    pub n: f64,         // скорректированное среднее движение (рад/сек)
-    pub root_ecc: f64,  // sqrt(1 - ecc^2)
-    pub omega_t: f64,   // долгота восходящего узла в момент t
+    pub axis: f64,        // большая полуось (м)
+    pub n: f64,           // скорректированное среднее движение (рад/сек)
+    pub root_ecc: f64,    // sqrt(1 - ecc^2)
+    pub omega_t: f64,     // долгота восходящего узла в момент t
     pub omega_delta: f64, // изменение долготы узла
-    pub Ek: f64,        // эксцентрическая аномалия
-    pub Ek_dot: f64,    // скорость изменения эксцентрической аномалии
+    pub Ek: f64,          // эксцентрическая аномалия
+    pub Ek_dot: f64,      // скорость изменения эксцентрической аномалии
 }
 
 // Definitions for source field
@@ -391,10 +389,10 @@ pub const EPH_SOURCE_CNV2: u8 = 2;
 pub const EPH_SOURCE_CNV3: u8 = 3;
 
 // BeiDou specific source field definitions
-pub const BDS_SOURCE_D1D2: u8 = 0;     // D1/D2 navigation messages (legacy)
-pub const BDS_SOURCE_BCNAV1: u8 = 1;   // B-CNAV1 для B1C сигнала
-pub const BDS_SOURCE_BCNAV2: u8 = 2;   // B-CNAV2 для B2a сигнала  
-pub const BDS_SOURCE_BCNAV3: u8 = 3;   // B-CNAV3 для B2b сигнала
+pub const BDS_SOURCE_D1D2: u8 = 0; // D1/D2 navigation messages (legacy)
+pub const BDS_SOURCE_BCNAV1: u8 = 1; // B-CNAV1 для B1C сигнала
+pub const BDS_SOURCE_BCNAV2: u8 = 2; // B-CNAV2 для B2a сигнала
+pub const BDS_SOURCE_BCNAV3: u8 = 3; // B-CNAV3 для B2b сигнала
 
 impl BeiDouEphemeris {
     /// Конвертирует BeiDouEphemeris в GpsEphemeris для обратной совместимости
@@ -433,8 +431,8 @@ impl BeiDouEphemeris {
             af0: self.af0,
             af1: self.af1,
             af2: self.af2,
-            tgd: self.tgd1,      // BeiDou TGD1 -> GPS TGD
-            tgd2: self.tgd2,     // BeiDou TGD2 сохраняется
+            tgd: self.tgd1,  // BeiDou TGD1 -> GPS TGD
+            tgd2: self.tgd2, // BeiDou TGD2 сохраняется
             tgd_ext: [self.tgd_b1cp, self.tgd_b2ap, self.tgd_b2bp, 0.0, 0.0], // Упаковываем дополнительные TGD
             axis: self.axis,
             n: self.n,
@@ -445,7 +443,7 @@ impl BeiDouEphemeris {
             Ek_dot: self.Ek_dot,
         }
     }
-    
+
     /// Создаёт BeiDouEphemeris из GpsEphemeris (обратная конвертация)
     pub fn from_gps_ephemeris(gps: &GpsEphemeris) -> Self {
         BeiDouEphemeris {
@@ -481,11 +479,23 @@ impl BeiDouEphemeris {
             af0: gps.af0,
             af1: gps.af1,
             af2: gps.af2,
-            tgd1: gps.tgd,       // GPS TGD -> BeiDou TGD1
-            tgd2: gps.tgd2,      // TGD2 сохраняется
-            tgd_b1cp: if gps.tgd_ext.len() > 0 { gps.tgd_ext[0] } else { 0.0 },
-            tgd_b2ap: if gps.tgd_ext.len() > 1 { gps.tgd_ext[1] } else { 0.0 },
-            tgd_b2bp: if gps.tgd_ext.len() > 2 { gps.tgd_ext[2] } else { 0.0 },
+            tgd1: gps.tgd,  // GPS TGD -> BeiDou TGD1
+            tgd2: gps.tgd2, // TGD2 сохраняется
+            tgd_b1cp: if gps.tgd_ext.len() > 0 {
+                gps.tgd_ext[0]
+            } else {
+                0.0
+            },
+            tgd_b2ap: if gps.tgd_ext.len() > 1 {
+                gps.tgd_ext[1]
+            } else {
+                0.0
+            },
+            tgd_b2bp: if gps.tgd_ext.len() > 2 {
+                gps.tgd_ext[2]
+            } else {
+                0.0
+            },
             axis: gps.axis,
             n: gps.n,
             root_ecc: gps.root_ecc,
@@ -493,7 +503,7 @@ impl BeiDouEphemeris {
             omega_delta: gps.omega_delta,
             Ek: gps.Ek,
             Ek_dot: gps.Ek_dot,
-            aode: 0,             // Значения по умолчанию для BeiDou-специфичных полей
+            aode: 0, // Значения по умолчанию для BeiDou-специфичных полей
             aodc: 0,
             sat_type: 0,
             integrity_flag: 0,
@@ -503,10 +513,10 @@ impl BeiDouEphemeris {
     }
 }
 
-// BeiDou satellite type definitions 
-pub const BDS_SAT_GEO: u8 = 0;   // Geostationary satellites (C01-C05)
-pub const BDS_SAT_IGSO: u8 = 1;  // Inclined Geosynchronous Orbit satellites (C06-C17) 
-pub const BDS_SAT_MEO: u8 = 2;   // Medium Earth Orbit satellites (C18-C63)
+// BeiDou satellite type definitions
+pub const BDS_SAT_GEO: u8 = 0; // Geostationary satellites (C01-C05)
+pub const BDS_SAT_IGSO: u8 = 1; // Inclined Geosynchronous Orbit satellites (C06-C17)
+pub const BDS_SAT_MEO: u8 = 2; // Medium Earth Orbit satellites (C18-C63)
 
 // GPS almanac
 #[derive(Debug, Clone, Copy, Default)]
@@ -642,8 +652,7 @@ pub struct SatObservation {
     pub CN0: [f64; MAX_OBS_NUMBER],
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
-#[derive(Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub enum OutputType {
     #[default]
     OutputTypePosition,
@@ -652,9 +661,7 @@ pub enum OutputType {
     OutputTypeBaseband,
 }
 
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-#[derive(Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub enum OutputFormat {
     #[default]
     OutputFormatEcef,
@@ -665,7 +672,6 @@ pub enum OutputFormat {
     OutputFormatIQ8,
     OutputFormatIQ4,
 }
-
 
 #[derive(Debug, Clone)]
 pub struct OutputParam {
@@ -735,31 +741,31 @@ pub struct CompactConfig {
 }
 
 // System parsing bits (0-3)
-pub const PARSE_GPS: u32     = 1 << 0;  // 0x1
-pub const PARSE_BDS: u32     = 1 << 1;  // 0x2
-pub const PARSE_GALILEO: u32 = 1 << 2;  // 0x4
-pub const PARSE_GLONASS: u32 = 1 << 3;  // 0x8
+pub const PARSE_GPS: u32 = 1 << 0; // 0x1
+pub const PARSE_BDS: u32 = 1 << 1; // 0x2
+pub const PARSE_GALILEO: u32 = 1 << 2; // 0x4
+pub const PARSE_GLONASS: u32 = 1 << 3; // 0x8
 
 // Signal generation bits (4-31) - mapped from SIGNAL_INDEX + 4
-pub const GEN_L1CA: u32  = 1 << 4;   // GPS L1CA  (SIGNAL_INDEX_L1CA + 4)
-pub const GEN_L1C: u32   = 1 << 5;   // GPS L1C   (SIGNAL_INDEX_L1C + 4)
-pub const GEN_L2C: u32   = 1 << 6;   // GPS L2C   (SIGNAL_INDEX_L2C + 4)
-pub const GEN_L2P: u32   = 1 << 7;   // GPS L2P   (SIGNAL_INDEX_L2P + 4)
-pub const GEN_L5: u32    = 1 << 8;   // GPS L5    (SIGNAL_INDEX_L5 + 4)
-pub const GEN_B1C: u32   = 1 << 12;  // BDS B1C   (SIGNAL_INDEX_B1C + 4)
-pub const GEN_B1I: u32   = 1 << 13;  // BDS B1I   (SIGNAL_INDEX_B1I + 4)
-pub const GEN_B2I: u32   = 1 << 14;  // BDS B2I   (SIGNAL_INDEX_B2I + 4)
-pub const GEN_B3I: u32   = 1 << 15;  // BDS B3I   (SIGNAL_INDEX_B3I + 4)
-pub const GEN_B2A: u32   = 1 << 16;  // BDS B2A   (SIGNAL_INDEX_B2A + 4)
-pub const GEN_B2B: u32   = 1 << 17;  // BDS B2B   (SIGNAL_INDEX_B2B + 4)
-pub const GEN_B2AB: u32  = 1 << 18;  // BDS B2AB  (SIGNAL_INDEX_B2AB + 4)
-pub const GEN_E1: u32    = 1 << 20;  // GAL E1    (SIGNAL_INDEX_E1 + 4)
-pub const GEN_E5A: u32   = 1 << 21;  // GAL E5A   (SIGNAL_INDEX_E5A + 4)
-pub const GEN_E5B: u32   = 1 << 22;  // GAL E5B   (SIGNAL_INDEX_E5B + 4)
-pub const GEN_E6: u32    = 1 << 24;  // GAL E6    (SIGNAL_INDEX_E6 + 4)
-pub const GEN_G1: u32    = 1 << 28;  // GLO G1    (SIGNAL_INDEX_G1 + 4)
-pub const GEN_G2: u32    = 1 << 29;  // GLO G2    (SIGNAL_INDEX_G2 + 4)
-pub const GEN_G3: u32    = 1 << 30;  // GLO G3    (SIGNAL_INDEX_G3 + 4)
+pub const GEN_L1CA: u32 = 1 << 4; // GPS L1CA  (SIGNAL_INDEX_L1CA + 4)
+pub const GEN_L1C: u32 = 1 << 5; // GPS L1C   (SIGNAL_INDEX_L1C + 4)
+pub const GEN_L2C: u32 = 1 << 6; // GPS L2C   (SIGNAL_INDEX_L2C + 4)
+pub const GEN_L2P: u32 = 1 << 7; // GPS L2P   (SIGNAL_INDEX_L2P + 4)
+pub const GEN_L5: u32 = 1 << 8; // GPS L5    (SIGNAL_INDEX_L5 + 4)
+pub const GEN_B1C: u32 = 1 << 12; // BDS B1C   (SIGNAL_INDEX_B1C + 4)
+pub const GEN_B1I: u32 = 1 << 13; // BDS B1I   (SIGNAL_INDEX_B1I + 4)
+pub const GEN_B2I: u32 = 1 << 14; // BDS B2I   (SIGNAL_INDEX_B2I + 4)
+pub const GEN_B3I: u32 = 1 << 15; // BDS B3I   (SIGNAL_INDEX_B3I + 4)
+pub const GEN_B2A: u32 = 1 << 16; // BDS B2A   (SIGNAL_INDEX_B2A + 4)
+pub const GEN_B2B: u32 = 1 << 17; // BDS B2B   (SIGNAL_INDEX_B2B + 4)
+pub const GEN_B2AB: u32 = 1 << 18; // BDS B2AB  (SIGNAL_INDEX_B2AB + 4)
+pub const GEN_E1: u32 = 1 << 20; // GAL E1    (SIGNAL_INDEX_E1 + 4)
+pub const GEN_E5A: u32 = 1 << 21; // GAL E5A   (SIGNAL_INDEX_E5A + 4)
+pub const GEN_E5B: u32 = 1 << 22; // GAL E5B   (SIGNAL_INDEX_E5B + 4)
+pub const GEN_E6: u32 = 1 << 24; // GAL E6    (SIGNAL_INDEX_E6 + 4)
+pub const GEN_G1: u32 = 1 << 28; // GLO G1    (SIGNAL_INDEX_G1 + 4)
+pub const GEN_G2: u32 = 1 << 29; // GLO G2    (SIGNAL_INDEX_G2 + 4)
+pub const GEN_G3: u32 = 1 << 30; // GLO G3    (SIGNAL_INDEX_G3 + 4)
 
 impl CompactConfig {
     pub fn new() -> Self {
@@ -801,25 +807,25 @@ impl CompactConfig {
     // Convert SIGNAL_INDEX to generation bit
     pub fn signal_index_to_gen_bit(signal_index: usize) -> Option<u32> {
         match signal_index {
-            0 => Some(GEN_L1CA),   // SIGNAL_INDEX_L1CA
-            1 => Some(GEN_L1C),    // SIGNAL_INDEX_L1C
-            2 => Some(GEN_L2C),    // SIGNAL_INDEX_L2C
-            3 => Some(GEN_L2P),    // SIGNAL_INDEX_L2P
-            4 => Some(GEN_L5),     // SIGNAL_INDEX_L5
-            8 => Some(GEN_B1C),    // SIGNAL_INDEX_B1C
-            9 => Some(GEN_B1I),    // SIGNAL_INDEX_B1I
-            10 => Some(GEN_B2I),   // SIGNAL_INDEX_B2I
-            11 => Some(GEN_B3I),   // SIGNAL_INDEX_B3I
-            12 => Some(GEN_B2A),   // SIGNAL_INDEX_B2A
-            13 => Some(GEN_B2B),   // SIGNAL_INDEX_B2B
-            14 => Some(GEN_B2AB),  // SIGNAL_INDEX_B2AB
-            16 => Some(GEN_E1),    // SIGNAL_INDEX_E1
-            17 => Some(GEN_E5A),   // SIGNAL_INDEX_E5A
-            18 => Some(GEN_E5B),   // SIGNAL_INDEX_E5B
-            20 => Some(GEN_E6),    // SIGNAL_INDEX_E6
-            24 => Some(GEN_G1),    // SIGNAL_INDEX_G1
-            25 => Some(GEN_G2),    // SIGNAL_INDEX_G2
-            26 => Some(GEN_G3),    // SIGNAL_INDEX_G3
+            0 => Some(GEN_L1CA),  // SIGNAL_INDEX_L1CA
+            1 => Some(GEN_L1C),   // SIGNAL_INDEX_L1C
+            2 => Some(GEN_L2C),   // SIGNAL_INDEX_L2C
+            3 => Some(GEN_L2P),   // SIGNAL_INDEX_L2P
+            4 => Some(GEN_L5),    // SIGNAL_INDEX_L5
+            8 => Some(GEN_B1C),   // SIGNAL_INDEX_B1C
+            9 => Some(GEN_B1I),   // SIGNAL_INDEX_B1I
+            10 => Some(GEN_B2I),  // SIGNAL_INDEX_B2I
+            11 => Some(GEN_B3I),  // SIGNAL_INDEX_B3I
+            12 => Some(GEN_B2A),  // SIGNAL_INDEX_B2A
+            13 => Some(GEN_B2B),  // SIGNAL_INDEX_B2B
+            14 => Some(GEN_B2AB), // SIGNAL_INDEX_B2AB
+            16 => Some(GEN_E1),   // SIGNAL_INDEX_E1
+            17 => Some(GEN_E5A),  // SIGNAL_INDEX_E5A
+            18 => Some(GEN_E5B),  // SIGNAL_INDEX_E5B
+            20 => Some(GEN_E6),   // SIGNAL_INDEX_E6
+            24 => Some(GEN_G1),   // SIGNAL_INDEX_G1
+            25 => Some(GEN_G2),   // SIGNAL_INDEX_G2
+            26 => Some(GEN_G3),   // SIGNAL_INDEX_G3
             _ => None,
         }
     }

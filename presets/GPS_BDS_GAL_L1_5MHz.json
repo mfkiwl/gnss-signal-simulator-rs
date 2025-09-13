@@ -27,14 +27,14 @@
 		"trajectoryList": [
 			{
 				"type": "Const",
-				"time": 10.0
+                "time": 1.0
 			}
 		]
 	},
-	"ephemeris": {
-		"type": "RINEX",
-		"name": "EphData/rinex_v3_20251560000.rnx"
-	},
+    "ephemeris": {
+        "type": "RINEX",
+        "name": "Rinex_Data/rinex_v3_20251560000.rnx"
+    },
 	"output": {
 		"type": "IFdata",
 		"format": "IQ8",

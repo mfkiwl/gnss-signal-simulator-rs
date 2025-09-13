@@ -24,7 +24,7 @@
 //!
 //!          Copyright (C) 2020-2029 by Jun Mo, All rights reserved.
 
-use std::ops::{Add, AddAssign, Sub, SubAssign, Mul, MulAssign};
+use std::ops::{Add, AddAssign, Mul, MulAssign, Sub, SubAssign};
 use wide::f64x4;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -68,15 +68,25 @@ impl ComplexNumber {
     pub fn simd_mul_scalar(complex_vals: &[f64], scalars: f64x4, output: &mut [f64]) {
         debug_assert!(complex_vals.len() >= 8);
         debug_assert!(output.len() >= 8);
-        
+
         // Load complex values as SIMD vectors (interleaved)
-        let reals = f64x4::new([complex_vals[0], complex_vals[2], complex_vals[4], complex_vals[6]]);
-        let imags = f64x4::new([complex_vals[1], complex_vals[3], complex_vals[5], complex_vals[7]]);
-        
+        let reals = f64x4::new([
+            complex_vals[0],
+            complex_vals[2],
+            complex_vals[4],
+            complex_vals[6],
+        ]);
+        let imags = f64x4::new([
+            complex_vals[1],
+            complex_vals[3],
+            complex_vals[5],
+            complex_vals[7],
+        ]);
+
         // Multiply by scalars
         let result_reals = reals * scalars;
         let result_imags = imags * scalars;
-        
+
         // Store back in interleaved format
         output[0] = result_reals.as_array_ref()[0];
         output[1] = result_imags.as_array_ref()[0];
@@ -87,21 +97,36 @@ impl ComplexNumber {
         output[6] = result_reals.as_array_ref()[3];
         output[7] = result_imags.as_array_ref()[3];
     }
-    
+
     /// SIMD multiply 4 complex numbers by 4 complex rotations (cos + i*sin)
-    pub fn simd_mul_rotation(complex_vals: &[f64], cos_vals: f64x4, sin_vals: f64x4, output: &mut [f64]) {
+    pub fn simd_mul_rotation(
+        complex_vals: &[f64],
+        cos_vals: f64x4,
+        sin_vals: f64x4,
+        output: &mut [f64],
+    ) {
         debug_assert!(complex_vals.len() >= 8);
         debug_assert!(output.len() >= 8);
-        
+
         // Load complex values
-        let reals = f64x4::new([complex_vals[0], complex_vals[2], complex_vals[4], complex_vals[6]]);
-        let imags = f64x4::new([complex_vals[1], complex_vals[3], complex_vals[5], complex_vals[7]]);
-        
+        let reals = f64x4::new([
+            complex_vals[0],
+            complex_vals[2],
+            complex_vals[4],
+            complex_vals[6],
+        ]);
+        let imags = f64x4::new([
+            complex_vals[1],
+            complex_vals[3],
+            complex_vals[5],
+            complex_vals[7],
+        ]);
+
         // Complex multiplication: (a + bi) * (c + di) = (ac - bd) + (ad + bc)i
         // Where (c + di) = (cos + i*sin)
         let result_reals = reals * cos_vals - imags * sin_vals;
         let result_imags = reals * sin_vals + imags * cos_vals;
-        
+
         // Store back
         output[0] = result_reals.as_array_ref()[0];
         output[1] = result_imags.as_array_ref()[0];
@@ -112,29 +137,29 @@ impl ComplexNumber {
         output[6] = result_reals.as_array_ref()[3];
         output[7] = result_imags.as_array_ref()[3];
     }
-    
+
     /// Vectorized signal generation combining PRN, nav data, trig values and amplitude
     pub fn simd_generate_signal(
         prn_bits: f64x4,
-        nav_bits: f64x4, 
+        nav_bits: f64x4,
         cos_vals: f64x4,
         sin_vals: f64x4,
         amplitude: f64x4,
-        output: &mut [ComplexNumber]
+        output: &mut [ComplexNumber],
     ) {
         debug_assert!(output.len() >= 4);
-        
-        // Combine all scalar multipliers 
+
+        // Combine all scalar multipliers
         let combined_scalar = prn_bits * nav_bits * amplitude;
-        
+
         // Generate complex signal values
         let result_reals = combined_scalar * cos_vals;
         let result_imags = combined_scalar * sin_vals;
-        
+
         // Store as ComplexNumber array
         let real_array = result_reals.as_array_ref();
         let imag_array = result_imags.as_array_ref();
-        
+
         for i in 0..4 {
             output[i] = ComplexNumber {
                 real: real_array[i],
@@ -208,7 +233,7 @@ impl MulAssign for ComplexNumber {
     fn mul_assign(&mut self, other: ComplexNumber) {
         let temp_real = self.real;
         let temp_imag = self.imag;
-        
+
         self.real = temp_real * other.real - temp_imag * other.imag;
         self.imag = temp_real * other.imag + temp_imag * other.real;
     }

@@ -22,7 +22,7 @@
 use crate::complex_number::ComplexNumber;
 use crate::gnsstime::GnssTimeConverter;
 use crate::pilotbit::get_pilot_bits;
-use crate::types::{GnssTime, GnssSystem};
+use crate::types::{GnssSystem, GnssTime};
 use crate::NavDataType;
 
 const AMPLITUDE_1_2: f64 = 0.707_106_781_186_547_6;
@@ -38,21 +38,96 @@ pub struct SignalAttribute {
 
 const SIGNAL_ATTRIBUTES: [SignalAttribute; 15] = [
     // CodeLength NHLength  NHCode FrameLength
-    SignalAttribute { code_length: 1, nh_length: 20, nh_code: 0x0, frame_length: 6000 },      // index  0 for LNAV
-    SignalAttribute { code_length: 10, nh_length: 1, nh_code: 0x0, frame_length: 18000 },     // index  1 for CNAV2
-    SignalAttribute { code_length: 20, nh_length: 1, nh_code: 0x0, frame_length: 12000 },     // index  2 for CNAV L2C
-    SignalAttribute { code_length: 1, nh_length: 10, nh_code: 0x2b0, frame_length: 6000 },    // index  3 for CNAV L5
-    SignalAttribute { code_length: 10, nh_length: 1, nh_code: 0x0, frame_length: 18000 },     // index  4 for BCNAV1
-    SignalAttribute { code_length: 1, nh_length: 20, nh_code: 0x72b20, frame_length: 6000 },  // index  5 for D1
-    SignalAttribute { code_length: 1, nh_length: 2, nh_code: 0x0, frame_length: 600 },       // index  6 for D2
-    SignalAttribute { code_length: 1, nh_length: 5, nh_code: 0x8, frame_length: 3000 },      // index  7 for BCNAV2
-    SignalAttribute { code_length: 1, nh_length: 1, nh_code: 0x0, frame_length: 1000 },      // index  8 for BCNAV3
-    SignalAttribute { code_length: 4, nh_length: 1, nh_code: 0x0, frame_length: 2000 },      // index  9 for I/NAV E1
-    SignalAttribute { code_length: 1, nh_length: 20, nh_code: 0x97421, frame_length: 10000 }, // index 10 for FNAV
-    SignalAttribute { code_length: 1, nh_length: 4, nh_code: 0x7, frame_length: 2000 },      // index 11 for I/NAV E5b
-    SignalAttribute { code_length: 1, nh_length: 1, nh_code: 0x0, frame_length: 1000 },      // index 12 for CNAV E6
-    SignalAttribute { code_length: 1, nh_length: 10, nh_code: 0x0, frame_length: 2000 },     // index 13 for GNAV
-    SignalAttribute { code_length: 1, nh_length: 250, nh_code: 0x0, frame_length: 10000 },   // index 14 for G3/L3OC (250 secondary code)
+    SignalAttribute {
+        code_length: 1,
+        nh_length: 20,
+        nh_code: 0x0,
+        frame_length: 6000,
+    }, // index  0 for LNAV
+    SignalAttribute {
+        code_length: 10,
+        nh_length: 1,
+        nh_code: 0x0,
+        frame_length: 18000,
+    }, // index  1 for CNAV2
+    SignalAttribute {
+        code_length: 20,
+        nh_length: 1,
+        nh_code: 0x0,
+        frame_length: 12000,
+    }, // index  2 for CNAV L2C
+    SignalAttribute {
+        code_length: 1,
+        nh_length: 10,
+        nh_code: 0x2b0,
+        frame_length: 6000,
+    }, // index  3 for CNAV L5
+    SignalAttribute {
+        code_length: 10,
+        nh_length: 1,
+        nh_code: 0x0,
+        frame_length: 18000,
+    }, // index  4 for BCNAV1
+    SignalAttribute {
+        code_length: 1,
+        nh_length: 20,
+        nh_code: 0x72b20,
+        frame_length: 6000,
+    }, // index  5 for D1
+    SignalAttribute {
+        code_length: 1,
+        nh_length: 2,
+        nh_code: 0x0,
+        frame_length: 600,
+    }, // index  6 for D2
+    SignalAttribute {
+        code_length: 1,
+        nh_length: 5,
+        nh_code: 0x8,
+        frame_length: 3000,
+    }, // index  7 for BCNAV2
+    SignalAttribute {
+        code_length: 1,
+        nh_length: 1,
+        nh_code: 0x0,
+        frame_length: 1000,
+    }, // index  8 for BCNAV3
+    SignalAttribute {
+        code_length: 4,
+        nh_length: 1,
+        nh_code: 0x0,
+        frame_length: 2000,
+    }, // index  9 for I/NAV E1
+    SignalAttribute {
+        code_length: 1,
+        nh_length: 20,
+        nh_code: 0x97421,
+        frame_length: 10000,
+    }, // index 10 for FNAV
+    SignalAttribute {
+        code_length: 1,
+        nh_length: 4,
+        nh_code: 0x7,
+        frame_length: 2000,
+    }, // index 11 for I/NAV E5b
+    SignalAttribute {
+        code_length: 1,
+        nh_length: 1,
+        nh_code: 0x0,
+        frame_length: 1000,
+    }, // index 12 for CNAV E6
+    SignalAttribute {
+        code_length: 1,
+        nh_length: 10,
+        nh_code: 0x0,
+        frame_length: 2000,
+    }, // index 13 for GNAV
+    SignalAttribute {
+        code_length: 1,
+        nh_length: 250,
+        nh_code: 0x0,
+        frame_length: 10000,
+    }, // index 14 for G3/L3OC (250 secondary code)
 ];
 
 pub struct SatelliteSignal {
@@ -92,7 +167,13 @@ impl SatelliteSignal {
         }
     }
 
-    pub fn set_signal_attribute(&mut self, system: GnssSystem, signal_index: i32, p_nav_data: Option<crate::nav_data::NavData>, svid: i32) -> bool {
+    pub fn set_signal_attribute(
+        &mut self,
+        system: GnssSystem,
+        signal_index: i32,
+        p_nav_data: Option<crate::nav_data::NavData>,
+        svid: i32,
+    ) -> bool {
         // Define constants for pattern matching
         const L1CA: i32 = crate::SIGNAL_INDEX_L1CA as i32;
         const L1C: i32 = crate::SIGNAL_INDEX_L1C as i32;
@@ -132,8 +213,12 @@ impl SatelliteSignal {
             GnssSystem::BdsSystem => match self.sat_signal {
                 B1C => (4, NavDataType::BCNav1),
                 B1I | B2I | B3I => {
-                    if (6..=58).contains(&self.svid) { (5, NavDataType::D1D2Nav) } else { (6, NavDataType::D1D2Nav) }
-                },
+                    if (6..=58).contains(&self.svid) {
+                        (5, NavDataType::D1D2Nav)
+                    } else {
+                        (6, NavDataType::D1D2Nav)
+                    }
+                }
                 B2A => (7, NavDataType::BCNav2),
                 B2B => (8, NavDataType::BCNav3),
                 _ => return false,
@@ -162,7 +247,12 @@ impl SatelliteSignal {
         }
     }
 
-    pub fn get_satellite_signal(&mut self, transmit_time: GnssTime, data_signal: &mut ComplexNumber, pilot_signal: &mut ComplexNumber) -> bool {
+    pub fn get_satellite_signal(
+        &mut self,
+        transmit_time: GnssTime,
+        data_signal: &mut ComplexNumber,
+        pilot_signal: &mut ComplexNumber,
+    ) -> bool {
         // Define constants for pattern matching (same as in set_signal_attribute)
         const L1CA: i32 = crate::SIGNAL_INDEX_L1CA as i32;
         const L1C: i32 = crate::SIGNAL_INDEX_L1C as i32;
@@ -189,18 +279,23 @@ impl SatelliteSignal {
         let mut transmit_time_adj = transmit_time;
 
         match self.sat_system {
-            GnssSystem::BdsSystem => { // subtract leap second difference
+            GnssSystem::BdsSystem => {
+                // subtract leap second difference
                 transmit_time_adj.MilliSeconds -= 14000;
-            },
-            GnssSystem::GlonassSystem => { // subtract leap second, add 3 hours
-                let seconds = transmit_time.Week as u32 * 604800 + transmit_time.MilliSeconds as u32 / 1000;
+            }
+            GnssSystem::GlonassSystem => {
+                // subtract leap second, add 3 hours
+                let seconds =
+                    transmit_time.Week as u32 * 604800 + transmit_time.MilliSeconds as u32 / 1000;
                 let (leap_second, _) = GnssTimeConverter::get_leap_second(seconds);
-                transmit_time_adj.MilliSeconds = (transmit_time.MilliSeconds + 10800000 - leap_second * 1000) % 86400000;
-            },
-            _ => {},
+                transmit_time_adj.MilliSeconds =
+                    (transmit_time.MilliSeconds + 10800000 - leap_second * 1000) % 86400000;
+            }
+            _ => {}
         }
 
-        if transmit_time_adj.MilliSeconds < 0 { // protection on negative millisecond
+        if transmit_time_adj.MilliSeconds < 0 {
+            // protection on negative millisecond
             transmit_time_adj.MilliSeconds += 604800000;
         }
 
@@ -209,11 +304,14 @@ impl SatelliteSignal {
         let mut bit_number = 0;
         let bit_pos;
         let data_bit;
-        let mut pilot_bit = 0;  // По умолчанию 0 для сигналов без пилотной составляющей
+        let mut pilot_bit = 0; // По умолчанию 0 для сигналов без пилотной составляющей
 
-        if self.sat_system == GnssSystem::GlonassSystem && (self.sat_signal == crate::SIGNAL_INDEX_G1 as i32 || self.sat_signal == crate::SIGNAL_INDEX_G2 as i32) {
+        if self.sat_system == GnssSystem::GlonassSystem
+            && (self.sat_signal == crate::SIGNAL_INDEX_G1 as i32
+                || self.sat_signal == crate::SIGNAL_INDEX_G2 as i32)
+        {
             let string_position = transmit_time_adj.MilliSeconds % 2000;
-            
+
             if string_position < 300 {
                 self.is_in_time_marker = true;
                 if string_position == 0 {
@@ -225,19 +323,38 @@ impl SatelliteSignal {
                     }
                 }
                 let time_marker_bit_index = string_position / 10;
-                data_bit = if time_marker_bit_index < 30 { if self.time_marker_bits[time_marker_bit_index as usize] != 0 { -1 } else { 1 } } else { 1 };
-                *data_signal = ComplexNumber { real: data_bit as f64, imag: 0.0 };
+                data_bit = if time_marker_bit_index < 30 {
+                    if self.time_marker_bits[time_marker_bit_index as usize] != 0 {
+                        -1
+                    } else {
+                        1
+                    }
+                } else {
+                    1
+                };
+                *data_signal = ComplexNumber {
+                    real: data_bit as f64,
+                    imag: 0.0,
+                };
                 *pilot_signal = ComplexNumber::new();
                 return true;
             } else {
                 self.is_in_time_marker = false;
                 frame_number = transmit_time_adj.MilliSeconds / self.attribute.frame_length;
-                bit_number = ((string_position - 300) * 85 / 1700) as usize;  // ГЛОНАСС: 85 информационных бит за 1700 мс
-                if bit_number >= 85 { bit_number = 84; }  // Ограничить диапазон 0-84
+                bit_number = ((string_position - 300) * 85 / 1700) as usize; // ГЛОНАСС: 85 информационных бит за 1700 мс
+                if bit_number >= 85 {
+                    bit_number = 84;
+                } // Ограничить диапазон 0-84
                 bit_pos = ((string_position - 300) % 17) / self.attribute.code_length;
             }
         } else {
-            let galileo_e1_signal = if self.sat_system == GnssSystem::GalileoSystem && self.sat_signal == crate::SIGNAL_INDEX_E1 as i32 { 1 } else { 0 };
+            let galileo_e1_signal = if self.sat_system == GnssSystem::GalileoSystem
+                && self.sat_signal == crate::SIGNAL_INDEX_E1 as i32
+            {
+                1
+            } else {
+                0
+            };
             let milliseconds = transmit_time_adj.MilliSeconds + (galileo_e1_signal * 1000);
             frame_number = milliseconds / self.attribute.frame_length;
             let milliseconds_in_frame = milliseconds % self.attribute.frame_length;
@@ -251,18 +368,25 @@ impl SatelliteSignal {
                 GnssSystem::BdsSystem => 63,
                 GnssSystem::GalileoSystem => 36,
                 GnssSystem::GlonassSystem => 24,
-                GnssSystem::SbasSystem => 39,  // SBAS PRN 120-158 (39 satellites)
-                GnssSystem::QzssSystem => 10,  // QZSS PRN 193-202 (10 satellites)  
+                GnssSystem::SbasSystem => 39, // SBAS PRN 120-158 (39 satellites)
+                GnssSystem::QzssSystem => 10, // QZSS PRN 193-202 (10 satellites)
                 GnssSystem::NavICSystem => 14, // NavIC PRN 1-14 (14 satellites)
                 GnssSystem::GpsSystem => 32,
             };
             if let Some(nav_data) = &mut self.nav_data {
                 if self.svid > 0 && self.svid <= max_svid {
-                    let param = if (self.sat_system == GnssSystem::GpsSystem && self.sat_signal == crate::SIGNAL_INDEX_L5 as i32) || 
-                                     (self.sat_system == GnssSystem::GalileoSystem && self.sat_signal == crate::SIGNAL_INDEX_E1 as i32) { 1 } else { 0 };
+                    let param = if (self.sat_system == GnssSystem::GpsSystem
+                        && self.sat_signal == crate::SIGNAL_INDEX_L5 as i32)
+                        || (self.sat_system == GnssSystem::GalileoSystem
+                            && self.sat_signal == crate::SIGNAL_INDEX_E1 as i32)
+                    {
+                        1
+                    } else {
+                        0
+                    };
                     let mut data_bits_i32 = [0; 4096];
                     nav_data.get_frame_data(transmit_time, self.svid, param, &mut data_bits_i32);
-                    
+
                     // DEBUG: Проверка навигационных данных
                     let non_zero_count = data_bits_i32.iter().filter(|&&x| x != 0).count();
                     let system_name = match self.sat_system {
@@ -274,31 +398,50 @@ impl SatelliteSignal {
                         GnssSystem::QzssSystem => "QZSS",
                         GnssSystem::NavICSystem => "NavIC",
                     };
-                    
-                    // Проверяем навигационные данные каждого спутника 
+
+                    // Проверяем навигационные данные каждого спутника
                     static mut DEBUG_COUNTER: i32 = 0;
                     let should_debug = unsafe {
                         DEBUG_COUNTER += 1;
                         DEBUG_COUNTER <= 50 // показываем первые 50 вызовов
                     };
-                    
-                    if should_debug { // показываем для диагностики проблемы
+
+                    if should_debug {
+                        // показываем для диагностики проблемы
                         // DEBUG: NAV кадр отладка отключена для уменьшения вывода
-                        // println!("[NAV] {} SV{:02} кадр {}: {} битов/4096 ({:.1}%)", 
-                        //         system_name, self.svid, self.current_frame, non_zero_count, 
+                        // println!("[NAV] {} SV{:02} кадр {}: {} битов/4096 ({:.1}%)",
+                        //         system_name, self.svid, self.current_frame, non_zero_count,
                         //         (non_zero_count as f32 / 4096.0) * 100.0);
                         if non_zero_count > 0 {
-                            let first_10 = (0..10).map(|i| if data_bits_i32[i] != 0 { "1" } else { "0" }).collect::<String>();
+                            let first_10 = (0..10)
+                                .map(|i| if data_bits_i32[i] != 0 { "1" } else { "0" })
+                                .collect::<String>();
                             // IODC младшие биты должны быть в word 5 subframe 1 (~150 биты)
-                            let iodc_bits = (120..130).map(|i| if data_bits_i32.get(i).copied().unwrap_or(0) != 0 { "1" } else { "0" }).collect::<String>();
-                            let late_bits = (200..210).map(|i| if data_bits_i32.get(i).copied().unwrap_or(0) != 0 { "1" } else { "0" }).collect::<String>();
+                            let iodc_bits = (120..130)
+                                .map(|i| {
+                                    if data_bits_i32.get(i).copied().unwrap_or(0) != 0 {
+                                        "1"
+                                    } else {
+                                        "0"
+                                    }
+                                })
+                                .collect::<String>();
+                            let late_bits = (200..210)
+                                .map(|i| {
+                                    if data_bits_i32.get(i).copied().unwrap_or(0) != 0 {
+                                        "1"
+                                    } else {
+                                        "0"
+                                    }
+                                })
+                                .collect::<String>();
                             // DEBUG: Детализация битов отключена для уменьшения вывода
                             // println!("      Первые биты: {} | IODC область(120-130): {} | Поздние биты(200-210): {}", first_10, iodc_bits, late_bits);
                         } else {
                             println!("      ⚠️ НЕТ НАВИГАЦИОННЫХ ДАННЫХ!");
                         }
                     }
-                    
+
                     for i in 0..4096 {
                         self.data_bits[i] = data_bits_i32[i] as u8;
                     }
@@ -307,105 +450,186 @@ impl SatelliteSignal {
             self.current_frame = frame_number;
         }
 
-        if self.sat_system == GnssSystem::GlonassSystem && (self.sat_signal == crate::SIGNAL_INDEX_G1 as i32 || self.sat_signal == crate::SIGNAL_INDEX_G2 as i32) && !self.is_in_time_marker {
-            data_bit = if self.data_bits[bit_number] != 0 { -1 } else { 1 };
+        if self.sat_system == GnssSystem::GlonassSystem
+            && (self.sat_signal == crate::SIGNAL_INDEX_G1 as i32
+                || self.sat_signal == crate::SIGNAL_INDEX_G2 as i32)
+            && !self.is_in_time_marker
+        {
+            data_bit = if self.data_bits[bit_number] != 0 {
+                -1
+            } else {
+                1
+            };
         } else if !self.is_in_time_marker {
-            data_bit = (if self.data_bits[bit_number] != 0 { -1 } else { 1 }) * (if (self.attribute.nh_code & (1 << bit_pos)) != 0 { -1 } else { 1 });
+            data_bit = (if self.data_bits[bit_number] != 0 {
+                -1
+            } else {
+                1
+            }) * (if (self.attribute.nh_code & (1 << bit_pos)) != 0 {
+                -1
+            } else {
+                1
+            });
         } else {
             data_bit = 1; // Should be handled by the time marker logic above
         }
 
-        if let Some((secondary_code, _)) = get_pilot_bits(self.sat_system, self.sat_signal as usize, self.svid) {
-            let secondary_position = (transmit_time.MilliSeconds / self.attribute.code_length) % secondary_code.len() as i32;
-            pilot_bit = if (secondary_code[(secondary_position / 32) as usize] & (1 << (secondary_position & 0x1f))) != 0 { -1 } else { 1 };
+        if let Some((secondary_code, _)) =
+            get_pilot_bits(self.sat_system, self.sat_signal as usize, self.svid)
+        {
+            let secondary_position = (transmit_time.MilliSeconds / self.attribute.code_length)
+                % secondary_code.len() as i32;
+            pilot_bit = if (secondary_code[(secondary_position / 32) as usize]
+                & (1 << (secondary_position & 0x1f)))
+                != 0
+            {
+                -1
+            } else {
+                1
+            };
         }
 
         // generate DataSignal and PilotSignal
         match self.sat_system {
             GnssSystem::GpsSystem => match self.sat_signal {
                 L1CA => {
-                    *data_signal = ComplexNumber { real: data_bit as f64, imag: 0.0 };
+                    *data_signal = ComplexNumber {
+                        real: data_bit as f64,
+                        imag: 0.0,
+                    };
                     *pilot_signal = ComplexNumber::new();
-                },
+                }
                 L1C => {
-                    *data_signal = ComplexNumber { real: data_bit as f64 * AMPLITUDE_1_4, imag: 0.0 };
-                    *pilot_signal = ComplexNumber { real: pilot_bit as f64 * AMPLITUDE_3_4, imag: 0.0 };
-                },
+                    *data_signal = ComplexNumber {
+                        real: data_bit as f64 * AMPLITUDE_1_4,
+                        imag: 0.0,
+                    };
+                    *pilot_signal = ComplexNumber {
+                        real: pilot_bit as f64 * AMPLITUDE_3_4,
+                        imag: 0.0,
+                    };
+                }
                 L2C => {
-                    *data_signal = ComplexNumber { real: data_bit as f64 * AMPLITUDE_1_2, imag: 0.0 };
-                    *pilot_signal = ComplexNumber { real: pilot_bit as f64 * AMPLITUDE_1_2, imag: 0.0 };
-                },
+                    *data_signal = ComplexNumber {
+                        real: data_bit as f64 * AMPLITUDE_1_2,
+                        imag: 0.0,
+                    };
+                    *pilot_signal = ComplexNumber {
+                        real: pilot_bit as f64 * AMPLITUDE_1_2,
+                        imag: 0.0,
+                    };
+                }
                 L5 => {
-                    *data_signal = ComplexNumber { real: data_bit as f64 * AMPLITUDE_1_2, imag: 0.0 };
-                    *pilot_signal = ComplexNumber { real: 0.0, imag: pilot_bit as f64 * AMPLITUDE_1_2 };
-                },
+                    *data_signal = ComplexNumber {
+                        real: data_bit as f64 * AMPLITUDE_1_2,
+                        imag: 0.0,
+                    };
+                    *pilot_signal = ComplexNumber {
+                        real: 0.0,
+                        imag: pilot_bit as f64 * AMPLITUDE_1_2,
+                    };
+                }
                 L2P => {
-                    *data_signal = ComplexNumber { real: data_bit as f64, imag: 0.0 };
+                    *data_signal = ComplexNumber {
+                        real: data_bit as f64,
+                        imag: 0.0,
+                    };
                     *pilot_signal = ComplexNumber::new();
-                },
-                _ => {},
+                }
+                _ => {}
             },
             GnssSystem::BdsSystem => match self.sat_signal {
                 B1C => {
-                    *data_signal = ComplexNumber { real: 0.0, imag: -data_bit as f64 * AMPLITUDE_1_2 };
-                    *pilot_signal = ComplexNumber { real: pilot_bit as f64 * AMPLITUDE_1_2, imag: 0.0 };
-                },
+                    *data_signal = ComplexNumber {
+                        real: 0.0,
+                        imag: -data_bit as f64 * AMPLITUDE_1_2,
+                    };
+                    *pilot_signal = ComplexNumber {
+                        real: pilot_bit as f64 * AMPLITUDE_1_2,
+                        imag: 0.0,
+                    };
+                }
                 B1I | B2I | B3I => {
-                    *data_signal = ComplexNumber { real: data_bit as f64, imag: 0.0 };
+                    *data_signal = ComplexNumber {
+                        real: data_bit as f64,
+                        imag: 0.0,
+                    };
                     *pilot_signal = ComplexNumber::new();
-                },
+                }
                 B2A => {
-                    *data_signal = ComplexNumber { real: 0.0, imag: -data_bit as f64 * AMPLITUDE_1_2 };
-                    *pilot_signal = ComplexNumber { real: pilot_bit as f64 * AMPLITUDE_1_2, imag: 0.0 };
-                },
+                    *data_signal = ComplexNumber {
+                        real: 0.0,
+                        imag: -data_bit as f64 * AMPLITUDE_1_2,
+                    };
+                    *pilot_signal = ComplexNumber {
+                        real: pilot_bit as f64 * AMPLITUDE_1_2,
+                        imag: 0.0,
+                    };
+                }
                 B2B => {
-                    *data_signal = ComplexNumber { real: 0.0, imag: -data_bit as f64 * AMPLITUDE_1_2 };
+                    *data_signal = ComplexNumber {
+                        real: 0.0,
+                        imag: -data_bit as f64 * AMPLITUDE_1_2,
+                    };
                     *pilot_signal = ComplexNumber::new();
-                },
-                _ => {},
+                }
+                _ => {}
             },
             GnssSystem::GalileoSystem => match self.sat_signal {
                 E1 => {
-                    *data_signal = ComplexNumber { real: -data_bit as f64 * AMPLITUDE_1_2, imag: 0.0 };
-                    *pilot_signal = ComplexNumber { real: pilot_bit as f64 * AMPLITUDE_1_2, imag: 0.0 };
-                },
+                    *data_signal = ComplexNumber {
+                        real: -data_bit as f64 * AMPLITUDE_1_2,
+                        imag: 0.0,
+                    };
+                    *pilot_signal = ComplexNumber {
+                        real: pilot_bit as f64 * AMPLITUDE_1_2,
+                        imag: 0.0,
+                    };
+                }
                 E5A | E5B => {
-                    *data_signal = ComplexNumber { real: 0.0, imag: -data_bit as f64 * AMPLITUDE_1_2 };
-                    *pilot_signal = ComplexNumber { real: pilot_bit as f64 * AMPLITUDE_1_2, imag: 0.0 };
-                },
+                    *data_signal = ComplexNumber {
+                        real: 0.0,
+                        imag: -data_bit as f64 * AMPLITUDE_1_2,
+                    };
+                    *pilot_signal = ComplexNumber {
+                        real: pilot_bit as f64 * AMPLITUDE_1_2,
+                        imag: 0.0,
+                    };
+                }
                 E6 => {
                     *data_signal = ComplexNumber::new();
-                    *pilot_signal = ComplexNumber { real: pilot_bit as f64 * AMPLITUDE_1_2, imag: 0.0 };
-                },
-                _ => {},
+                    *pilot_signal = ComplexNumber {
+                        real: pilot_bit as f64 * AMPLITUDE_1_2,
+                        imag: 0.0,
+                    };
+                }
+                _ => {}
             },
             GnssSystem::GlonassSystem => match self.sat_signal {
                 G1 | G2 => {
                     if !self.is_in_time_marker {
-                        *data_signal = ComplexNumber { real: data_bit as f64, imag: 0.0 };
+                        *data_signal = ComplexNumber {
+                            real: data_bit as f64,
+                            imag: 0.0,
+                        };
                         *pilot_signal = ComplexNumber::new();
                     }
-                },
+                }
                 G3 => {
-                    *data_signal = ComplexNumber { real: data_bit as f64 * AMPLITUDE_1_2, imag: 0.0 };
-                    *pilot_signal = ComplexNumber { real: 0.0, imag: pilot_bit as f64 * AMPLITUDE_1_2 };
-                },
-                _ => {},
+                    *data_signal = ComplexNumber {
+                        real: data_bit as f64 * AMPLITUDE_1_2,
+                        imag: 0.0,
+                    };
+                    *pilot_signal = ComplexNumber {
+                        real: 0.0,
+                        imag: pilot_bit as f64 * AMPLITUDE_1_2,
+                    };
+                }
+                _ => {}
             },
-            _ => {},
+            _ => {}
         }
 
         true
     }
 }
-
-
-
-
-
-
-
-
-
-
-

@@ -24,12 +24,12 @@
 //!          Copyright (C) 2020-2029 by Jun Mo, All rights reserved.
 
 use crate::ComplexNumber;
-use std::sync::Once;
 use rand::Rng;
+use std::sync::Once;
 use wide::f64x4;
 
 /// Структура для быстрых математических операций
-/// 
+///
 /// Содержит статические методы для оптимизированных вычислений.
 /// Все функции используют общие lookup таблицы размером 65536 элементов.
 pub struct FastMath;
@@ -41,7 +41,7 @@ impl FastMath {
 }
 
 // Глобальные lookup таблицы для синуса и косинуса
-static mut SIN_LUT: [f64; 65536] = [0.0; 65536]; // Таблица значений sin(x) 
+static mut SIN_LUT: [f64; 65536] = [0.0; 65536]; // Таблица значений sin(x)
 static mut COS_LUT: [f64; 65536] = [0.0; 65536]; // Таблица значений cos(x)
 static INIT: Once = Once::new(); // Гарантия однократной инициализации таблиц
 
@@ -52,13 +52,11 @@ static mut SPARE: f64 = 0.0; // Кешированное значение для
 impl FastMath {
     // Initialize lookup tables
     fn initialize_lut() {
-        INIT.call_once(|| {
-            unsafe {
-                for i in 0..65536 {
-                    let angle = (2.0 * std::f64::consts::PI * i as f64) / 65536_f64;
-                    SIN_LUT[i] = angle.sin();
-                    COS_LUT[i] = angle.cos();
-                }
+        INIT.call_once(|| unsafe {
+            for i in 0..65536 {
+                let angle = (2.0 * std::f64::consts::PI * i as f64) / 65536_f64;
+                SIN_LUT[i] = angle.sin();
+                COS_LUT[i] = angle.cos();
             }
         });
     }
@@ -66,13 +64,13 @@ impl FastMath {
     // Fast sine using lookup table
     pub fn fast_sin(angle: f64) -> f64 {
         Self::initialize_lut();
-        
+
         // Normalize angle to [0, 2*PI)
         let mut angle = angle % (2.0 * std::f64::consts::PI);
         if angle < 0.0 {
             angle += 2.0 * std::f64::consts::PI;
         }
-        
+
         // Convert to table index
         let index = (angle * (65536.0 / (2.0 * std::f64::consts::PI))) as usize & (65536 - 1);
         unsafe { SIN_LUT[index] }
@@ -82,7 +80,7 @@ impl FastMath {
     #[inline]
     pub fn fast_sin_unnormalized(angle: f64) -> f64 {
         Self::initialize_lut();
-        
+
         // Предполагаем что angle уже в диапазоне [0, 2*PI) - НЕТ нормализации!
         let index = (angle * (65536.0 / (2.0 * std::f64::consts::PI))) as usize & (65536 - 1);
         unsafe { SIN_LUT[index] }
@@ -91,13 +89,13 @@ impl FastMath {
     // Fast cosine using lookup table
     pub fn fast_cos(angle: f64) -> f64 {
         Self::initialize_lut();
-        
+
         // Normalize angle to [0, 2*PI)
         let mut angle = angle % (2.0 * std::f64::consts::PI);
         if angle < 0.0 {
             angle += 2.0 * std::f64::consts::PI;
         }
-        
+
         // Convert to table index
         let index = (angle * (65536.0 / (2.0 * std::f64::consts::PI))) as usize & (65536 - 1);
         unsafe { COS_LUT[index] }
@@ -107,7 +105,7 @@ impl FastMath {
     #[inline]
     pub fn fast_cos_unnormalized(angle: f64) -> f64 {
         Self::initialize_lut();
-        
+
         // Предполагаем что angle уже в диапазоне [0, 2*PI) - НЕТ нормализации!
         let index = (angle * (65536.0 / (2.0 * std::f64::consts::PI))) as usize & (65536 - 1);
         unsafe { COS_LUT[index] }
@@ -116,26 +114,36 @@ impl FastMath {
     // Fast complex rotation using lookup tables
     pub fn fast_rotate(angle: f64) -> ComplexNumber {
         Self::initialize_lut();
-        
+
         // Normalize angle to [0, 2*PI)
         let mut angle = angle % (2.0 * std::f64::consts::PI);
         if angle < 0.0 {
             angle += 2.0 * std::f64::consts::PI;
         }
-        
+
         // Convert to table index
         let index = (angle * (65536.0 / (2.0 * std::f64::consts::PI))) as usize & (65536 - 1);
-        unsafe { ComplexNumber { real: COS_LUT[index], imag: SIN_LUT[index] } }
+        unsafe {
+            ComplexNumber {
+                real: COS_LUT[index],
+                imag: SIN_LUT[index],
+            }
+        }
     }
 
     // КРИТИЧЕСКАЯ ОПТИМИЗАЦИЯ: быстрая версия rotate БЕЗ нормализации - МАКСИМАЛЬНАЯ СКОРОСТЬ!
     #[inline]
     pub fn fast_rotate_unnormalized(angle: f64) -> ComplexNumber {
         Self::initialize_lut();
-        
+
         // Предполагаем что angle уже в диапазоне [0, 2*PI) - НЕТ нормализации!
         let index = (angle * (65536.0 / (2.0 * std::f64::consts::PI))) as usize & (65536 - 1);
-        unsafe { ComplexNumber { real: COS_LUT[index], imag: SIN_LUT[index] } }
+        unsafe {
+            ComplexNumber {
+                real: COS_LUT[index],
+                imag: SIN_LUT[index],
+            }
+        }
     }
 
     // Fast noise generation using Box-Muller with cached values
@@ -143,7 +151,10 @@ impl FastMath {
         unsafe {
             if HAS_SPARE {
                 HAS_SPARE = false;
-                return ComplexNumber { real: SPARE * sigma, imag: 0.0 };
+                return ComplexNumber {
+                    real: SPARE * sigma,
+                    imag: 0.0,
+                };
             }
         }
 
@@ -158,95 +169,114 @@ impl FastMath {
         };
 
         let factor = (-2.0 * mag.ln() / mag).sqrt();
-        
+
         unsafe {
             SPARE = u2 * factor;
             HAS_SPARE = true;
         }
 
-        ComplexNumber { real: u1 * factor * sigma, imag: u2 * factor * sigma }
+        ComplexNumber {
+            real: u1 * factor * sigma,
+            imag: u2 * factor * sigma,
+        }
     }
 
     // SIMD vectorized sine function - processes 4 angles at once
     pub fn fast_sin_simd(angles: f64x4) -> f64x4 {
         Self::initialize_lut();
-        
+
         const TWO_PI: f64 = 2.0 * std::f64::consts::PI;
         const LUT_SCALE: f64 = 65536.0 / TWO_PI;
-        
+
         // Process each angle individually since wide doesn't support % operator
         let angles_array = angles.as_array_ref();
-        
+
         unsafe {
             f64x4::new([
                 {
                     let mut angle = angles_array[0] % TWO_PI;
-                    if angle < 0.0 { angle += TWO_PI; }
+                    if angle < 0.0 {
+                        angle += TWO_PI;
+                    }
                     let index = (angle * LUT_SCALE) as usize & (65536 - 1);
                     SIN_LUT[index]
                 },
                 {
                     let mut angle = angles_array[1] % TWO_PI;
-                    if angle < 0.0 { angle += TWO_PI; }
+                    if angle < 0.0 {
+                        angle += TWO_PI;
+                    }
                     let index = (angle * LUT_SCALE) as usize & (65536 - 1);
                     SIN_LUT[index]
                 },
                 {
                     let mut angle = angles_array[2] % TWO_PI;
-                    if angle < 0.0 { angle += TWO_PI; }
+                    if angle < 0.0 {
+                        angle += TWO_PI;
+                    }
                     let index = (angle * LUT_SCALE) as usize & (65536 - 1);
                     SIN_LUT[index]
                 },
                 {
                     let mut angle = angles_array[3] % TWO_PI;
-                    if angle < 0.0 { angle += TWO_PI; }
+                    if angle < 0.0 {
+                        angle += TWO_PI;
+                    }
                     let index = (angle * LUT_SCALE) as usize & (65536 - 1);
                     SIN_LUT[index]
-                }
+                },
             ])
         }
     }
-    
+
     // SIMD vectorized cosine function - processes 4 angles at once
     pub fn fast_cos_simd(angles: f64x4) -> f64x4 {
         Self::initialize_lut();
-        
+
         const TWO_PI: f64 = 2.0 * std::f64::consts::PI;
         const LUT_SCALE: f64 = 65536.0 / TWO_PI;
-        
+
         // Process each angle individually since wide doesn't support % operator
         let angles_array = angles.as_array_ref();
-        
+
         unsafe {
             f64x4::new([
                 {
                     let mut angle = angles_array[0] % TWO_PI;
-                    if angle < 0.0 { angle += TWO_PI; }
+                    if angle < 0.0 {
+                        angle += TWO_PI;
+                    }
                     let index = (angle * LUT_SCALE) as usize & (65536 - 1);
                     COS_LUT[index]
                 },
                 {
                     let mut angle = angles_array[1] % TWO_PI;
-                    if angle < 0.0 { angle += TWO_PI; }
+                    if angle < 0.0 {
+                        angle += TWO_PI;
+                    }
                     let index = (angle * LUT_SCALE) as usize & (65536 - 1);
                     COS_LUT[index]
                 },
                 {
                     let mut angle = angles_array[2] % TWO_PI;
-                    if angle < 0.0 { angle += TWO_PI; }
+                    if angle < 0.0 {
+                        angle += TWO_PI;
+                    }
                     let index = (angle * LUT_SCALE) as usize & (65536 - 1);
                     COS_LUT[index]
                 },
                 {
                     let mut angle = angles_array[3] % TWO_PI;
-                    if angle < 0.0 { angle += TWO_PI; }
+                    if angle < 0.0 {
+                        angle += TWO_PI;
+                    }
                     let index = (angle * LUT_SCALE) as usize & (65536 - 1);
                     COS_LUT[index]
-                }
+                },
             ])
         }
     }
-    
+
     // SIMD vectorized complex rotation - processes 4 angles at once
     pub fn fast_rotate_simd(angles: f64x4) -> (f64x4, f64x4) {
         let cos_vals = Self::fast_cos_simd(angles);
@@ -258,7 +288,7 @@ impl FastMath {
     pub fn generate_noise_block(output: &mut [ComplexNumber], sigma: f64) {
         // OPTIMIZED: Generate noise in batches for better cache locality
         const BATCH_SIZE: usize = 64; // Process in batches for better performance
-        
+
         let mut i = 0;
         while i < output.len() {
             let end = (i + BATCH_SIZE).min(output.len());
@@ -312,7 +342,7 @@ mod tests {
     fn test_noise_block() {
         let mut output = vec![ComplexNumber::new(); 100];
         FastMath::generate_noise_block(&mut output, 1.0);
-        
+
         // Check that all values are finite
         for sample in &output {
             assert!(sample.real.is_finite());

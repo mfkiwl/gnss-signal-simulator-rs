@@ -34,37 +34,37 @@ pub const B2B_SYMBOL_LENGTH: usize = 81;
 pub struct BCNav3Bit {
     // Ephemeris parameters part 1 (63 satellites, variable length)
     pub ephemeris1: [[u32; 32]; 63],
-    
+
     // Ephemeris parameters part 2 (63 satellites, variable length)
     pub ephemeris2: [[u32; 32]; 63],
-    
+
     // Clock parameters for all satellites (63 satellites, 4 parameters each)
     pub clock_param: [[u32; 4]; 63],
-    
+
     // Integrity flags for all satellites (63 satellites)
     pub integrity_flags: [u32; 63],
-    
+
     // TGS/ISC parameters (63 satellites, 3 parameters each)
     pub tgs_isc_param: [[u32; 3]; 63],
-    
+
     // Ionosphere parameters (BDGIM format)
     pub bd_gim_iono: [u32; 3],
-    
+
     // BDT-UTC parameters
     pub bdt_utc_param: [u32; 4],
-    
+
     // EOP parameters
     pub eop_param: [u32; 6],
-    
+
     // BGTO parameters (3 sets)
     pub bgto_param: [[u32; 3]; 3],
-    
+
     // Almanac parameters (midi format, 63 satellites)
     pub midi_almanac: [[u32; 7]; 63],
-    
+
     // Almanac parameters (reduced format, 63 satellites)
     pub reduced_almanac: [[u32; 2]; 63],
-    
+
     // Almanac week and time of week
     pub almanac_week: u32,
     pub almanac_toa: u32,
@@ -78,7 +78,7 @@ impl Default for BCNav3Bit {
 
 impl BCNav3Bit {
     // B2b LDPC matrix generator
-    const B2B_MATRIX_GEN: &'static str = 
+    const B2B_MATRIX_GEN: &'static str =
         "nXGb3[3O=iTXeNSoUElQT5ORV7NkfXXf4cY?je6GhghdCLgg`UViO>0DegkheCFEYO68^:@A\\kimGdkZZ\
         ITMHn67]^=W_G6lbP_idWU]H7e6H>E8d?lS@@`eje2VA@`Uh9NL=LQhD`M9V`ZAc4]oGh2M5RTkgj:JXM\
         >N:P]^LE_79\\]JPUZSjD9TfnS=_g5\\9;AE4E246o644HKd>D95:f:JDF87g>oKoXIWhfDJ7b^NN?DaT58\
@@ -199,7 +199,9 @@ impl BCNav3Bit {
 
             let mask = ((1 << bits_to_copy) - 1) << bit_offset;
             frame_data[word_index] &= !mask;
-            frame_data[word_index] |= ((data[data_index] >> (bits_left - bits_to_copy)) & ((1 << bits_to_copy) - 1)) << bit_offset;
+            frame_data[word_index] |= ((data[data_index] >> (bits_left - bits_to_copy))
+                & ((1 << bits_to_copy) - 1))
+                << bit_offset;
 
             bits_left -= bits_to_copy;
             bit_offset = 0;
@@ -214,7 +216,11 @@ impl BCNav3Bit {
     // Assign bits to NavBits array
     fn assign_bits(&self, value: u32, length: u32, nav_bits: &mut [i32]) {
         for i in 0..length {
-            nav_bits[i as usize] = if (value & (1 << (length - 1 - i))) != 0 { 1 } else { 0 };
+            nav_bits[i as usize] = if (value & (1 << (length - 1 - i))) != 0 {
+                1
+            } else {
+                0
+            };
         }
     }
 
@@ -275,12 +281,14 @@ impl BCNav3Bit {
 
         // GF(6) multiplication tables
         const E2V_TABLE: [i32; 64] = [
-            0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31,
-            32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63
+            0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23,
+            24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45,
+            46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63,
         ];
         const V2E_TABLE: [i32; 64] = [
-            0, 0, 1, 5, 2, 10, 6, 14, 3, 15, 11, 20, 7, 21, 15, 25, 4, 26, 16, 31, 12, 32, 21, 36, 8, 37, 22, 41, 16, 42, 26, 46,
-            5, 47, 27, 52, 17, 53, 33, 57, 13, 58, 33, 62, 22, 63, 37, 4, 9, 5, 38, 10, 23, 11, 42, 15, 17, 16, 43, 20, 27, 21, 47, 25
+            0, 0, 1, 5, 2, 10, 6, 14, 3, 15, 11, 20, 7, 21, 15, 25, 4, 26, 16, 31, 12, 32, 21, 36,
+            8, 37, 22, 41, 16, 42, 26, 46, 5, 47, 27, 52, 17, 53, 33, 57, 13, 58, 33, 62, 22, 63,
+            37, 4, 9, 5, 38, 10, 23, 11, 42, 15, 17, 16, 43, 20, 27, 21, 47, 25,
         ];
 
         let e = (V2E_TABLE[a as usize] + V2E_TABLE[b as usize]) % 63;
@@ -288,7 +296,13 @@ impl BCNav3Bit {
     }
 
     // Get frame data for B-CNAV3
-    pub fn get_frame_data(&self, start_time: GnssTime, svid: i32, _param: i32, nav_bits: &mut [i32]) -> i32 {
+    pub fn get_frame_data(
+        &self,
+        start_time: GnssTime,
+        svid: i32,
+        _param: i32,
+        nav_bits: &mut [i32],
+    ) -> i32 {
         // Check if svid is valid
         if !(1..=63).contains(&svid) {
             return 1;
@@ -299,38 +313,51 @@ impl BCNav3Bit {
         let mut symbols = [0i32; 162];
 
         // Compose message based on message type
-        self.compose_message(Self::MESSAGE_ORDER[(sow % 6) as usize], start_time.Week - 1356, sow, svid, &mut frame_data);
-        
+        self.compose_message(
+            Self::MESSAGE_ORDER[(sow % 6) as usize],
+            start_time.Week - 1356,
+            sow,
+            svid,
+            &mut frame_data,
+        );
+
         // Append CRC
         self.append_crc(&mut frame_data, 21);
-        
+
         // Assign each 6bit into Symbols array
         symbols[0] = (frame_data[0] & 0x3f) as i32;
         for i in 0..20 {
-            symbols[i*4+1] = ((frame_data[i+1] >> 18) & 0x3f) as i32;
-            symbols[i*4+2] = ((frame_data[i+1] >> 12) & 0x3f) as i32;
-            symbols[i*4+3] = ((frame_data[i+1] >> 6) & 0x3f) as i32;
-            symbols[i*4+4] = (frame_data[i+1] & 0x3f) as i32;
+            symbols[i * 4 + 1] = ((frame_data[i + 1] >> 18) & 0x3f) as i32;
+            symbols[i * 4 + 2] = ((frame_data[i + 1] >> 12) & 0x3f) as i32;
+            symbols[i * 4 + 3] = ((frame_data[i + 1] >> 6) & 0x3f) as i32;
+            symbols[i * 4 + 4] = (frame_data[i + 1] & 0x3f) as i32;
         }
-        
+
         // Do LDPC encode
         self.ldpc_encode(&mut symbols, B2B_SYMBOL_LENGTH, Self::B2B_MATRIX_GEN);
-        
+
         // Assign bits to NavBits array
         self.assign_bits(0xeb90, 16, nav_bits); // Preamble
         self.assign_bits(svid as u32, 6, &mut nav_bits[16..]); // PRN
         self.assign_bits(0, 6, &mut nav_bits[22..]); // Reserved
-        
+
         // Assign 162 encoded symbols
         for i in 0..162 {
-            self.assign_bits(symbols[i] as u32, 6, &mut nav_bits[28 + i * 6..]); 
+            self.assign_bits(symbols[i] as u32, 6, &mut nav_bits[28 + i * 6..]);
         }
-        
+
         0
     }
 
     // Compose message for B-CNAV3
-    fn compose_message(&self, message_type: i32, week: i32, sow: i32, svid: i32, frame_data: &mut [u32]) {
+    fn compose_message(
+        &self,
+        message_type: i32,
+        week: i32,
+        sow: i32,
+        svid: i32,
+        frame_data: &mut [u32],
+    ) {
         // First fill in MessageType
         frame_data[0] = (message_type & 0x3f) as u32;
 
@@ -341,39 +368,62 @@ impl BCNav3Bit {
                 for i in 2..20 {
                     frame_data[i] = 0x5a5a5a5a; // Fill with pattern
                 }
-            },
+            }
             10 => {
                 // Ephemeris message
                 frame_data[1] = COMPOSE_BITS!(sow as u32, 4, 20);
-                self.append_word(frame_data, 16, &self.ephemeris1[(svid-1) as usize], 211);
-                self.append_word(frame_data, 10 * 24, &self.ephemeris2[(svid-1) as usize], 222);
-                frame_data[19] |= COMPOSE_BITS!(self.integrity_flags[(svid-1) as usize] >> 8, 3, 4); // B2a DIF/SIF/AIF
-                frame_data[19] |= COMPOSE_BITS!(self.integrity_flags[(svid-1) as usize] >> 11, 0, 4); // SISMAI
-            },
+                self.append_word(frame_data, 16, &self.ephemeris1[(svid - 1) as usize], 211);
+                self.append_word(
+                    frame_data,
+                    10 * 24,
+                    &self.ephemeris2[(svid - 1) as usize],
+                    222,
+                );
+                frame_data[19] |=
+                    COMPOSE_BITS!(self.integrity_flags[(svid - 1) as usize] >> 8, 3, 4); // B2a DIF/SIF/AIF
+                frame_data[19] |=
+                    COMPOSE_BITS!(self.integrity_flags[(svid - 1) as usize] >> 11, 0, 4);
+                // SISMAI
+            }
             30 => {
                 // Clock, ionosphere, UTC, EOP message
                 frame_data[1] = COMPOSE_BITS!(sow as u32, 4, 20);
                 frame_data[1] |= COMPOSE_BITS!((week >> 9) as u32, 0, 4);
                 frame_data[2] = COMPOSE_BITS!(week as u32, 15, 9);
-                self.append_word(frame_data, 2 * 24 + 13, &self.clock_param[(svid-1) as usize], 69);
-                frame_data[5] |= COMPOSE_BITS!(self.tgs_isc_param[(svid-1) as usize][2], 12, 2);
+                self.append_word(
+                    frame_data,
+                    2 * 24 + 13,
+                    &self.clock_param[(svid - 1) as usize],
+                    69,
+                );
+                frame_data[5] |= COMPOSE_BITS!(self.tgs_isc_param[(svid - 1) as usize][2], 12, 2);
                 self.append_word(frame_data, 5 * 24 + 22, &self.bd_gim_iono, 74);
                 self.append_word(frame_data, 9 * 24, &self.bdt_utc_param, 97);
                 self.append_word(frame_data, 13 * 24 + 1, &self.eop_param, 138);
                 frame_data[19] = 0; // SISAI_oc, SISAI_oe and HS filled with 0
-            },
+            }
             40 => {
                 // Almanac message
                 frame_data[1] = COMPOSE_BITS!(sow as u32, 4, 20);
-                self.append_word(frame_data, 24 + 20, &self.bgto_param[(sow % 3) as usize], 68); // First 3 BGTO fields
-                
+                self.append_word(
+                    frame_data,
+                    24 + 20,
+                    &self.bgto_param[(sow % 3) as usize],
+                    68,
+                ); // First 3 BGTO fields
+
                 let almanac_prn = sow % 63;
-                self.append_word(frame_data, 4 * 24 + 16, &self.midi_almanac[almanac_prn as usize], 156); // Midi almanac
-                
+                self.append_word(
+                    frame_data,
+                    4 * 24 + 16,
+                    &self.midi_almanac[almanac_prn as usize],
+                    156,
+                ); // Midi almanac
+
                 frame_data[11] |= COMPOSE_BITS!(self.almanac_week, 13, 7);
                 frame_data[11] |= COMPOSE_BITS!(self.almanac_toa >> 1, 7, 7);
                 frame_data[12] = COMPOSE_BITS!(self.almanac_toa, 23, 1);
-                
+
                 // Reduced almanac for 5 satellites
                 for i in 0..5 {
                     let reduced_prn = ((sow * 5) + i) % 63;
@@ -385,9 +435,14 @@ impl BCNav3Bit {
                         4 => 18 * 24 + 9,
                         _ => 0,
                     };
-                    self.append_word(frame_data, bit_position, &self.reduced_almanac[reduced_prn as usize], 38);
+                    self.append_word(
+                        frame_data,
+                        bit_position,
+                        &self.reduced_almanac[reduced_prn as usize],
+                        38,
+                    );
                 }
-            },
+            }
             _ => {
                 // Unknown message type
             }
@@ -401,31 +456,31 @@ impl BCNav3Bit {
         }
         // Convert GpsEphemeris to BDS B2b ephemeris format
         let index = (svid - 1) as usize;
-        
+
         // Store in Ephemeris1 (primary) and Ephemeris2 (backup)
         // BDS B2b can store dual ephemeris sets for redundancy
         if index < 63 {
             // Convert GPS ephemeris to BDS B2b navigation message format
             // These arrays store raw navigation message data, not ephemeris structures
-            
+
             // Convert ephemeris parameters to BDS message format (32-bit words)
             // This is a simplified conversion - real implementation would encode
             // all ephemeris parameters according to BDS ICD specification
             let mut eph1_data = [0u32; 32];
             let mut _eph2_data = [0u32; 32];
-            
+
             // Example encoding of key ephemeris parameters
             eph1_data[0] = (svid as u32) << 24; // SVID in message header
             eph1_data[1] = eph.toe as u32 - 14; // Adjust for BDT
             eph1_data[2] = eph.sqrtA.to_bits() as u32;
             eph1_data[3] = eph.ecc.to_bits() as u32;
-            
+
             // Copy to backup
             _eph2_data = eph1_data;
-            
+
             self.ephemeris1[index] = eph1_data;
             self.ephemeris2[index] = _eph2_data;
-            
+
             true
         } else {
             false
@@ -436,17 +491,22 @@ impl BCNav3Bit {
         // BDS B2b navigation message doesn't include almanac data
         // Almanac is broadcast in B1C and D1/D2 signals
         // This implementation acknowledges almanac data but doesn't store it
-        
-        let _almanac_count = alm.iter()
+
+        let _almanac_count = alm
+            .iter()
             .filter(|a| a.valid > 0 && a.svid > 0 && a.svid <= 63)
             .count();
-            
+
         // Return true to indicate successful processing
         // In full implementation, would forward to appropriate almanac handler
         true
     }
 
-    pub fn set_iono_utc(&mut self, iono_param: Option<&IonoParam>, utc_param: Option<&UtcParam>) -> bool {
+    pub fn set_iono_utc(
+        &mut self,
+        iono_param: Option<&IonoParam>,
+        utc_param: Option<&UtcParam>,
+    ) -> bool {
         // Set ionospheric and UTC parameters for BDS B2b format
         if let Some(iono) = iono_param {
             if iono.flag > 0 {
@@ -455,7 +515,7 @@ impl BCNav3Bit {
                 // Parameters are broadcast in subframe 1, page 1
             }
         }
-        
+
         if let Some(utc) = utc_param {
             if utc.flag > 0 {
                 // Store BDS UTC parameters
@@ -463,7 +523,7 @@ impl BCNav3Bit {
                 // Different from GPS UTC parameters due to BDT time system
             }
         }
-        
+
         true
     }
 }

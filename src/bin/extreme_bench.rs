@@ -1,35 +1,35 @@
-use std::time::Instant;
 use gnss_rust::avx512_intrinsics::*;
+use std::time::Instant;
 
 fn main() {
     println!("🚀 ЭКСТРЕМАЛЬНЫЕ БЕНЧМАРКИ АППАРАТНОЙ ОПТИМИЗАЦИИ 🚀");
     println!("AMD Ryzen 9 7950X (AVX-512) + NVIDIA RTX 3090");
     println!("============================================");
-    
+
     // Увеличиваем нагрузку для видимого эффекта
     massive_prn_benchmark();
     massive_complex_benchmark();
     massive_trigonometric_benchmark();
-    
+
     println!("\n✅ ЭКСТРЕМАЛЬНЫЕ БЕНЧМАРКИ ЗАВЕРШЕНЫ!");
 }
 
 fn massive_prn_benchmark() {
     println!("\n🔥 ТЕСТ 1: МАССИВНАЯ PRN ГЕНЕРАЦИЯ (10M samples × 1000 итераций)");
-    
+
     let samples = 10_000_000;
     let iterations = 1000;
     let mut prn_data = vec![0.0f32; samples];
     let mut output_cpu = vec![0.0f32; samples];
     let mut output_avx = vec![0.0f32; samples];
-    
+
     // Заполняем тестовыми данными
     for i in 0..samples {
         prn_data[i] = ((i as f32 * 0.001).sin() * 127.0) / 127.0;
     }
-    
+
     let amplitude = 0.95f32;
-    
+
     // CPU тест
     println!("Запуск CPU теста...");
     let start_cpu = Instant::now();
@@ -39,7 +39,7 @@ fn massive_prn_benchmark() {
         }
     }
     let cpu_time = start_cpu.elapsed();
-    
+
     // AVX-512 тест
     println!("Запуск AVX-512 теста...");
     let start_avx = Instant::now();
@@ -51,7 +51,7 @@ fn massive_prn_benchmark() {
                         Avx512Accelerator::process_prn_codes_avx512(
                             &prn_data[chunk..chunk + 16],
                             &mut output_avx[chunk..chunk + 16],
-                            amplitude
+                            amplitude,
                         );
                     }
                 }
@@ -64,20 +64,24 @@ fn massive_prn_benchmark() {
         }
     }
     let avx_time = start_avx.elapsed();
-    
+
     println!("=== РЕЗУЛЬТАТЫ МАССИВНОЙ PRN ГЕНЕРАЦИИ ===");
-    println!("CPU (обычный):    {:8.1}ms ({:.1}M ops/sec)", 
-             cpu_time.as_secs_f64() * 1000.0,
-             (samples as f64 * iterations as f64) / (cpu_time.as_secs_f64() * 1e6));
-    println!("AVX-512:          {:8.1}ms ({:.1}M ops/sec) - {:.1}x ускорение", 
-             avx_time.as_secs_f64() * 1000.0,
-             (samples as f64 * iterations as f64) / (avx_time.as_secs_f64() * 1e6),
-             cpu_time.as_secs_f64() / avx_time.as_secs_f64());
+    println!(
+        "CPU (обычный):    {:8.1}ms ({:.1}M ops/sec)",
+        cpu_time.as_secs_f64() * 1000.0,
+        (samples as f64 * iterations as f64) / (cpu_time.as_secs_f64() * 1e6)
+    );
+    println!(
+        "AVX-512:          {:8.1}ms ({:.1}M ops/sec) - {:.1}x ускорение",
+        avx_time.as_secs_f64() * 1000.0,
+        (samples as f64 * iterations as f64) / (avx_time.as_secs_f64() * 1e6),
+        cpu_time.as_secs_f64() / avx_time.as_secs_f64()
+    );
 }
 
 fn massive_complex_benchmark() {
     println!("\n🔥 ТЕСТ 2: МАССИВНЫЕ КОМПЛЕКСНЫЕ ОПЕРАЦИИ (1M samples × 5000 итераций)");
-    
+
     let samples = 1_000_000;
     let iterations = 5000;
     let mut real1 = vec![0.0f64; samples];
@@ -86,7 +90,7 @@ fn massive_complex_benchmark() {
     let mut imag2 = vec![0.0f64; samples];
     let mut result_real = vec![0.0f64; samples];
     let mut result_imag = vec![0.0f64; samples];
-    
+
     // Заполняем тестовыми данными
     for i in 0..samples {
         let phase = i as f64 * 0.001;
@@ -95,7 +99,7 @@ fn massive_complex_benchmark() {
         real2[i] = (phase + 1.0).cos();
         imag2[i] = (phase + 1.0).sin();
     }
-    
+
     // CPU тест
     println!("Запуск CPU комплексного теста...");
     let start_cpu = Instant::now();
@@ -107,7 +111,7 @@ fn massive_complex_benchmark() {
         }
     }
     let cpu_time = start_cpu.elapsed();
-    
+
     // AVX-512 векторизованный тест (имитация)
     println!("Запуск AVX-512 комплексного теста...");
     let start_avx = Instant::now();
@@ -124,20 +128,24 @@ fn massive_complex_benchmark() {
         }
     }
     let avx_time = start_avx.elapsed();
-    
+
     println!("=== РЕЗУЛЬТАТЫ МАССИВНЫХ КОМПЛЕКСНЫХ ОПЕРАЦИЙ ===");
-    println!("CPU (обычный):    {:8.1}ms ({:.1}M ops/sec)", 
-             cpu_time.as_secs_f64() * 1000.0,
-             (samples as f64 * iterations as f64) / (cpu_time.as_secs_f64() * 1e6));
-    println!("AVX-512:          {:8.1}ms ({:.1}M ops/sec) - {:.1}x ускорение", 
-             avx_time.as_secs_f64() * 1000.0,
-             (samples as f64 * iterations as f64) / (avx_time.as_secs_f64() * 1e6),
-             cpu_time.as_secs_f64() / avx_time.as_secs_f64());
+    println!(
+        "CPU (обычный):    {:8.1}ms ({:.1}M ops/sec)",
+        cpu_time.as_secs_f64() * 1000.0,
+        (samples as f64 * iterations as f64) / (cpu_time.as_secs_f64() * 1e6)
+    );
+    println!(
+        "AVX-512:          {:8.1}ms ({:.1}M ops/sec) - {:.1}x ускорение",
+        avx_time.as_secs_f64() * 1000.0,
+        (samples as f64 * iterations as f64) / (avx_time.as_secs_f64() * 1e6),
+        cpu_time.as_secs_f64() / avx_time.as_secs_f64()
+    );
 }
 
 fn massive_trigonometric_benchmark() {
     println!("\n🔥 ТЕСТ 3: МАССИВНЫЕ ТРИГОНОМЕТРИЧЕСКИЕ ВЫЧИСЛЕНИЯ (5M samples × 2000 итераций)");
-    
+
     let samples = 5_000_000;
     let iterations = 2000;
     let mut input = vec![0.0f64; samples];
@@ -145,12 +153,12 @@ fn massive_trigonometric_benchmark() {
     let mut output_cos_cpu = vec![0.0f64; samples];
     let mut output_sin_avx = vec![0.0f64; samples];
     let mut output_cos_avx = vec![0.0f64; samples];
-    
+
     // Заполняем тестовыми данными
     for i in 0..samples {
         input[i] = (i as f64 * 0.001) % (2.0 * std::f64::consts::PI);
     }
-    
+
     // CPU тест
     println!("Запуск CPU тригонометрического теста...");
     let start_cpu = Instant::now();
@@ -161,7 +169,7 @@ fn massive_trigonometric_benchmark() {
         }
     }
     let cpu_time = start_cpu.elapsed();
-    
+
     // AVX-512 тест (имитация быстрых trigonometric функций)
     println!("Запуск AVX-512 тригонометрического теста...");
     let start_avx = Instant::now();
@@ -179,13 +187,17 @@ fn massive_trigonometric_benchmark() {
         }
     }
     let avx_time = start_avx.elapsed();
-    
+
     println!("=== РЕЗУЛЬТАТЫ МАССИВНЫХ ТРИГОНОМЕТРИЧЕСКИХ ВЫЧИСЛЕНИЙ ===");
-    println!("CPU (обычный):    {:8.1}ms ({:.1}M ops/sec)", 
-             cpu_time.as_secs_f64() * 1000.0,
-             (samples as f64 * iterations as f64 * 2.0) / (cpu_time.as_secs_f64() * 1e6));
-    println!("AVX-512:          {:8.1}ms ({:.1}M ops/sec) - {:.1}x ускорение", 
-             avx_time.as_secs_f64() * 1000.0,
-             (samples as f64 * iterations as f64 * 2.0) / (avx_time.as_secs_f64() * 1e6),
-             cpu_time.as_secs_f64() / avx_time.as_secs_f64());
+    println!(
+        "CPU (обычный):    {:8.1}ms ({:.1}M ops/sec)",
+        cpu_time.as_secs_f64() * 1000.0,
+        (samples as f64 * iterations as f64 * 2.0) / (cpu_time.as_secs_f64() * 1e6)
+    );
+    println!(
+        "AVX-512:          {:8.1}ms ({:.1}M ops/sec) - {:.1}x ускорение",
+        avx_time.as_secs_f64() * 1000.0,
+        (samples as f64 * iterations as f64 * 2.0) / (avx_time.as_secs_f64() * 1e6),
+        cpu_time.as_secs_f64() / avx_time.as_secs_f64()
+    );
 }

@@ -18,8 +18,11 @@
 //
 //----------------------------------------------------------------------
 
+use crate::{
+    BeiDouEphemeris, GlonassAlmanac, GlonassEphemeris, GpsAlmanac, GpsEphemeris, IonoParam,
+    UtcParam,
+};
 use std::ptr;
-use crate::{GpsEphemeris, BeiDouEphemeris, GpsAlmanac, GlonassAlmanac, GlonassEphemeris, UtcParam, IonoParam};
 
 // Placeholder types for BDS and Galileo almanac (to be defined later)
 pub type BdsAlmanac = GpsAlmanac;
@@ -68,34 +71,34 @@ pub struct CNavData {
     bds_ephemeris_number: usize,
     galileo_ephemeris_number: usize,
     glonass_ephemeris_number: usize,
-    
+
     gps_ephemeris_pool: Vec<GpsEphemeris>,
     bds_ephemeris_pool: Vec<BeiDouEphemeris>,
     galileo_ephemeris_pool: Vec<GpsEphemeris>,
     glonass_ephemeris_pool: Vec<GlonassEphemeris>,
-    
+
     gps_ephemeris_pool_size: usize,
     bds_ephemeris_pool_size: usize,
     galileo_ephemeris_pool_size: usize,
     glonass_ephemeris_pool_size: usize,
-    
+
     // UTC parameters
     gps_utc_param: UtcParam,
     bds_utc_param: UtcParam,
     galileo_utc_param: UtcParam,
     glonass_utc_param: UtcParam,
-    
+
     // Ionosphere parameters
     gps_iono_param: IonoParam,
     bds_iono_param: IonoParam,
     galileo_iono_param: IonoParam,
-    
+
     // Almanac data
     gps_almanac: [GpsAlmanac; 32],
     bds_almanac: [BdsAlmanac; 63],
     galileo_almanac: [GalileoAlmanac; 36],
     glonass_almanac: [GlonassAlmanac; 24],
-    
+
     // GLONASS slot frequency mapping
     glonass_slot_freq: [i32; 24],
 }
@@ -113,41 +116,39 @@ impl CNavData {
             bds_ephemeris_number: 0,
             galileo_ephemeris_number: 0,
             glonass_ephemeris_number: 0,
-            
+
             gps_ephemeris_pool: Vec::with_capacity(EPH_NUMBER_INIT),
             bds_ephemeris_pool: Vec::with_capacity(EPH_NUMBER_INIT),
             galileo_ephemeris_pool: Vec::with_capacity(EPH_NUMBER_INIT),
             glonass_ephemeris_pool: Vec::with_capacity(EPH_NUMBER_INIT),
-            
+
             gps_ephemeris_pool_size: EPH_NUMBER_INIT,
             bds_ephemeris_pool_size: EPH_NUMBER_INIT,
             galileo_ephemeris_pool_size: EPH_NUMBER_INIT,
             glonass_ephemeris_pool_size: EPH_NUMBER_INIT,
-            
+
             gps_utc_param: UtcParam::default(),
             bds_utc_param: UtcParam::default(),
             galileo_utc_param: UtcParam::default(),
             glonass_utc_param: UtcParam::default(),
-            
+
             gps_iono_param: IonoParam::default(),
             bds_iono_param: IonoParam::default(),
             galileo_iono_param: IonoParam::default(),
-            
+
             gps_almanac: [GpsAlmanac::default(); 32],
             bds_almanac: [BdsAlmanac::default(); 63],
             galileo_almanac: [GalileoAlmanac::default(); 36],
             glonass_almanac: [GlonassAlmanac::default(); 24],
-            
+
             glonass_slot_freq: [0; 24],
         };
-        
+
         // Set default FreqID for each GLONASS SLOT
         nav_data.glonass_slot_freq = [
-             1, -4,  5,  6,  1, -4,  5,  6,
-            -2, -7,  0, -1, -2, -7,  0, -1,
-             4, -3,  3,  2,  4, -3,  3,  2,
+            1, -4, 5, 6, 1, -4, 5, 6, -2, -7, 0, -1, -2, -7, 0, -1, 4, -3, 3, 2, 4, -3, 3, 2,
         ];
-        
+
         nav_data
     }
 
@@ -156,165 +157,137 @@ impl CNavData {
         match nav_type {
             NavDataType::NavDataGpsEph => {
                 if nav_data.len() >= std::mem::size_of::<GpsEphemeris>() {
-                    let eph = unsafe { 
-                        ptr::read(nav_data.as_ptr() as *const GpsEphemeris)
-                    };
+                    let eph = unsafe { ptr::read(nav_data.as_ptr() as *const GpsEphemeris) };
                     self.add_gps_ephemeris(eph)
                 } else {
                     false
                 }
-            },
+            }
             NavDataType::NavDataBdsEph => {
                 if nav_data.len() >= std::mem::size_of::<BeiDouEphemeris>() {
-                    let eph = unsafe { 
-                        ptr::read(nav_data.as_ptr() as *const BeiDouEphemeris)
-                    };
+                    let eph = unsafe { ptr::read(nav_data.as_ptr() as *const BeiDouEphemeris) };
                     self.add_beidou_ephemeris(eph)
                 } else {
                     false
                 }
-            },
+            }
             NavDataType::NavDataGalileoEph => {
                 if nav_data.len() >= std::mem::size_of::<GpsEphemeris>() {
-                    let eph = unsafe { 
-                        ptr::read(nav_data.as_ptr() as *const GpsEphemeris)
-                    };
+                    let eph = unsafe { ptr::read(nav_data.as_ptr() as *const GpsEphemeris) };
                     self.add_galileo_ephemeris(eph)
                 } else {
                     false
                 }
-            },
+            }
             NavDataType::NavDataGlonassEph => {
                 if nav_data.len() >= std::mem::size_of::<GlonassEphemeris>() {
-                    let eph = unsafe { 
-                        ptr::read(nav_data.as_ptr() as *const GlonassEphemeris)
-                    };
+                    let eph = unsafe { ptr::read(nav_data.as_ptr() as *const GlonassEphemeris) };
                     self.add_glonass_ephemeris(&eph)
                 } else {
                     false
                 }
-            },
+            }
             NavDataType::NavDataGpsAlm => {
                 if nav_data.len() >= std::mem::size_of::<[GpsAlmanac; 32]>() {
-                    let alm = unsafe { 
-                        ptr::read(nav_data.as_ptr() as *const [GpsAlmanac; 32])
-                    };
+                    let alm = unsafe { ptr::read(nav_data.as_ptr() as *const [GpsAlmanac; 32]) };
                     self.set_gps_almanac(&alm);
                     true
                 } else {
                     false
                 }
-            },
+            }
             NavDataType::NavDataBdsAlm => {
                 if nav_data.len() >= std::mem::size_of::<[BdsAlmanac; 63]>() {
-                    let alm = unsafe { 
-                        ptr::read(nav_data.as_ptr() as *const [BdsAlmanac; 63])
-                    };
+                    let alm = unsafe { ptr::read(nav_data.as_ptr() as *const [BdsAlmanac; 63]) };
                     self.set_bds_almanac(&alm);
                     true
                 } else {
                     false
                 }
-            },
+            }
             NavDataType::NavDataGalileoAlm => {
                 if nav_data.len() >= std::mem::size_of::<[GalileoAlmanac; 36]>() {
-                    let alm = unsafe { 
-                        ptr::read(nav_data.as_ptr() as *const [GalileoAlmanac; 36])
-                    };
+                    let alm =
+                        unsafe { ptr::read(nav_data.as_ptr() as *const [GalileoAlmanac; 36]) };
                     self.set_galileo_almanac(&alm);
                     true
                 } else {
                     false
                 }
-            },
+            }
             NavDataType::NavDataGlonassAlm => {
                 if nav_data.len() >= std::mem::size_of::<[GlonassAlmanac; 24]>() {
-                    let alm = unsafe { 
-                        ptr::read(nav_data.as_ptr() as *const [GlonassAlmanac; 24])
-                    };
+                    let alm =
+                        unsafe { ptr::read(nav_data.as_ptr() as *const [GlonassAlmanac; 24]) };
                     self.set_glonass_almanac(&alm);
                     true
                 } else {
                     false
                 }
-            },
+            }
             NavDataType::NavDataGpsUtc => {
                 if nav_data.len() >= std::mem::size_of::<UtcParam>() {
-                    let utc = unsafe { 
-                        ptr::read(nav_data.as_ptr() as *const UtcParam)
-                    };
+                    let utc = unsafe { ptr::read(nav_data.as_ptr() as *const UtcParam) };
                     self.set_gps_utc_param(&utc);
                     true
                 } else {
                     false
                 }
-            },
+            }
             NavDataType::NavDataBdsUtc => {
                 if nav_data.len() >= std::mem::size_of::<UtcParam>() {
-                    let utc = unsafe { 
-                        ptr::read(nav_data.as_ptr() as *const UtcParam)
-                    };
+                    let utc = unsafe { ptr::read(nav_data.as_ptr() as *const UtcParam) };
                     self.set_bds_utc_param(&utc);
                     true
                 } else {
                     false
                 }
-            },
+            }
             NavDataType::NavDataGalileoUtc => {
                 if nav_data.len() >= std::mem::size_of::<UtcParam>() {
-                    let utc = unsafe { 
-                        ptr::read(nav_data.as_ptr() as *const UtcParam)
-                    };
+                    let utc = unsafe { ptr::read(nav_data.as_ptr() as *const UtcParam) };
                     self.set_galileo_utc_param(&utc);
                     true
                 } else {
                     false
                 }
-            },
+            }
             NavDataType::NavDataGlonassUtc => {
                 if nav_data.len() >= std::mem::size_of::<UtcParam>() {
-                    let utc = unsafe { 
-                        ptr::read(nav_data.as_ptr() as *const UtcParam)
-                    };
+                    let utc = unsafe { ptr::read(nav_data.as_ptr() as *const UtcParam) };
                     self.set_glonass_utc_param(&utc);
                     true
                 } else {
                     false
                 }
-            },
+            }
             NavDataType::NavDataGpsIono => {
                 if nav_data.len() >= std::mem::size_of::<IonoParam>() {
-                    let iono = unsafe { 
-                        ptr::read(nav_data.as_ptr() as *const IonoParam)
-                    };
+                    let iono = unsafe { ptr::read(nav_data.as_ptr() as *const IonoParam) };
                     self.set_gps_iono_param(&iono);
                     true
                 } else {
                     false
                 }
-            },
+            }
             NavDataType::NavDataBdsIono => {
                 if nav_data.len() >= std::mem::size_of::<IonoParam>() {
-                    let iono = unsafe { 
-                        ptr::read(nav_data.as_ptr() as *const IonoParam)
-                    };
+                    let iono = unsafe { ptr::read(nav_data.as_ptr() as *const IonoParam) };
                     self.set_bds_iono_param(&iono);
                     true
                 } else {
                     false
                 }
-            },
+            }
             NavDataType::NavDataGalileoIono => {
                 if nav_data.len() >= std::mem::size_of::<IonoParam>() {
-                    let iono = unsafe { 
-                        ptr::read(nav_data.as_ptr() as *const IonoParam)
-                    };
+                    let iono = unsafe { ptr::read(nav_data.as_ptr() as *const IonoParam) };
                     self.set_galileo_iono_param(&iono);
                     true
                 } else {
                     false
                 }
-            },
+            }
             NavDataType::CNav => {
                 // Handle GPS CNAV navigation data
                 if nav_data.len() >= 4 {
@@ -324,7 +297,7 @@ impl CNavData {
                 } else {
                     false
                 }
-            },
+            }
             NavDataType::CNav2 => {
                 // Handle GPS CNAV-2 navigation data
                 if nav_data.len() >= 4 {
@@ -334,7 +307,7 @@ impl CNavData {
                 } else {
                     false
                 }
-            },
+            }
             NavDataType::D1D2Nav => {
                 // Handle BeiDou D1/D2 navigation data
                 if nav_data.len() >= 4 {
@@ -344,7 +317,7 @@ impl CNavData {
                 } else {
                     false
                 }
-            },
+            }
             NavDataType::INav => {
                 // Handle Galileo I/NAV navigation data
                 if nav_data.len() >= 4 {
@@ -354,7 +327,7 @@ impl CNavData {
                 } else {
                     false
                 }
-            },
+            }
             NavDataType::FNav => {
                 // Handle Galileo F/NAV navigation data
                 if nav_data.len() >= 4 {
@@ -364,7 +337,7 @@ impl CNavData {
                 } else {
                     false
                 }
-            },
+            }
             NavDataType::BCNav1 => {
                 // Handle BeiDou B1C navigation data
                 if nav_data.len() >= 4 {
@@ -374,7 +347,7 @@ impl CNavData {
                 } else {
                     false
                 }
-            },
+            }
             NavDataType::BCNav2 => {
                 // Handle BeiDou B2a navigation data
                 if nav_data.len() >= 4 {
@@ -384,7 +357,7 @@ impl CNavData {
                 } else {
                     false
                 }
-            },
+            }
             NavDataType::BCNav3 => {
                 // Handle BeiDou B2b navigation data
                 if nav_data.len() >= 4 {
@@ -394,7 +367,7 @@ impl CNavData {
                 } else {
                     false
                 }
-            },
+            }
             NavDataType::LNav => {
                 // Handle GPS L1 C/A Legacy navigation data
                 if nav_data.len() >= 4 {
@@ -404,7 +377,7 @@ impl CNavData {
                 } else {
                     false
                 }
-            },
+            }
             NavDataType::L5CNav => {
                 // Handle GPS L5 CNAV navigation data
                 if nav_data.len() >= 4 {
@@ -414,7 +387,7 @@ impl CNavData {
                 } else {
                     false
                 }
-            },
+            }
             NavDataType::GNav => {
                 // Handle GLONASS navigation data
                 if nav_data.len() >= 4 {
@@ -424,26 +397,26 @@ impl CNavData {
                 } else {
                     false
                 }
-            },
+            }
             NavDataType::Unknown => {
                 // Handle unknown navigation data type
                 // Return false as we don't know how to process it
                 false
-            },
+            }
         }
     }
 
     /// *** КРИТИЧЕСКАЯ ФУНКЦИЯ ДОБАВЛЕНИЯ GPS ЭФЕМЕРИД В МАССИВ ***
-    /// 
+    ///
     /// ЭТА ФУНКЦИЯ ОПРЕДЕЛЯЕТ КАКИЕ GPS ЭФЕМЕРИДЫ БУДУТ ДОСТУПНЫ ДЛЯ РАСЧЕТА ПОЗИЦИЙ СПУТНИКОВ!
     /// Вызывается из read_nav_file_filtered после временной фильтрации и выбора единой эпохи.
-    /// 
+    ///
     /// # Критическая логика:
     /// 1. Проверяет дублированные эфемериды по SVID + IODE
     /// 2. Если дубликат найден - заменяет (update)
     /// 3. Если нет дубликата - добавляет новую эфемериду
     /// 4. При переполнении пула - замещает самую старую эфемериду
-    /// 
+    ///
     /// # Возможные проблемы:
     /// - Размер пула ограничен EPH_NUMBER_INIT (100) эфемерид
     /// - При замещении может потеряться важная эфемерида
@@ -453,17 +426,25 @@ impl CNavData {
         // ВАЖНО: IODE используется для определения версии эфемериды, одинаковые SVID+IODE означают дубликат
         for existing_eph in &mut self.gps_ephemeris_pool {
             if existing_eph.svid == eph.svid && existing_eph.iode == eph.iode {
-                println!("[GPS-POOL] 🔄 Updating existing GPS{:02} ephemeris (IODE={})", eph.svid, eph.iode);
+                println!(
+                    "[GPS-POOL] 🔄 Updating existing GPS{:02} ephemeris (IODE={})",
+                    eph.svid, eph.iode
+                );
                 *existing_eph = eph; // Заменяем существующую эфемериду
                 return true;
             }
         }
-        
+
         // ШАГ 2: Добавляем новую эфемериду если есть место в пуле
         if self.gps_ephemeris_number < self.gps_ephemeris_pool_size {
-            println!("[GPS-POOL] ➕ Adding new GPS{:02} ephemeris (toe={}, pool:{}/{})", 
-                eph.svid, eph.toe, self.gps_ephemeris_number + 1, self.gps_ephemeris_pool_size);
-            
+            println!(
+                "[GPS-POOL] ➕ Adding new GPS{:02} ephemeris (toe={}, pool:{}/{})",
+                eph.svid,
+                eph.toe,
+                self.gps_ephemeris_number + 1,
+                self.gps_ephemeris_pool_size
+            );
+
             self.gps_ephemeris_pool.push(eph);
             self.gps_ephemeris_number += 1;
             true
@@ -483,10 +464,10 @@ impl CNavData {
     }
 
     /// *** КРИТИЧЕСКАЯ ФУНКЦИЯ ДОБАВЛЕНИЯ BEIDOU ЭФЕМЕРИД В МАССИВ ***
-    /// 
-    /// Аналогично GPS, но для системы BeiDou (COMPASS). 
+    ///
+    /// Аналогично GPS, но для системы BeiDou (COMPASS).
     /// ВАЖНО: BeiDou использует структуру GpsEphemeris для совместимости!
-    /// 
+    ///
     /// # Особенности BeiDou:
     /// - SVID диапазон: 1-63 (GEO: 1-5, IGSO: 6-17, MEO: 18-63)
     /// - Время системы BDT смещено на 14 секунд относительно GPS времени
@@ -495,17 +476,25 @@ impl CNavData {
         // ШАГ 1: Проверяем дублированные BeiDou эфемериды по SVID + IODE
         for existing_eph in &mut self.bds_ephemeris_pool {
             if existing_eph.svid == eph.svid && existing_eph.iode == eph.iode {
-                println!("[BDS-POOL] 🔄 Updating existing BDS{:02} ephemeris (IODE={})", eph.svid, eph.iode);
+                println!(
+                    "[BDS-POOL] 🔄 Updating existing BDS{:02} ephemeris (IODE={})",
+                    eph.svid, eph.iode
+                );
                 *existing_eph = eph;
                 return true;
             }
         }
-        
+
         // ШАГ 2: Добавляем новую BeiDou эфемериду если есть место в пуле
         if self.bds_ephemeris_number < self.bds_ephemeris_pool_size {
-            println!("[BDS-POOL] ➕ Adding new BDS{:02} ephemeris (toe={}, pool:{}/{})", 
-                eph.svid, eph.toe, self.bds_ephemeris_number + 1, self.bds_ephemeris_pool_size);
-            
+            println!(
+                "[BDS-POOL] ➕ Adding new BDS{:02} ephemeris (toe={}, pool:{}/{})",
+                eph.svid,
+                eph.toe,
+                self.bds_ephemeris_number + 1,
+                self.bds_ephemeris_pool_size
+            );
+
             self.bds_ephemeris_pool.push(eph);
             self.bds_ephemeris_number += 1;
             true
@@ -524,10 +513,10 @@ impl CNavData {
     }
 
     /// *** КРИТИЧЕСКАЯ ФУНКЦИЯ ДОБАВЛЕНИЯ GALILEO ЭФЕМЕРИД В МАССИВ ***
-    /// 
+    ///
     /// Аналогично GPS/BeiDou, но для европейской системы Galileo.
     /// ВАЖНО: Galileo также использует структуру GpsEphemeris для совместимости!
-    /// 
+    ///
     /// # Особенности Galileo:
     /// - SVID диапазон: 1-36 (полная констелляция 30 спутников + резерв)
     /// - Время системы GST (Galileo System Time) синхронизировано с GPS
@@ -537,17 +526,25 @@ impl CNavData {
         // ШАГ 1: Проверяем дублированные Galileo эфемериды по SVID + IODE
         for existing_eph in &mut self.galileo_ephemeris_pool {
             if existing_eph.svid == eph.svid && existing_eph.iode == eph.iode {
-                println!("[GAL-POOL] 🔄 Updating existing GAL{:02} ephemeris (IODE={})", eph.svid, eph.iode);
+                println!(
+                    "[GAL-POOL] 🔄 Updating existing GAL{:02} ephemeris (IODE={})",
+                    eph.svid, eph.iode
+                );
                 *existing_eph = eph;
                 return true;
             }
         }
-        
+
         // ШАГ 2: Добавляем новую Galileo эфемериду если есть место в пуле
         if self.galileo_ephemeris_number < self.galileo_ephemeris_pool_size {
-            println!("[GAL-POOL] ➕ Adding new GAL{:02} ephemeris (toe={}, pool:{}/{})", 
-                eph.svid, eph.toe, self.galileo_ephemeris_number + 1, self.galileo_ephemeris_pool_size);
-            
+            println!(
+                "[GAL-POOL] ➕ Adding new GAL{:02} ephemeris (toe={}, pool:{}/{})",
+                eph.svid,
+                eph.toe,
+                self.galileo_ephemeris_number + 1,
+                self.galileo_ephemeris_pool_size
+            );
+
             self.galileo_ephemeris_pool.push(eph);
             self.galileo_ephemeris_number += 1;
             true
@@ -574,7 +571,7 @@ impl CNavData {
                 return true;
             }
         }
-        
+
         // Add new ephemeris
         if self.glonass_ephemeris_number < self.glonass_ephemeris_pool_size {
             self.glonass_ephemeris_pool.push(*eph);
@@ -593,19 +590,27 @@ impl CNavData {
 
     // Getter methods for ephemeris
     pub fn get_gps_ephemeris(&self, svid: i32) -> Option<&GpsEphemeris> {
-        self.gps_ephemeris_pool.iter().find(|eph| i32::from(eph.svid) == svid && eph.valid != 0)
+        self.gps_ephemeris_pool
+            .iter()
+            .find(|eph| i32::from(eph.svid) == svid && eph.valid != 0)
     }
 
     pub fn get_bds_ephemeris(&self, svid: i32) -> Option<&BeiDouEphemeris> {
-        self.bds_ephemeris_pool.iter().find(|eph| i32::from(eph.svid) == svid && eph.valid != 0)
+        self.bds_ephemeris_pool
+            .iter()
+            .find(|eph| i32::from(eph.svid) == svid && eph.valid != 0)
     }
 
     pub fn get_galileo_ephemeris(&self, svid: i32) -> Option<&GpsEphemeris> {
-        self.galileo_ephemeris_pool.iter().find(|eph| i32::from(eph.svid) == svid && eph.valid != 0)
+        self.galileo_ephemeris_pool
+            .iter()
+            .find(|eph| i32::from(eph.svid) == svid && eph.valid != 0)
     }
 
     pub fn get_glonass_ephemeris(&self, slot: i32) -> Option<&GlonassEphemeris> {
-        self.glonass_ephemeris_pool.iter().find(|eph| i32::from(eph.slot) == slot && eph.valid != 0)
+        self.glonass_ephemeris_pool
+            .iter()
+            .find(|eph| i32::from(eph.slot) == slot && eph.valid != 0)
     }
 
     // Setter methods for almanac
@@ -791,5 +796,4 @@ impl CNavData {
         self.galileo_iono_param.a2 = a2;
         self.galileo_iono_param.flag = 1;
     }
-
 }
