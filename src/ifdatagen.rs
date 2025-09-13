@@ -39,7 +39,7 @@ use crate::json_parser::JsonObject;
 use crate::avx512_intrinsics::SafeAvx512Processor;
 #[cfg(feature = "gpu")]
 use crate::cuda_acceleration::{CudaGnssAccelerator, HybridAccelerator};
-use crate::gnsstime::{utc_to_gps_time, utc_to_glonass_time_corrected, utc_to_bds_time};
+use crate::gnsstime::{utc_to_gps_time, utc_to_glonass_time_corrected, utc_to_bds_time, utc_to_galileo_time};
 use crate::coordinate::{lla_to_ecef, ecef_to_lla, speed_local_to_ecef, calc_conv_matrix_lla};
 use crate::{lnavbit::LNavBit, l5cnavbit::L5CNavBit, gnavbit::GNavBit};
 use crate::{cnavbit::CNavBit as ActualCNavBit, cnav2bit::CNav2Bit as ActualCNav2Bit};
@@ -3382,63 +3382,49 @@ impl IFDataGen {
     fn copy_ephemeris_from_json_nav_data(&mut self, c_nav_data: &crate::json_interpreter::CNavData, utc_time: UtcTime) {
         println!("[INFO]\tCopying GPS ephemeris from JSON CNavData");
         println!("[DEBUG] Source has {} GPS ephemeris records", c_nav_data.gps_ephemeris.len());
-        
-        // Критическое преобразование: UTC время из пресета -> GPS время для сравнения с toe (time of ephemeris)
-        // GPS время необходимо, так как все эфемериды содержат toe в GPS временной шкале
-        let target_gps_time = utc_to_gps_time(utc_time, false);
-        let target_time = (target_gps_time.MilliSeconds as f64) / 1000.0; // Конвертация в секунды GPS времени
-        
-        // Алгоритм выбора оптимальных эфемерид: для каждого SVID найти эфемериду с минимальным |Δt|
-        for svid in 1..=TOTAL_GPS_SAT {
-            let mut best_eph: Option<GpsEphemeris> = None;     // Лучшая найденная эфемерида для текущего SVID
-            let mut best_time_diff = f64::INFINITY;            // Минимальная временная разность в секундах
-            let mut available_count = 0;  // Количество доступных эфемерид для данного SVID
-            
-            // Перебор всех доступных эфемерид для поиска оптимальной по времени
-            for eph in &c_nav_data.gps_ephemeris {
-                if eph.svid == svid as u8 {
-                    available_count += 1;
-                    // Вычисление абсолютной временной разности между целевым временем и toe эфемериды
-                    let time_diff = (target_time - eph.toe as f64).abs();
-                    if time_diff < best_time_diff {
-                        best_time_diff = time_diff;
-                        best_eph = Some(*eph);                // Сохранение лучшей эфемериды
-                    }
-                }
-            }
-            
-            // Применение выбранной эфемериды к соответствующему слоту массива
-            if let Some(eph) = best_eph {
-                let index = svid - 1;              // Преобразование SVID (1-32) в индекс массива (0-31)
-                self.gps_eph[index] = Some(eph);
-                println!("[DEBUG] GPS{:02} - Selected ephemeris: toe={}, time_diff={:.1}h, valid={}, health={}", 
-                         svid, eph.toe, best_time_diff / 3600.0, eph.valid, eph.health);
-            } else if available_count == 0 {
-                println!("[DEBUG] GPS{:02} - No ephemeris data available", svid);
-            }
-        }
-        
-        // Верификация результатов выбора: подсчет количества успешно размещенных эфемерид
-        let mut verified_count = 0;
-        for i in 0..TOTAL_GPS_SAT {
-            if self.gps_eph[i].is_some() {
-                verified_count += 1;                          // Подсчет слотов с выбранными эфемеридами
-            }
-        }
-        
-        // Дублирование в nav_data структуру для обеспечения обратной совместимости с legacy кодом
-        // Критично: legacy части системы могут обращаться к nav_data.gps_ephemeris массиву
-        if self.nav_data.gps_ephemeris.len() < 32 {
-            self.nav_data.gps_ephemeris.resize(32, None);     // Гарантированное выделение для 32 GPS спутников
-        }
-        // Копирование всех исходных эфемерид в nav_data (без временной фильтрации)
+
+        use std::collections::{HashMap, HashSet};
+        // Целевое время в секундах от GPS эпохи
+        let target = utc_to_gps_time(utc_time, false);
+        let target_abs = (target.Week as i64) * 604800 + (target.MilliSeconds as i64) / 1000;
+
+        // Группируем эфемериды по (week, toe)
+        let mut by_epoch: HashMap<(i32, i32), HashMap<u8, GpsEphemeris>> = HashMap::new();
+        let mut epochs: HashSet<(i32, i32)> = HashSet::new();
         for eph in &c_nav_data.gps_ephemeris {
-            if (eph.svid as usize) <= 32 && eph.svid > 0 {
-                self.nav_data.gps_ephemeris[eph.svid as usize - 1] = Some(*eph);
-            }
+            let key = (eph.week, eph.toe);
+            epochs.insert(key);
+            by_epoch.entry(key).or_default().insert(eph.svid, *eph);
         }
-        
-        println!("[INFO]\tSelected {} GPS ephemeris records using time-based algorithm", verified_count);
+
+        // Выбираем одну epoch (week,toe) с минимальной |Δt|
+        let mut best_key: Option<(i32, i32)> = None;
+        let mut best_diff = i64::MAX;
+        for &(w, toe) in &epochs {
+            let epoch_abs = (w as i64) * 604800 + (toe as i64);
+            let diff = (epoch_abs - target_abs).abs();
+            if diff < best_diff { best_diff = diff; best_key = Some((w, toe)); }
+        }
+
+        // Очищаем массив и заполняем только эфемеридами выбранной эпохи
+        self.gps_eph.fill(None);
+        if let Some(key) = best_key {
+            if let Some(map) = by_epoch.get(&key) {
+                for (&svid, eph) in map {
+                    let idx = (svid as usize).saturating_sub(1);
+                    if idx < TOTAL_GPS_SAT { self.gps_eph[idx] = Some(*eph); }
+                }
+                println!("[INFO]\tGPS epoch selected: week={}, toe={} (Δt={:.1}h), sats={}", key.0, key.1, best_diff as f64 / 3600.0, map.len());
+            }
+        } else {
+            println!("[WARN]\tNo GPS epochs available after grouping");
+        }
+
+        // Поддержка legacy: скопируем все исходные эфемериды в nav_data (как справочник)
+        if self.nav_data.gps_ephemeris.len() < 32 { self.nav_data.gps_ephemeris.resize(32, None); }
+        for eph in &c_nav_data.gps_ephemeris {
+            if (eph.svid as usize) <= 32 && eph.svid > 0 { self.nav_data.gps_ephemeris[eph.svid as usize - 1] = Some(*eph); }
+        }
     }
 
     /// Функция интеллектуального выбора BeiDou эфемерид с унифицированным алгоритмом временного отбора
@@ -3459,34 +3445,39 @@ impl IFDataGen {
         println!("[INFO]\tCopying BeiDou ephemeris from JSON CNavData");
         println!("[DEBUG] Source has {} BeiDou ephemeris records", c_nav_data.beidou_ephemeris.len());
         
-        // Унифицированное преобразование времени: UTC -> GPS время для консистентности с GPS алгоритмом
-        // Важно: несмотря на то, что BeiDou использует BDT, для выбора эфемерид применяется GPS время
-        let target_gps_time = utc_to_gps_time(utc_time, false);
-        let target_time = (target_gps_time.MilliSeconds as f64) / 1000.0; // Целевое время в секундах GPS
-        
-        // Идентичный GPS алгоритм выбора: поиск эфемериды с минимальной временной разностью
-        for svid in 1..=TOTAL_BDS_SAT {
-            let mut best_eph: Option<GpsEphemeris> = None;     // Оптимальная эфемерида для текущего BeiDou SVID
-            let mut best_time_diff = f64::INFINITY;            // Минимальная найденная временная разность
-            
-            // Поиск среди всех доступных BeiDou эфемерид для данного SVID
-            for eph in &c_nav_data.beidou_ephemeris {
-                if eph.svid == svid as u8 {
-                    // Критерий выбора: минимальная абсолютная разность времен
-                    let time_diff = (target_time - eph.toe as f64).abs();
-                    if time_diff < best_time_diff {
-                        best_time_diff = time_diff;
-                        best_eph = Some(eph.to_gps_ephemeris());                // Обновление лучшего кандидата (конвертируем BeiDou в GPS)
-                    }
+        // Целевое время в секундах от BDT эпохи
+        use std::collections::{HashMap, HashSet};
+        let target_bds = utc_to_bds_time(utc_time);
+        let target_abs = (target_bds.Week as i64) * 604800 + (target_bds.MilliSeconds as i64) / 1000;
+
+        // Группируем по (week, toe) в BDT
+        let mut by_epoch: HashMap<(i32, i32), HashMap<u8, BeiDouEphemeris>> = HashMap::new();
+        let mut epochs: HashSet<(i32, i32)> = HashSet::new();
+        for eph in &c_nav_data.beidou_ephemeris {
+            let key = (eph.week, eph.toe);
+            epochs.insert(key);
+            by_epoch.entry(key).or_default().insert(eph.svid, *eph);
+        }
+        // Выбор ближайшей эпохи
+        let mut best_key: Option<(i32, i32)> = None;
+        let mut best_diff = i64::MAX;
+        for &(w, toe) in &epochs {
+            let epoch_abs = (w as i64) * 604800 + (toe as i64);
+            let diff = (epoch_abs - target_abs).abs();
+            if diff < best_diff { best_diff = diff; best_key = Some((w, toe)); }
+        }
+        // Заполняем self.bds_eph из выбранной эпохи
+        self.bds_eph.fill(None);
+        if let Some(key) = best_key {
+            if let Some(map) = by_epoch.get(&key) {
+                for (&svid, bds) in map {
+                    let idx = (svid as usize).saturating_sub(1);
+                    if idx < TOTAL_BDS_SAT { self.bds_eph[idx] = Some(bds.to_gps_ephemeris()); }
                 }
+                println!("[INFO]\tBDS epoch selected: week={}, toe={} (Δt={:.1}h), sats={}", key.0, key.1, best_diff as f64 / 3600.0, map.len());
             }
-            
-            // Размещение выбранной эфемериды в соответствующем слоте BeiDou массива
-            if let Some(eph) = best_eph {
-                let index = svid - 1;              // SVID (1-N) -> array index (0-(N-1))
-                self.bds_eph[index] = Some(eph);
-                println!("[DEBUG] BDS{:02} - Selected ephemeris with toe={}, time_diff={:.1}h", svid, eph.toe, best_time_diff / 3600.0);
-            }
+        } else {
+            println!("[WARN]\tNo BDS epochs available after grouping");
         }
         
         // Статистическая верификация: подсчет эфемерид, успешно прошедших временной отбор
@@ -3531,40 +3522,40 @@ impl IFDataGen {
         println!("[INFO]\tCopying Galileo ephemeris from JSON CNavData");
         println!("[DEBUG] Source has {} Galileo ephemeris records", c_nav_data.galileo_ephemeris.len());
         
-        // Стандартизированное преобразование времени для обеспечения единообразия алгоритма выбора
-        // Критически важно: все GNSS системы используют одинаковую временную базу для сравнения
-        let target_gps_time = utc_to_gps_time(utc_time, false);
-        let target_time = (target_gps_time.MilliSeconds as f64) / 1000.0; // Эталонное время в секундах GPS
-        
-        // Реализация унифицированного алгоритма выбора с расширенной статистикой
-        let mut gal_count = 0;                                // Счетчик успешно выбранных эфемерид
-        for svid in 1..=TOTAL_GAL_SAT {
-            let mut best_eph: Option<GpsEphemeris> = None;     // Лучшая эфемерида для текущего Galileo SVID
-            let mut best_time_diff = f64::INFINITY;            // Минимальная временная разность
-            
-            // Алгоритм поиска оптимальной эфемериды: минимизация |target_time - toe|
-            for eph in &c_nav_data.galileo_ephemeris {
-                if eph.svid == svid as u8 {
-                    // Основной критерий: абсолютная временная разность между целевым временем и toe
-                    let time_diff = (target_time - eph.toe as f64).abs();
-                    if time_diff < best_time_diff {
-                        best_time_diff = time_diff;
-                        best_eph = Some(*eph);                // Сохранение оптимального кандидата
-                    }
+        // Целевое время в секундах от GST эпохи
+        use std::collections::{HashMap, HashSet};
+        let target_gal = utc_to_galileo_time(utc_time);
+        let target_abs = (target_gal.Week as i64) * 604800 + (target_gal.MilliSeconds as i64) / 1000;
+
+        // Группируем по (week, toe) для Galileo
+        let mut by_epoch: HashMap<(i32, i32), HashMap<u8, GpsEphemeris>> = HashMap::new();
+        let mut epochs: HashSet<(i32, i32)> = HashSet::new();
+        for eph in &c_nav_data.galileo_ephemeris {
+            let key = (eph.week, eph.toe);
+            epochs.insert(key);
+            by_epoch.entry(key).or_default().insert(eph.svid, *eph);
+        }
+        // Выбираем ближний (week,toe)
+        let mut best_key: Option<(i32, i32)> = None;
+        let mut best_diff = i64::MAX;
+        for &(w, toe) in &epochs {
+            let epoch_abs = (w as i64) * 604800 + (toe as i64);
+            let diff = (epoch_abs - target_abs).abs();
+            if diff < best_diff { best_diff = diff; best_key = Some((w, toe)); }
+        }
+        // Заполняем self.gal_eph из выбранной эпохи
+        self.gal_eph.fill(None);
+        let mut gal_count = 0;
+        if let Some(key) = best_key {
+            if let Some(map) = by_epoch.get(&key) {
+                for (&svid, eph) in map {
+                    let idx = (svid as usize).saturating_sub(1);
+                    if idx < TOTAL_GAL_SAT { self.gal_eph[idx] = Some(*eph); gal_count += 1; }
                 }
+                println!("[INFO]\tGAL epoch selected: week={}, toe={} (Δt={:.1}h), sats={}", key.0, key.1, best_diff as f64 / 3600.0, gal_count);
             }
-            
-            // Применение выбранной эфемериды с расширенной диагностикой
-            if let Some(eph) = best_eph {
-                let index = svid - 1;              // Конвертация SVID в индекс массива
-                self.gal_eph[index] = Some(eph);
-                gal_count += 1;
-                // Расширенная отладка для эталонных спутников
-                if [14, 15, 29, 30, 34].contains(&(svid as u8)) || gal_count <= 5 {
-                    println!("[DEBUG] Selected best Galileo ephemeris for SVID {} - toe={}, time_diff={:.1}h (valid:{}, health:{})", 
-                        svid, eph.toe, best_time_diff / 3600.0, eph.valid, eph.health);
-                }
-            }
+        } else {
+            println!("[WARN]\tNo Galileo epochs available after grouping");
         }
         
         // Финальная верификация корректности алгоритма выбора эфемерид
