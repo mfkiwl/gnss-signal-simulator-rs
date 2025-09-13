@@ -1216,17 +1216,17 @@ impl IFDataGen {
                         continue;
                     }
                     
-                    // КАК В C ВЕРСИИ: передаем только секунды недели для BeiDou
-                    let transmit_time = (self.cur_time.MilliSeconds as f64) / 1000.0;
+            // Для BeiDou используем секунды недели в шкале BDT
+            let utc_now = crate::gnsstime::gps_time_to_utc(self.cur_time, true);
+            let bds_now = crate::gnsstime::utc_to_bds_time(utc_now);
+            let transmit_time = (bds_now.MilliSeconds as f64) / 1000.0;
                     let mut sat_pos = KinematicInfo::default();
                     let mut eph_mut = *eph; // Копируем эфемериды для мутабельности
                     let pos_calc_success = crate::coordinate::gps_sat_pos_speed_eph(GnssSystem::BdsSystem, transmit_time, &mut eph_mut, &mut sat_pos, None);
-                    if i < 5 { // Логируем только первые 5 для отладки
-                        // Для отладочного вывода используем секунды недели
-                    let transmit_time_week_seconds = (self.cur_time.MilliSeconds as f64) / 1000.0;
-                    let delta_t_bds = transmit_time_week_seconds - eph.toe as f64;
-                    println!("[DEBUG] BDS{:02} toe={}, transmit_time_week={}, delta_t={:.1}h", eph.svid, eph.toe, transmit_time_week_seconds, delta_t_bds / 3600.0);
-                    }
+            if i < 5 { // Логируем только первые 5 для отладки
+                let delta_t_bds = transmit_time - eph.toe as f64;
+                println!("[DEBUG] BDS{:02} toe={}, transmit_time_week(BDT)={:.1}, delta_t={:.1}h", eph.svid, eph.toe, transmit_time, delta_t_bds / 3600.0);
+            }
                     if pos_calc_success {
                         println!("[DEBUG] BeiDou sat pos calculated: ({:.1}, {:.1}, {:.1})", sat_pos.x, sat_pos.y, sat_pos.z);
                         let mut elevation = 0.0;
@@ -1254,8 +1254,10 @@ impl IFDataGen {
                 
                 for j in 0..sat_number {
                     if let Some(eph) = &self.bds_eph_visible[j] {
-                        // КАК В C ВЕРСИИ: передаем только секунды недели для BeiDou
-                        let transmit_time = (self.cur_time.MilliSeconds as f64) / 1000.0;
+                        // Для BeiDou используем секунды недели в шкале BDT
+                        let utc_now = crate::gnsstime::gps_time_to_utc(self.cur_time, true);
+                        let bds_now = crate::gnsstime::utc_to_bds_time(utc_now);
+                        let transmit_time = (bds_now.MilliSeconds as f64) / 1000.0;
                         let mut sat_pos_vel = KinematicInfo::default();
                         let mut eph_mut = *eph;
                         
@@ -1320,14 +1322,14 @@ impl IFDataGen {
                         continue;
                     }
                     
-                    // КАК В C ВЕРСИИ: передаем только секунды недели для Galileo
-                    let transmit_time = (self.cur_time.MilliSeconds as f64) / 1000.0;
+                    // Для Galileo используем секунды недели в шкале GST
+                    let utc_now = crate::gnsstime::gps_time_to_utc(self.cur_time, true);
+                    let gal_now = crate::gnsstime::utc_to_galileo_time(utc_now);
+                    let transmit_time = (gal_now.MilliSeconds as f64) / 1000.0;
                     let mut sat_pos = KinematicInfo::default();
                     let mut eph_mut = *eph; // Копируем эфемериды для мутабельности
-                    // Для отладочного вывода используем секунды недели
-                    let transmit_time_week_seconds = (self.cur_time.MilliSeconds as f64) / 1000.0;
-                    let delta_t = transmit_time_week_seconds - eph.toe as f64;
-                    println!("[DEBUG] GAL{:02} - toe={}, transmit_time_week={}, delta_t={:.1}h", i+1, eph.toe, transmit_time_week_seconds, delta_t / 3600.0);
+                    let delta_t = transmit_time - eph.toe as f64;
+                    println!("[DEBUG] GAL{:02} - toe={}, transmit_time_week(GST)={:.1}, delta_t={:.1}h", i+1, eph.toe, transmit_time, delta_t / 3600.0);
                     let pos_calc_success = crate::coordinate::gps_sat_pos_speed_eph(GnssSystem::GalileoSystem, transmit_time, &mut eph_mut, &mut sat_pos, None);
                     println!("[DEBUG] GAL{:02} - pos_calc_success={}, sat_pos=({:.1}, {:.1}, {:.1})", i+1, pos_calc_success, sat_pos.x, sat_pos.y, sat_pos.z);
                     if pos_calc_success {
@@ -1364,8 +1366,10 @@ impl IFDataGen {
                 
                 for j in 0..sat_number {
                     if let Some(eph) = &self.gal_eph_visible[j] {
-                        // КАК В C ВЕРСИИ: передаем только секунды недели для Galileo
-                        let transmit_time = (self.cur_time.MilliSeconds as f64) / 1000.0;
+                        // Для Galileo используем секунды недели в шкале GST
+                        let utc_now = crate::gnsstime::gps_time_to_utc(self.cur_time, true);
+                        let gal_now = crate::gnsstime::utc_to_galileo_time(utc_now);
+                        let transmit_time = (gal_now.MilliSeconds as f64) / 1000.0;
                         let mut sat_pos_vel = KinematicInfo::default();
                         let mut eph_mut = *eph;
                         
@@ -2781,7 +2785,9 @@ impl IFDataGen {
             if let Some(eph) = &self.bds_eph_visible[i] {
                 // Рассчитываем параметры спутника для правильного доплера
                 let position_lla = ecef_to_lla(&cur_pos); 
-                let bds_time = self.cur_time; // используем текущее время
+                // Используем BDT как секунды недели
+                let utc_now = crate::gnsstime::gps_time_to_utc(self.cur_time, true);
+                let bds_time = crate::gnsstime::utc_to_bds_time(utc_now);
                 
                 // BeiDou использует модель NeQuick или Klobuchar (используем GPS параметры как fallback)
                 let default_iono = IonoParam {
@@ -2844,7 +2850,9 @@ impl IFDataGen {
             if let Some(eph) = &self.gal_eph_visible[i] {
                 // Рассчитываем параметры спутника для правильного доплера
                 let position_lla = ecef_to_lla(&cur_pos); 
-                let gal_time = self.cur_time; // используем текущее время
+                // Используем GST как секунды недели
+                let utc_now = crate::gnsstime::gps_time_to_utc(self.cur_time, true);
+                let gal_time = crate::gnsstime::utc_to_galileo_time(utc_now);
                 
                 // Galileo использует модель NeQuick (используем GPS параметры как fallback)
                 let default_iono = IonoParam {
