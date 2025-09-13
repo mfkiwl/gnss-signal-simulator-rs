@@ -3254,6 +3254,13 @@ where
     // Парсим первую строку (время + 3 параметра)
     let svid = read_contents_time(line, &mut data[0..3])?;
 
+    // Дополнительно извлекаем календарную эпоху из заголовка
+    // и переводим её в GLONASS-время для корректного поля day
+    let epoch_utc = parse_epoch_from_header_line(line)?;
+    let gtime = crate::gnsstime::utc_to_glonass_time_corrected(epoch_utc);
+    let seconds_of_day = (epoch_utc.Hour * 3600 + epoch_utc.Minute * 60) as i32
+        + epoch_utc.Second.floor() as i32;
+
     // Читаем 3 строки данных (как в C++ версии)
     for i in 0..3 {
         if let Some(Ok(data_line)) = lines.next() {
@@ -3277,8 +3284,8 @@ where
         Ft: 0,                // Нет данных
         Bn: data[6] as u8,
         En: data[14] as u8,
-        tb: 0,  // Будет вычислен ниже
-        day: 1, // Заглушка
+        tb: 0,                                  // Будет вычислен ниже
+        day: gtime.Day as u16,                  // Совместимо с нашим GlonassTime::Day
         gamma: data[1],
         tn: -data[0], // Clock bias (знак меняется)
         dtn: 0.0,     // Нет в RINEX
@@ -3298,14 +3305,14 @@ where
         PosVelT: KinematicInfo::default(),
     };
 
-    // Вычисляем tk из data[2] (секунды дня)
-    let tk_seconds = data[2] as i32;
+    // Вычисляем tk из заголовка (секунды дня) — надёжнее, чем полагаться на формат tk в некоторых RINEX
+    let tk_seconds = seconds_of_day;
     let hours = tk_seconds / 3600;
     let minutes = (tk_seconds % 3600) / 60;
     let half_minutes = (tk_seconds % 60) / 30;
     eph.tk = ((hours << 7) | (minutes << 1) | half_minutes) as u16;
 
-    // Вычисляем tb (опорное время в 15-минутных интервалах)
+    // Вычисляем tb (опорное время в 15-минутных интервалах) по ближайшему 15-минутному интервалу
     eph.tb = ((tk_seconds + 450) / 900 * 900) as u32;
 
     // Устанавливаем P2 бит в зависимости от tb

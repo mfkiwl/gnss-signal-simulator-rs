@@ -1413,19 +1413,13 @@ impl IFDataGen {
 
         // 4) ГЛОНАСС (UTC→ГЛОНАСС) — окно 1800с
         let gtime = utc_to_glonass_time_corrected(utc_time);
-        let req_day = gtime.Day;
         let req_sec = (gtime.MilliSeconds / 1000) as i64;
         for slot in 1..=TOTAL_GLO_SAT {
             let mut best: Option<(crate::types::GlonassEphemeris, i64)> = None;
             for eph in &c_nav_data.glonass_ephemeris {
                 if eph.slot as usize == slot && eph.flag != 0 {
-                    let mut day_diff = (req_day - eph.day as i32) as i64;
-                    if day_diff > 183 {
-                        day_diff -= 365;
-                    } else if day_diff < -183 {
-                        day_diff += 365;
-                    }
-                    let diff = day_diff * 86400 + (req_sec - eph.tb as i64);
+                    // Приводим сравнение к секундам суток: многие RINEX не содержат корректный day для ГЛОНАСС
+                    let diff = (req_sec - eph.tb as i64);
                     let ad = diff.abs();
                     if ad <= 1800 && best.map_or(true, |(_, bd)| ad < bd) {
                         best = Some((*eph, ad));
@@ -4957,6 +4951,24 @@ impl IFDataGen {
             match epoch_selection.as_str() {
                 "global" => self.select_global_epochs_and_fill(&c_nav_data, utc_time),
                 _ => self.select_per_satellite_and_fill(&c_nav_data, utc_time),
+            }
+
+            // КРИТИЧЕСКО: Синхронизируем внутренний NavData для GLONASS,
+            // чтобы initialize() мог найти эфемериды через find_glo_ephemeris
+            // Очищаем и заполняем только релевантные слоты
+            self.nav_data.glonass_ephemeris.clear();
+            // Гарантируем размер вектора не меньше 24
+            if self.nav_data.glonass_ephemeris.len() < TOTAL_GLO_SAT {
+                self.nav_data
+                    .glonass_ephemeris
+                    .resize(TOTAL_GLO_SAT, None);
+            }
+            for slot in 0..TOTAL_GLO_SAT {
+                if let Some(eph) = self.glo_eph[slot] {
+                    self.nav_data.glonass_ephemeris[slot] = Some(eph);
+                } else {
+                    self.nav_data.glonass_ephemeris[slot] = None;
+                }
             }
 
             println!("[INFO]\tMinimal ephemeris loaded successfully");
