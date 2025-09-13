@@ -143,7 +143,14 @@ impl ComputationCache {
     
     /// Обновляет кэш вычислений
     pub fn update(&mut self, cn0: f64, sample_number: i32, if_freq: f64, chip_rate: f64) {
-        self.cached_amp = 10.0_f64.powf((cn0 - 3000.0) / 1000.0) / (sample_number as f64).sqrt();
+        // ФИЗИЧЕСКИ КОРРЕКТНАЯ ФОРМУЛА АМПЛИТУДЫ
+        // A = sqrt(2 * C/N0_linear / Fs)
+        // где Fs - частота дискретизации в Гц
+        let cn0_db = cn0 / 100.0;
+        let cn0_linear = 10.0_f64.powf(cn0_db / 10.0);
+        let fs = sample_number as f64 * 1000.0;
+        self.cached_amp = (2.0 * cn0_linear / fs).sqrt();
+        
         self.cached_code_step = chip_rate / (sample_number as f64);
         self.cached_phase_step = (if_freq / 1000.0) / (sample_number as f64);
         self.cached_chip_rate = chip_rate;

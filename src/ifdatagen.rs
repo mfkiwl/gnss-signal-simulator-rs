@@ -1533,7 +1533,7 @@ impl IFDataGen {
         println!("[INFO]\tSignal Size: {:.2} MB", total_mb);
         println!("[INFO]\tSignal Data format: {}", if self.output_param.Format == OutputFormat::OutputFormatIQ4 { "IQ4" } else { "IQ8" });
         println!("[INFO]\tSignal Center freq: {:.4} MHz", self.output_param.CenterFreq as f64 / 1_000_000.0);
-        println!("[INFO]\tSignal Sample rate: {:.2} MHz", self.output_param.SampleFreq);
+        println!("[INFO]\tSignal Sample rate: {:.2} MHz", self.output_param.SampleFreq as f64 / 1_000_000.0);
         
         if debug_mode {
             println!("[PERF]\tDEBUG MODE: Using fast test signals instead of full GNSS generation");
@@ -2983,19 +2983,42 @@ impl IFDataGen {
                 // Парсим координаты из initPosition
                 if let Some(trajectory) = json.get("trajectory") {
                     if let Some(init_pos) = trajectory.get("initPosition") {
-                        if let (Some(longitude), Some(latitude), Some(altitude)) = (
-                            init_pos.get("longitude").and_then(|v| v.as_f64()),
-                            init_pos.get("latitude").and_then(|v| v.as_f64()),
-                            init_pos.get("altitude").and_then(|v| v.as_f64())
-                        ) {
-                            start_pos.lon = longitude.to_radians();
-                            start_pos.lat = latitude.to_radians();
-                            start_pos.alt = altitude;
-                            println!("[INFO] Parsed position from JSON: lat={:.6}°, lon={:.6}°, alt={:.1}m", 
-                                     latitude, longitude, altitude);
-                            
-                            // Сохраняем координаты в структуре
-                            self.start_pos = start_pos;
+                        let pos_type = init_pos.get("type").and_then(|v| v.as_str()).unwrap_or("LLA");
+                        let format = init_pos.get("format").and_then(|v| v.as_str()).unwrap_or("d");
+                        if pos_type.eq_ignore_ascii_case("LLA") {
+                            if let (Some(longitude), Some(latitude), Some(altitude)) = (
+                                init_pos.get("longitude").and_then(|v| v.as_f64()),
+                                init_pos.get("latitude").and_then(|v| v.as_f64()),
+                                init_pos.get("altitude").and_then(|v| v.as_f64())
+                            ) {
+                                // format: "d" (degrees), "rad" (radians)
+                                let (lon_rad, lat_rad) = if format.eq_ignore_ascii_case("rad") {
+                                    (longitude, latitude)
+                                } else { // по умолчанию градусы
+                                    (longitude.to_radians(), latitude.to_radians())
+                                };
+                                start_pos.lon = lon_rad;
+                                start_pos.lat = lat_rad;
+                                start_pos.alt = altitude;
+                                println!("[INFO] Parsed position (LLA) from JSON: lat={:.6} {}, lon={:.6} {}, alt={:.1} m", 
+                                         if format.eq_ignore_ascii_case("rad") { latitude.to_degrees() } else { latitude },
+                                         if format.eq_ignore_ascii_case("rad") { "°" } else { "°" },
+                                         if format.eq_ignore_ascii_case("rad") { longitude.to_degrees() } else { longitude },
+                                         if format.eq_ignore_ascii_case("rad") { "°" } else { "°" },
+                                         altitude);
+                                self.start_pos = start_pos;
+                            }
+                        } else if pos_type.eq_ignore_ascii_case("ECEF") {
+                            if let (Some(x), Some(y), Some(z)) = (
+                                init_pos.get("x").and_then(|v| v.as_f64()),
+                                init_pos.get("y").and_then(|v| v.as_f64()),
+                                init_pos.get("z").and_then(|v| v.as_f64())
+                            ) {
+                                let ecef = KinematicInfo { x, y, z, ..Default::default() };
+                                let lla = ecef_to_lla(&ecef);
+                                self.start_pos = lla;
+                                println!("[INFO] Parsed position (ECEF) from JSON: x={:.1} m, y={:.1} m, z={:.1} m", x, y, z);
+                            }
                         }
                     }
                 }
@@ -3156,7 +3179,65 @@ impl IFDataGen {
         self.output_param.GalileoMaskOut = 0;
         self.output_param.GlonassMaskOut = 0;
         
-        // Set reasonable elevation mask (5 degrees) if not set by JSON
+        // Применяем elevationMask из JSON, если задан; иначе дефолт 5°
+        // Ищем output.config.elevationMask (в градусах)
+        if let Ok(json_content) = std::fs::read_to_string(config_file) {
+            if let Ok(json) = serde_json::from_str::<serde_json::Value>(&json_content) {
+                if let Some(cfg) = json.get("output").and_then(|o| o.get("config")) {
+                    if let Some(deg) = cfg.get("elevationMask").and_then(|v| v.as_f64()) {
+                        self.output_param.ElevationMask = deg.to_radians();
+                    }
+                }
+                // Парсим блок power (noiseFloor, initPower, elevationAdjust)
+                if let Some(power) = json.get("power") {
+                    // noiseFloor в дБм; если указан, применяем напрямую
+                    if let Some(nf) = power.get("noiseFloor").and_then(|v| v.as_f64()) {
+                        // В пресетах -999 означает «авто/игнорировать» — пропускаем
+                        if nf > -900.0 {
+                            self.power_control.set_noise_floor(nf);
+                        }
+                    }
+                    // initPower { unit: "dBHz"|"dBm"|"dBW", value: f64 }
+                    if let Some(init) = power.get("initPower") {
+                        let unit = init.get("unit").and_then(|v| v.as_str()).unwrap_or("dBHz");
+                        if let Some(val) = init.get("value").and_then(|v| v.as_f64()) {
+                            let cn0 = match unit {
+                                "dBHz" => val,
+                                // При unit=dBm/dBW интерпретируем как абсолютная мощность и конвертируем в CN0≈S-N0
+                                // CN0≈S(dBm) − N0(dBm/Hz). Для dBW добавляем 30 дБ для перехода в dBm.
+                                "dBm" => val - self.power_control.get_noise_floor(),
+                                "dBW" => (val + 30.0) - self.power_control.get_noise_floor(),
+                                _ => val,
+                            };
+                            self.power_control.set_init_cn0(cn0);
+                        }
+                    }
+                    // elevationAdjust: true/false
+                    if let Some(adj) = power.get("elevationAdjust").and_then(|v| v.as_bool()) {
+                        self.power_control.set_elevation_adjust(if adj { crate::powercontrol::ElevationAdjust::ElevationAdjustSinSqrtFade } else { crate::powercontrol::ElevationAdjust::ElevationAdjustNone });
+                    }
+                }
+                // Маска исключений спутников: output.maskOut
+                if let Some(mask_out) = json.get("output").and_then(|o| o.get("maskOut")).and_then(|v| v.as_array()) {
+                    for item in mask_out {
+                        let system = item.get("system").and_then(|v| v.as_str()).unwrap_or("");
+                        if let Some(svids) = item.get("svid").and_then(|v| v.as_array()) {
+                            for s in svids {
+                                if let Some(svid) = s.as_i64() {
+                                    match system {
+                                        "GPS" => if (1..=32).contains(&(svid as i32)) { self.output_param.GpsMaskOut |= 1 << (svid as u32 - 1); },
+                                        "BDS" => if (1..=63).contains(&(svid as i32)) { self.output_param.BdsMaskOut |= 1u64 << (svid as u64 - 1); },
+                                        "Galileo" => if (1..=50).contains(&(svid as i32)) { self.output_param.GalileoMaskOut |= 1u64 << (svid as u64 - 1); },
+                                        "GLONASS" => if (1..=24).contains(&(svid as i32)) { self.output_param.GlonassMaskOut |= 1 << (svid as u32 - 1); },
+                                        _ => {}
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
         if self.output_param.ElevationMask == 0.0 {
             self.output_param.ElevationMask = 5.0_f64.to_radians();
         }
@@ -3505,7 +3586,7 @@ impl IFDataGen {
         println!("[DEBUG] Starting generate_data()...");
         
         // Используем стандартные данные пока не реализованы get методы
-        let utc_time = self.parse_utc_time_from_json("presets/GPS_L1_only.json").unwrap_or_else(|| {
+        let utc_time = self.parse_utc_time_from_json(&self.output_param.config_filename).unwrap_or_else(|| {
             println!("[WARNING]\tFailed to parse time from JSON, using default time");
             UtcTime {
                 Year: 2025,
