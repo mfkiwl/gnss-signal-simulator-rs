@@ -274,19 +274,6 @@ impl LNavBit {
     // Word1/2 removed, parity not included
     // 24 information bits occupies bit0~23 of each DWORD in Stream[]
     fn compose_gps_stream123(ephemeris: &GpsEphemeris, stream: &mut [[u32; 8]; 3]) -> i32 {
-        println!(
-            "[GPS-COMPOSE] SV{:02}: flag={}, ura={}, health={}, iodc={}, toc={}",
-            ephemeris.svid,
-            ephemeris.flag,
-            ephemeris.ura,
-            ephemeris.health,
-            ephemeris.iodc,
-            ephemeris.toc
-        );
-        println!(
-            "[GPS-ORBITAL] SV{:02}: sqrtA={:.1}, ecc={:.8}, M0={:.8}, omega0={:.8}",
-            ephemeris.svid, ephemeris.sqrtA, ephemeris.ecc, ephemeris.M0, ephemeris.omega0
-        );
         // subframe 1, Stream[0]~Stream[7] - МАКСИМАЛЬНАЯ ЗАПОЛНЕННОСТЬ
         let int_value = (ephemeris.flag & 3) as i32;
         stream[0][0] = Self::compose_bits(int_value, 12, 2);
@@ -298,10 +285,6 @@ impl LNavBit {
         // Добавляем ещё данные в слово 0 (биты 14-23)
         stream[0][0] |= Self::compose_bits((ephemeris.svid & 0x3f) as i32, 16, 6);
         stream[0][0] |= Self::compose_bits((ephemeris.flag >> 6) as i32, 14, 2);
-        println!(
-            "[GPS-BITS] SV{:02}: word0=0x{:06x} (flag&3={}, ura&f={}, health={}, iodc>>8={})",
-            ephemeris.svid, stream[0][0], int_value, ura_val, ephemeris.health, iodc_high
-        );
         let int_value = (ephemeris.flag >> 2) as i32;
         stream[0][1] = Self::compose_bits(int_value, 23, 1);
         // Добавляем WN (номер недели)

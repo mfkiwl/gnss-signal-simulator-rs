@@ -452,12 +452,9 @@ impl CNavData {
             // ШАГ 3: Пул заполнен - заменяем самую старую эфемериду (индекс 0)
             // ПРЕДУПРЕЖДЕНИЕ: Это может привести к потере важных эфемерид!
             if !self.gps_ephemeris_pool.is_empty() {
-                println!("[GPS-POOL] ⚠️  Pool full! Replacing oldest GPS ephemeris with GPS{:02} (toe={})", 
-                    eph.svid, eph.toe);
                 self.gps_ephemeris_pool[0] = eph;
                 true
             } else {
-                println!("[GPS-POOL] ❌ ERROR: Cannot add GPS{:02} - pool is empty and full simultaneously!", eph.svid);
                 false
             }
         }

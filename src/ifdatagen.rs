@@ -287,7 +287,7 @@ impl NavData {
                     let almanac = get_almanac_from_ephemeris(&eph, current_week, toa);
                     self.gps_almanac[i] = almanac;
                     crate::vprintln!(
-                        "[GPS-ALMANAC] Generated almanac for SV{:02}: valid={}, toa={}, health={}",
+                        "Generated almanac for SV{:02}: valid={}, toa={}, health={}",
                         svid,
                         self.gps_almanac[i].valid,
                         self.gps_almanac[i].toa,
@@ -1615,10 +1615,6 @@ impl IFDataGen {
         let gps_time = utc_to_gps_time(utc_time, true);
         self.nav_data
             .generate_gps_almanac_from_ephemeris(gps_time.Week);
-        println!(
-            "[GPS-ALMANAC] Generated GPS almanac from ephemeris data for week {}",
-            gps_time.Week
-        );
 
         // Set almanac data for navigation bits
         if let Some(ref mut nav_bit) = nav_bit_array[DataBitType::DataBitLNav as usize] {
@@ -1683,13 +1679,6 @@ impl IFDataGen {
             }
         }
 
-        crate::debug_positions::debug_satellite_positions(
-            &self.gps_eph,
-            &beidou_eph_array,
-            &self.gal_eph,
-            &self.cur_time,
-            &cur_pos,
-        );
 
         // Debug: check if we have ephemeris before calculating visibility
         let mut total_gps_eph = 0;
@@ -5171,22 +5160,7 @@ impl IFDataGen {
             let dy = sol_ecef.y - cur_pos.y;
             let dz = sol_ecef.z - cur_pos.z;
             let err = (dx * dx + dy * dy + dz * dz).sqrt();
-            println!(
-                "[PVT] Solution: lat={:.6} lon={:.6} alt={:.1} m; clk={:.3} ns; err={:.2} m",
-                sol_lla.lat.to_degrees(),
-                sol_lla.lon.to_degrees(),
-                sol_lla.alt,
-                cb_s * 1e9,
-                err
-            );
-            println!(
-                "[PVT] Truth:   lat={:.6} lon={:.6} alt={:.1} m",
-                true_lla.lat.to_degrees(),
-                true_lla.lon.to_degrees(),
-                true_lla.alt
-            );
         } else {
-            println!("[PVT] Not enough satellites for position fix (need >=4)");
         }
 
         // Создаем спутниковые сигналы и генерируем данные
