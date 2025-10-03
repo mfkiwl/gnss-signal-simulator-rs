@@ -401,48 +401,8 @@ impl SatelliteSignal {
                         GnssSystem::NavICSystem => "NavIC",
                     };
 
-                    // Проверяем навигационные данные каждого спутника
-                    static mut DEBUG_COUNTER: i32 = 0;
-                    let should_debug = unsafe {
-                        DEBUG_COUNTER += 1;
-                        DEBUG_COUNTER <= 50 // показываем первые 50 вызовов
-                    };
-
-                    if should_debug {
-                        // показываем для диагностики проблемы
-                        // DEBUG: NAV кадр отладка отключена для уменьшения вывода
-                        // println!("[NAV] {} SV{:02} кадр {}: {} битов/4096 ({:.1}%)",
-                        //         system_name, self.svid, self.current_frame, non_zero_count,
-                        //         (non_zero_count as f32 / 4096.0) * 100.0);
-                        if non_zero_count > 0 {
-                            let _first_10 = (0..10)
-                                .map(|i| if data_bits_i32[i] != 0 { "1" } else { "0" })
-                                .collect::<String>();
-                            // IODC младшие биты должны быть в word 5 subframe 1 (~150 биты)
-                            let _iodc_bits = (120..130)
-                                .map(|i| {
-                                    if data_bits_i32.get(i).copied().unwrap_or(0) != 0 {
-                                        "1"
-                                    } else {
-                                        "0"
-                                    }
-                                })
-                                .collect::<String>();
-                            let _late_bits = (200..210)
-                                .map(|i| {
-                                    if data_bits_i32.get(i).copied().unwrap_or(0) != 0 {
-                                        "1"
-                                    } else {
-                                        "0"
-                                    }
-                                })
-                                .collect::<String>();
-                            // DEBUG: Детализация битов отключена для уменьшения вывода
-                            // println!("      Первые биты: {} | IODC область(120-130): {} | Поздние биты(200-210): {}", first_10, iodc_bits, late_bits);
-                        } else {
-                            println!("      ⚠️ НЕТ НАВИГАЦИОННЫХ ДАННЫХ!");
-                        }
-                    }
+                    // Navigation data validation - silent mode
+                    // Non-zero check available for debugging if needed
 
                     for (i, val) in data_bits_i32.iter().enumerate() {
                         self.data_bits[i] = (*val) as u8;

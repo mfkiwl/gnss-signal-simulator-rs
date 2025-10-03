@@ -27,7 +27,7 @@
 		"trajectoryList": [
 			{
 				"type": "Const",
-				"time": 10
+				"time": 100
 			}
 		]
 	},
@@ -53,7 +53,7 @@
 			{
 				"system": "GPS",
 				"signal": "L1C",
-				"enable": false
+				"enable": true
 			},
 			{
 				"system": "GPS",
@@ -128,7 +128,7 @@
 		]
 	},
 	"power": {
-		"noiseFloor": -999,
+		"noiseFloor": -174,
 		"initPower": {
 			"unit": "dBHz",
 			"value": 45

@@ -183,6 +183,7 @@ impl CarrierPhaseCache {
         for i in 0..cache_size {
             let phase = (i as f64) * phase_step;
             let angle = phase * 2.0 * std::f64::consts::PI;
+            
             cached_cos.push(FastMath::fast_cos(angle));
             cached_sin.push(FastMath::fast_sin(angle));
         }

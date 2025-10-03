@@ -2517,9 +2517,25 @@ impl IFDataGen {
 
             // Буфер для накопления данных блока (не весь файл!)
             let mut block_signal = vec![ComplexNumber::from_parts(0.0, 0.0); block_samples];
+            
+            // 🚨 КРИТИЧНО: Добавляем тепловой шум ПЕРЕД накоплением спутниковых сигналов!
+            // Без шума сигналы от разных спутников взаимно уничтожаются из-за разных фаз
+            //
+            // ПРАВИЛЬНЫЙ РАСЧЁТ УРОВНЯ ШУМА:
+            // Noise floor -174 dBm/Hz + 10*log10(BW) = thermal noise power
+            // Для 5 MHz: -174 + 10*log10(5e6) = -174 + 67 = -107 dBm
+            // Но сигналы имеют CN0 ~45 dB-Hz, что даёт амплитуду ~0.112
+            // Правильная sigma для шума должна быть намного меньше 1.0!
+            //
+            // Используем sigma = 0.1 для разумного соотношения сигнал/шум
+            let noise_sigma = 0.1; // ИСПРАВЛЕНО: было 1.0, что давало огромный клиппинг!
+            FastMath::generate_noise_block(&mut block_signal, noise_sigma);
 
             // Накапливаем сигналы всех спутников для этого блока с глобальным AGC
             // TODO: Реализовать индивидуальную амплитуду для каждого спутника в будущем
+            
+
+            
             for sample_idx in 0..block_samples {
                 for satellite in sat_if_signals.iter().flatten() {
                     if let Some(block_data) = &satellite.block_data {
@@ -2681,6 +2697,7 @@ impl IFDataGen {
                 // ВЫСОКИЙ УРОВЕНЬ (20-50%): Быстрое вмешательство
                 } else if agc_clipping_rate > 0.2 {
                     agc_gain *= 0.8; // Снижаем на 20% (-1.9 дБ)
+                    agc_gain = agc_gain.max(0.01); // КРИТИЧНО: Ограничиваем минимум!
                     println!(
                         "[AGC] ⚡ ВЫСОКИЙ клиппинг {:.1}%! Быстрое снижение до {:.3}",
                         agc_clipping_rate * 100.0,
