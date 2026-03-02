@@ -286,18 +286,23 @@ impl FastMath {
         (cos_vals, sin_vals)
     }
 
-    // Batch noise generation for better cache efficiency
+    // Batch noise generation — инлайн Box-Muller с локальным rng (без unsafe глобалов)
+    // Каждый ComplexNumber = 2 гауссовых значения, Box-Muller генерирует ровно 2 за раз
     pub fn generate_noise_block(output: &mut [ComplexNumber], sigma: f64) {
-        // OPTIMIZED: Generate noise in batches for better cache locality
-        const BATCH_SIZE: usize = 64; // Process in batches for better performance
+        let mut rng = rand::thread_rng();
 
-        let mut i = 0;
-        while i < output.len() {
-            let end = (i + BATCH_SIZE).min(output.len());
-            for j in i..end {
-                output[j] = Self::fast_gaussian_noise(sigma);
-            }
-            i = end;
+        for sample in output.iter_mut() {
+            let (u1, u2, mag) = loop {
+                let u1 = 2.0 * rng.gen::<f64>() - 1.0;
+                let u2 = 2.0 * rng.gen::<f64>() - 1.0;
+                let mag = u1 * u1 + u2 * u2;
+                if mag < 1.0 && mag != 0.0 {
+                    break (u1, u2, mag);
+                }
+            };
+            let factor = (-2.0 * mag.ln() / mag).sqrt();
+            sample.real = u1 * factor * sigma;
+            sample.imag = u2 * factor * sigma;
         }
     }
 }

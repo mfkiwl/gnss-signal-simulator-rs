@@ -28,6 +28,7 @@ use std::ops::{Add, AddAssign, Mul, MulAssign, Sub, SubAssign};
 use wide::f64x4;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[repr(C)]
 pub struct ComplexNumber {
     pub real: f64,
     pub imag: f64,

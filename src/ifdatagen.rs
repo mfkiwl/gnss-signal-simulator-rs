@@ -1849,10 +1849,8 @@ impl IFDataGen {
 
                         if elevation >= elevation_mask && sat_number < TOTAL_BDS_SAT {
                             self.bds_eph_visible[sat_number] = Some(*eph);
+                            println!("[INFO]\tBDS visible: SVID={}, elev={:.1}°, az={:.1}°", eph.svid, elevation.to_degrees(), azimuth.to_degrees());
                             sat_number += 1;
-                            if sat_number <= 5 {
-                                // Показываем первые 5 видимых
-                            }
                         }
                     }
                 }
@@ -1915,6 +1913,7 @@ impl IFDataGen {
                         if elevation >= elevation_mask {
                             if sat_number < TOTAL_GAL_SAT {
                                 self.gal_eph_visible[sat_number] = Some(*eph);
+                                println!("[INFO]\tGAL visible: SVID={}, elev={:.1}°, az={:.1}°", eph.svid, elevation.to_degrees(), azimuth.to_degrees());
                                 sat_number += 1;
                             }
                         } else {

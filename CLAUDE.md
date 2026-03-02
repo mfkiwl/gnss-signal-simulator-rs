@@ -211,21 +211,32 @@ Added comprehensive satellite visibility tables matching C version format:
    - **Issue**: 5 clipping thresholds + recovery + hard clamp = unpredictable oscillations
    - **Fix**: Replaced with simple RMS-based controller: `correction = target_rms / measured_rms`, 50% smoothing per block
 
-**Results**: RMS stable at 0.250 (target 0.25), 0.00% clipping, Gaussian I/Q histogram, circular constellation diagram. GPS acquisition: 11 satellites with SNR > 10.
+**Results**: RMS stable at 0.250 (target 0.25), 0.00% clipping, Gaussian I/Q histogram, circular constellation diagram.
 
-### Remaining Issues
+### PRN Code Generation Fix (March 2026)
 
-1. **BeiDou Overcounting Problem**:
-   - Issue: 2.5x more satellites than reference (25 vs 10)
-   - Possible causes: Incorrect orbital zone filtering, duplicate ephemeris processing
-   - Priority: HIGH - affects positioning accuracy
+**CRITICAL: `& 0x3FF` bitmask destroyed ALL spreading codes in `src/sat_if_signal.rs`**
 
-2. **Galileo Undercounting Problem**:
-   - Issue: ~3x fewer satellites than reference (4 vs 11)
-   - Possible causes: New Galileo parser parameter mapping errors, elevation calculation issues
-   - Priority: HIGH - missing 64% of available satellites
+All "fast path" signal generation functions used `chip_index & 0x3FF` (modulo 1024) instead of `chip_index % data_length`. This broke every GNSS system:
 
-3. **GPS Minor Discrepancy**:
-   - Issue: Small undercount (8 vs 11)
-   - Possible causes: Conservative ephemeris selection, small orbital calculation differences
-   - Priority: MEDIUM
+1. **GPS L1CA** (1023 chips): modulo 1024 ≠ modulo 1023 → code drifted by 1 chip per millisecond → complete decorrelation after ~5 ms
+2. **BeiDou B1C** (10230 chips, BOC(1,1)): modulo 1024 vs modulo 20460 → entire PRN code destroyed
+3. **Galileo E1** (4092 chips, BOC(1,1)): modulo 1024 vs modulo 8184 → entire PRN code destroyed
+
+Additionally, BOC subchip modulation and pilot channel (QMBOC/CBOC) were missing from fast paths.
+
+**Fix in `get_if_sample_cached()`**:
+- Replaced `& 0x3FF` with `rem_euclid(data_length)` for correct modulo wrapping
+- Added BOC subchip sign flip: `if is_boc && (chip_mod & 1) != 0 { val = -val; }`
+- Added pilot channel with QMBOC (BDS B1C) and CBOC (Galileo E1) modulation
+- BOC signals redirected from AVX-512 path to correct path in `get_if_sample_avx512_accelerated()`
+- Removed broken PrnCache-based fast path (1024-entry cache insufficient for non-GPS codes)
+
+**Verification results (triple-system, 10s, 5 MHz)**:
+
+| System     | Visible | Found | z-score range |
+|------------|---------|-------|---------------|
+| GPS L1CA   | 11      | 11    | 58–88         |
+| BeiDou B1C | 6       | 6     | 574–955       |
+| Galileo E1 | 6       | 6     | 364–425       |
+| **Total**  | **23**  | **23**| **100%**      |

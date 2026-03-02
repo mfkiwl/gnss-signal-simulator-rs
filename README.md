@@ -108,9 +108,22 @@ python3 verify_signal.py
 - Спектр мощности (PSD)
 - Гистограмму I/Q компонент (должна быть гауссова)
 - Constellation diagram (I/Q scatter — должен быть круглый)
-- GPS L1CA acquisition (поиск спутников по PRN с оценкой SNR)
+- **GPS L1CA acquisition** (Gold codes, 1023 chips, 1 ms period)
+- **BeiDou B1C acquisition** (Weil/Legendre codes, BOC(1,1), 10230 chips, 10 ms period)
+- **Galileo E1 acquisition** (memory codes, BOC(1,1), 4092 chips, 4 ms period)
+
+Метрика обнаружения: z-score = (peak − mean) / std, порог ≥ 30.
 
 Результат сохраняется в `generated_files/signal_verification.png`.
+
+Типичный результат (triple-system, 10 с, 5 МГц):
+
+| Система    | Видимых | Найдено | z-score    |
+|------------|---------|---------|------------|
+| GPS L1CA   | 11      | 11      | 58–88      |
+| BeiDou B1C | 6       | 6       | 574–955    |
+| Galileo E1 | 6       | 6       | 364–425    |
+| **Всего**  | **23**  | **23**  | **100 %**  |
 
 ## Анализ сгенерированного IF
 

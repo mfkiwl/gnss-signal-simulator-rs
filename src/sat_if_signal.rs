@@ -168,9 +168,8 @@ pub struct CarrierPhaseCache {
     cached_sin: Vec<f64>,
     /// Размер кэша (количество фаз)
     cache_size: usize,
-    /// Шаг фазы
-    #[allow(dead_code)]
-    phase_step: f64,
+    /// Шаг фазы (pub для проверки инвалидации при смене Допплера)
+    pub phase_step: f64,
 }
 
 impl CarrierPhaseCache {
@@ -743,18 +742,25 @@ impl SatIfSignal {
     ) {
         use crate::avx512_intrinsics::Avx512Accelerator;
 
-        // Если AVX-512 недоступен, но доступен GPU — остаёмся в этой функции, чтобы задействовать GPU.
-        // Иначе fallback на кэшированную версию.
+        // Если AVX-512 недоступен, fallback на кэшированную версию.
         if !avx512_processor.is_available() {
             #[cfg(feature = "gpu")]
             {
                 if !CudaGnssAccelerator::is_available() {
                     return self.get_if_sample_cached(cur_time);
                 }
-                // GPU доступен — продолжаем, ниже сработает GPU-ветка.
             }
             #[cfg(not(feature = "gpu"))]
             {
+                return self.get_if_sample_cached(cur_time);
+            }
+        }
+
+        // BOC/сложные сигналы (BDS B1C, GAL E1) — AVX-512 fast path не поддерживает BOC.
+        // Перенаправляем на get_if_sample_cached, который корректно обрабатывает BOC.
+        if let Some(attr) = &self.prn_sequence.attribute {
+            let is_boc = (attr.attribute & PRN_ATTRIBUTE_BOC) != 0;
+            if is_boc || self.data_length > 1024 {
                 return self.get_if_sample_cached(cur_time);
             }
         }
@@ -800,7 +806,12 @@ impl SatIfSignal {
             }
         }
 
-        if self.carrier_phase_cache.is_none() {
+        // Инвалидируем carrier cache если phase_step изменился (смена Допплера)
+        let need_new_carrier_cache = match &self.carrier_phase_cache {
+            Some(cache) => (cache.phase_step - phase_step).abs() > 1e-15,
+            None => true,
+        };
+        if need_new_carrier_cache {
             self.carrier_phase_cache = Some(CarrierPhaseCache::new(
                 self.sample_number as usize,
                 phase_step,
@@ -958,8 +969,15 @@ impl SatIfSignal {
     ) {
         let block_samples = (block_duration_ms as usize) * samples_per_ms;
 
-        // Буфер для поточной записи блока
-        self.block_data = Some(vec![ComplexNumber::from_parts(0.0, 0.0); block_samples]);
+        // ОПТИМИЗАЦИЯ: переиспользуем существующий буфер если размер совпадает
+        match &mut self.block_data {
+            Some(ref mut buf) if buf.len() == block_samples => {
+                // Буфер уже нужного размера — copy_from_slice перезапишет данные
+            }
+            _ => {
+                self.block_data = Some(vec![ComplexNumber::from_parts(0.0, 0.0); block_samples]);
+            }
+        }
 
         // Убедимся, что размер милисекундного массива соответствует samples_per_ms
         if self.sample_array.len() != samples_per_ms {
@@ -968,9 +986,9 @@ impl SatIfSignal {
             self.sample_number = samples_per_ms as i32;
         }
 
-        // Сбрасываем кэши на начало блока
-        self.prn_cache = PrnCache::new();
-        self.carrier_phase_cache = None;
+        // ОПТИМИЗАЦИЯ: НЕ сбрасываем кэши каждый блок.
+        // PrnCache самоинвалидируется через needs_update().
+        // CarrierPhaseCache инвалидируется при смене phase_step (в get_if_sample_cached).
 
         // Для каждой миллисекунды получаем точные выборки и копируем их в блок
         for ms_offset in 0..block_duration_ms {
@@ -1096,8 +1114,9 @@ impl SatIfSignal {
         }
     }
 
-    /// СУПЕР-ОПТИМИЗИРОВАННАЯ генерация IF сигнала с агрессивным кэшированием
-    /// Использует предвычисленные PRN коды и фазы несущей
+    /// Генерация IF сигнала с кэшированием
+    /// Для GPS L1CA использует быстрый путь с PrnCache + bitmask,
+    /// для BOC-сигналов (BDS B1C, GAL E1) — корректный путь с modulo и BOC-обработкой
     pub fn get_if_sample_cached(&mut self, cur_time: GnssTime) {
         // Получаем параметры спутника
         let p_sat_param = if let Some(ref sat_param) = self.sat_param {
@@ -1106,11 +1125,9 @@ impl SatIfSignal {
             return;
         };
 
-        // КЭШИРОВАННАЯ ПОДГОТОВКА ПАРАМЕТРОВ (МОЛНИЕНОСНО!)
         let code_attribute = self.prn_sequence.attribute.as_ref().unwrap();
         let chip_rate = code_attribute.chip_rate as f64;
 
-        // КРИТИЧЕСКАЯ ОПТИМИЗАЦИЯ: Обновляем кэш только если нужно
         if self
             .computation_cache
             .needs_update(p_sat_param.CN0 as f64, self.sample_number)
@@ -1123,7 +1140,6 @@ impl SatIfSignal {
             );
         }
 
-        // Используем кэшированные значения (без повторных вычислений!)
         let ms_offset = cur_time.MilliSeconds - self.signal_time.MilliSeconds;
         let base_chip_offset = (ms_offset as f64) * self.computation_cache.cached_chip_rate;
         let amp = self.computation_cache.cached_amp;
@@ -1135,99 +1151,111 @@ impl SatIfSignal {
             -1.0
         };
 
-        // АГРЕССИВНОЕ КЭШИРОВАНИЕ: Обновляем PRN кэш если нужно
-        if let Some(data_prn) = &self.prn_sequence.data_prn {
-            if self.prn_cache.needs_update(cur_time.MilliSeconds) {
-                self.prn_cache.update_cache(data_prn, cur_time.MilliSeconds);
-            }
-        }
+        // BOC flag для обработки subchip модуляции
+        let is_boc = (code_attribute.attribute & PRN_ATTRIBUTE_BOC) != 0;
 
-        // АГРЕССИВНОЕ КЭШИРОВАНИЕ: Инициализируем кэш фаз несущей если нужно
-        if self.carrier_phase_cache.is_none() {
+        // Обновляем/инициализируем carrier cache
+        let need_new_carrier_cache = match &self.carrier_phase_cache {
+            Some(cache) => (cache.phase_step - phase_step).abs() > 1e-15,
+            None => true,
+        };
+        if need_new_carrier_cache {
             self.carrier_phase_cache = Some(CarrierPhaseCache::new(
                 self.sample_number as usize,
                 phase_step,
             ));
         }
 
-        // Супер-быстрая генерация с использованием кэшей
-        if let Some(ref carrier_cache) = self.carrier_phase_cache {
-            // SIMD + кэширование для максимальной производительности
-            let samples_per_group = 4;
-            let full_groups = (self.sample_number as usize) / samples_per_group;
+        {
+            // === КОРРЕКТНЫЙ ПУТЬ для ВСЕХ сигналов ===
+            // Использует % data_length (корректный modulo) вместо & 0x3FF (modulo 1024)
+            // & 0x3FF ломал GPS L1CA (1023 чипов): дрейф 1 чип/мс → декорреляция за 5 мс
+            // Для BOC-сигналов обрабатывает subchip модуляцию и pilot channel
 
-            // СУПЕР-КРИТИЧЕСКАЯ ОПТИМИЗАЦИЯ: полное кэширование всех вычислений!
-            let _code_step_x4 = code_step * 4.0; // Предвычисляем шаг для группы
-            let pi2 = self.computation_cache.cached_two_pi;
-            let _pi2_phase_step = pi2 * phase_step; // Предвычисляем константу
+            let data_length = self.data_length;
+            let pilot_length = self.pilot_length;
+            let is_cboc = (code_attribute.attribute & PRN_ATTRIBUTE_CBOC) != 0;
+            let is_qmboc = (code_attribute.attribute & PRN_ATTRIBUTE_QMBOC) != 0;
+            let pilot_nav = if self.pilot_signal.real >= 0.0 { 1.0 } else { -1.0 };
 
-            // Векторизованная обработка групп по 4 элемента с ПОЛНЫМ кэшированием
-            for group in 0..full_groups {
-                let base_idx = group * samples_per_group;
+            if let Some(ref carrier_cache) = self.carrier_phase_cache {
+                for i in 0..self.sample_number as usize {
+                    let chip_raw = (base_chip_offset + (i as f64) * code_step) as i32;
 
-                // МЕГА-ОПТИМИЗАЦИЯ: Используем простые битовые операции вместо модуло!
-                let chip_start = base_chip_offset + (base_idx as f64) * code_step;
-                let chip_indices: [usize; 4] = [
-                    (chip_start as usize) & 0x3FF, // Быстрая битовая операция
-                    ((chip_start + code_step) as usize) & 0x3FF,
-                    ((chip_start + code_step * 2.0) as usize) & 0x3FF,
-                    ((chip_start + code_step * 3.0) as usize) & 0x3FF,
-                ];
+                    // --- Data channel ---
+                    let chip_mod = chip_raw.rem_euclid(data_length);
+                    let data_chip = if is_boc { (chip_mod >> 1) as usize } else { chip_mod as usize };
 
-                // КЭШИРОВАННЫЕ PRN биты - молниеносный доступ!
-                let prn_bits = f64x4::new([
-                    self.prn_cache.get_prn_bit(chip_indices[0]),
-                    self.prn_cache.get_prn_bit(chip_indices[1]),
-                    self.prn_cache.get_prn_bit(chip_indices[2]),
-                    self.prn_cache.get_prn_bit(chip_indices[3]),
-                ]);
+                    let mut val = if let Some(data_prn) = &self.prn_sequence.data_prn {
+                        if data_chip < data_prn.len() && data_prn[data_chip] != 0 {
+                            -nav_value
+                        } else {
+                            nav_value
+                        }
+                    } else {
+                        nav_value
+                    };
 
-                // РЕВОЛЮЦИЯ! Используем готовые cos/sin из кэша вместо пересчёта!
-                let cos_vals = f64x4::new([
-                    carrier_cache.cached_cos[base_idx],
-                    carrier_cache.cached_cos[base_idx + 1],
-                    carrier_cache.cached_cos[base_idx + 2],
-                    carrier_cache.cached_cos[base_idx + 3],
-                ]);
-                let sin_vals = f64x4::new([
-                    carrier_cache.cached_sin[base_idx],
-                    carrier_cache.cached_sin[base_idx + 1],
-                    carrier_cache.cached_sin[base_idx + 2],
-                    carrier_cache.cached_sin[base_idx + 3],
-                ]);
+                    // BOC subchip sign flip: нечётный subchip → инвертируем
+                    if is_boc && (chip_mod & 1) != 0 {
+                        val = -val;
+                    }
 
-                // Супер-оптимизированная SIMD генерация сигнала
-                let nav_value_vec = f64x4::splat(nav_value);
-                let amp_vec = f64x4::splat(amp);
+                    // --- Pilot channel ---
+                    if let Some(pilot_prn) = &self.prn_sequence.pilot_prn {
+                        if pilot_length > 0 {
+                            let pilot_chip_mod = chip_raw.rem_euclid(pilot_length);
+                            let pilot_chip = if is_boc { (pilot_chip_mod >> 1) as usize } else { pilot_chip_mod as usize };
 
-                // Используем SIMD функцию для комплексных вычислений
-                ComplexNumber::simd_generate_signal(
-                    prn_bits,
-                    nav_value_vec,
-                    cos_vals,
-                    sin_vals,
-                    amp_vec,
-                    &mut self.sample_array[base_idx..base_idx + samples_per_group],
-                );
-            }
+                            if pilot_chip < pilot_prn.len() {
+                                let mut pilot_val = if pilot_prn[pilot_chip] != 0 {
+                                    -pilot_nav
+                                } else {
+                                    pilot_nav
+                                };
 
-            // Обработка оставшихся элементов
-            let remaining = (self.sample_number as usize) % samples_per_group;
-            if remaining > 0 {
-                let start_idx = full_groups * samples_per_group;
+                                // BOC/QMBOC/CBOC pilot modulation
+                                if (is_qmboc || is_cboc) && is_boc {
+                                    // QMBOC/CBOC: в специальных позициях используется BOC(6,1),
+                                    // в остальных — BOC(1,1)
+                                    if is_qmboc {
+                                        let symbol_pos = (self.signal_time.MilliSeconds % 330) / 10;
+                                        if symbol_pos == 1 || symbol_pos == 5 || symbol_pos == 7 || symbol_pos == 30 {
+                                            let sub_chip_pos = chip_raw.rem_euclid(12);
+                                            if sub_chip_pos >= 6 {
+                                                pilot_val = -pilot_val;
+                                            }
+                                        } else if (pilot_chip_mod & 1) != 0 {
+                                            pilot_val = -pilot_val;
+                                        }
+                                    } else {
+                                        // CBOC(6,1,1/11) for Galileo E1
+                                        let chip_in_code = chip_raw.rem_euclid(4092);
+                                        if (chip_in_code % 11) == 0 {
+                                            let boc6_phase = chip_raw.rem_euclid(12);
+                                            if boc6_phase >= 6 {
+                                                pilot_val = -pilot_val;
+                                            }
+                                        } else if (pilot_chip_mod & 1) != 0 {
+                                            pilot_val = -pilot_val;
+                                        }
+                                    }
+                                } else if is_boc && (pilot_chip_mod & 1) != 0 {
+                                    pilot_val = -pilot_val;
+                                }
 
-                for i in 0..remaining {
-                    let idx = start_idx + i;
-                    let chip_index =
-                        ((base_chip_offset + (idx as f64) * code_step) as usize) & 0x3FF;
+                                val += pilot_val;
+                            }
+                        }
+                    }
 
-                    // Кэшированные значения
-                    let prn_bit = self.prn_cache.get_prn_bit(chip_index);
-                    let (cos_val, sin_val) = carrier_cache.get_cos_sin(idx);
+                    // Carrier modulation
+                    let cos_val = carrier_cache.cached_cos[i];
+                    let sin_val = carrier_cache.cached_sin[i];
 
-                    self.sample_array[idx] = ComplexNumber {
-                        real: prn_bit * nav_value * cos_val * amp,
-                        imag: prn_bit * nav_value * sin_val * amp,
+                    self.sample_array[i] = ComplexNumber {
+                        real: val * cos_val * amp,
+                        imag: val * sin_val * amp,
                     };
                 }
             }
