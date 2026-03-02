@@ -186,7 +186,34 @@ Added comprehensive satellite visibility tables matching C version format:
 | Galileo     | 11 satellites     | 4 satellites | -7 (-64%) | ❌ **Major undercount** |
 | **TOTAL**   | **41 satellites** | **37 satellites** | **-4 (-10%)** | ⚠️ Overall acceptable |
 
-### Remaining Issues (September 2025)
+### AGC (Automatic Gain Control) Fix (March 2026)
+
+**5 bugs fixed in `src/ifdatagen.rs` AGC system:**
+
+1. **Wrong initial gain formula** (~6-8x error):
+   - **Issue**: AGC model used `10^((CN0*100-4500)/1000) / sqrt(samples_per_ms)` giving amplitude ~0.022
+   - **Reality**: Signal generation uses `sqrt(2 * 10^(CN0/10) / Fs)` giving amplitude ~0.14
+   - **Fix**: Use identical formula as `ComputationCache::update` in `sat_if_signal.rs`
+
+2. **Noise not scaled by AGC**:
+   - **Issue**: `block[i] = noise(σ=0.1) + satellite_sum * agc_gain` — noise bypassed AGC
+   - **Fix**: `block[i] = (noise + satellite_sum) * agc_gain` — AGC scales everything (like a real receiver)
+
+3. **Hard clamp `agc_gain.clamp(0.001, 1.0)` blocked recovery**:
+   - **Issue**: Initial gain computed as 2.46 but clamped to 1.0, causing oscillations
+   - **Fix**: Removed upper bound of 1.0, replaced with `clamp(0.001, 100.0)`
+
+4. **First-block calibration replaced gain instead of correcting**:
+   - **Issue**: Calibration measured signal already containing initial_gain, then overwrote gain
+   - **Fix**: Removed calibration entirely — correct initial formula doesn't need it
+
+5. **5-level clipping cascade oscillated**:
+   - **Issue**: 5 clipping thresholds + recovery + hard clamp = unpredictable oscillations
+   - **Fix**: Replaced with simple RMS-based controller: `correction = target_rms / measured_rms`, 50% smoothing per block
+
+**Results**: RMS stable at 0.250 (target 0.25), 0.00% clipping, Gaussian I/Q histogram, circular constellation diagram. GPS acquisition: 11 satellites with SNR > 10.
+
+### Remaining Issues
 
 1. **BeiDou Overcounting Problem**:
    - Issue: 2.5x more satellites than reference (25 vs 10)
@@ -194,7 +221,7 @@ Added comprehensive satellite visibility tables matching C version format:
    - Priority: HIGH - affects positioning accuracy
 
 2. **Galileo Undercounting Problem**:
-   - Issue: ~3x fewer satellites than reference (4 vs 11)  
+   - Issue: ~3x fewer satellites than reference (4 vs 11)
    - Possible causes: New Galileo parser parameter mapping errors, elevation calculation issues
    - Priority: HIGH - missing 64% of available satellites
 
@@ -202,29 +229,3 @@ Added comprehensive satellite visibility tables matching C version format:
    - Issue: Small undercount (8 vs 11)
    - Possible causes: Conservative ephemeris selection, small orbital calculation differences
    - Priority: MEDIUM
-
-### Validation Plan
-
-**Phase 1: BeiDou Analysis**
-1. Audit BeiDou ephemeris filtering for duplicate/invalid entries
-2. Verify GEO/IGSO/MEO orbital zone classification
-3. Check BDT time conversion and epoch selection
-4. Validate BeiDou-specific orbital parameters (AODE, AODC, TGD1/TGD2)
-
-**Phase 2: Galileo Investigation** 
-1. Verify new `parse_galileo_ephemeris()` parameter mappings
-2. Test BGD vs TGD parameter usage in positioning
-3. Validate IODnav and SISA parameter handling
-4. Compare Galileo orbital calculations with manual verification
-
-**Phase 3: Comparative Algorithm Analysis**
-1. Study reference service ephemeris selection algorithms
-2. Compare elevation mask implementations
-3. Analyze temporal filtering window differences
-4. Cross-validate with multiple GNSS visibility services
-
-**Phase 4: Integration Testing**
-1. Run comprehensive multi-system validation tests
-2. Generate detailed satellite-by-satellite comparison tables
-3. Implement automated regression testing against reference data
-4. Document final accuracy metrics and acceptable tolerances

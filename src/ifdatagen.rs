@@ -27,6 +27,7 @@
 use std::fs::File;
 use std::io::{BufWriter, Write};
 use std::time::Instant;
+use wide::f64x4;
 
 use crate::complex_number::ComplexNumber;
 use crate::constants::*;
@@ -1035,7 +1036,7 @@ impl IFDataGen {
                 if crate::logutil::is_verbose() {
                     println!("[INFO]\tOutput file opened successfully.");
                 }
-                BufWriter::new(file)
+                BufWriter::with_capacity(1 << 20, file)
             }
             Err(_) => {
                 let filename_str = String::from_utf8_lossy(&self.output_param.filename);
@@ -2397,78 +2398,50 @@ impl IFDataGen {
         // количестве активных спутников. AGC автоматически регулирует амплитуду суммарного
         // сигнала, чтобы он не превышал динамический диапазон АЦП приемника.
         //
-        // ПРОБЛЕМА: При одновременном приеме 30+ спутников их сигналы суммируются когерентно,
-        // что может привести к переполнению разрядной сетки цифрового приемника и потере данных.
+        // AGC (Automatic Gain Control) масштабирует весь сигнал (шум + спутники)
+        // перед квантованием в 8-бит IQ, как в реальном приёмнике.
         //
-        // МАТЕМАТИЧЕСКАЯ МОДЕЛЬ РАСЧЕТА НАЧАЛЬНОГО КОЭФФИЦИЕНТА УСИЛЕНИЯ:
-        // Амплитуда сигнала одного спутника зависит от его мощности (CN0) и частоты дискретизации:
-        //
-        // single_sat_amplitude = 10^((CN0_scaled - REFERENCE_CN0) / 1000) / sqrt(sample_rate)
-        //
-        // где:
-        // - CN0_scaled = CN0 * 100 (например, 47 dB-Hz → 4700)
-        // - REFERENCE_CN0 = 4500 (45 dB-Hz) - типичное значение для нормализации
-        // - sample_rate = samples_per_ms * 1000 (частота дискретизации в Гц)
-        //
-        // Пример расчета:
-        // CN0 = 47 dB-Hz → CN0_scaled = 4700
-        // sample_rate = 2_048_000 Hz (2.048 МГц)
-        // single_amplitude = 10^((4700-4500)/1000) / sqrt(2048000) = 10^0.2 / 1431 ≈ 0.0011
 
-        const REFERENCE_CN0: f64 = 4500.0; // 45 dB-Hz опорное значение вместо 3000 (30 dB-Hz)
+        // РАСЧЕТ НАЧАЛЬНОГО AGC GAIN
+        // Используем ту же формулу амплитуды что и реальная генерация (ComputationCache::update):
+        // A = sqrt(2 * 10^(CN0_dB/10) / Fs), где Fs = samples_per_ms * 1000
+        let init_cn0 = self.power_control.init_cn0; // типично 47.0 dB-Hz
+        let cn0_linear = 10.0_f64.powf(init_cn0 / 10.0);
+        let fs = samples_per_ms as f64 * 1000.0;
+        let single_sat_amplitude = (2.0 * cn0_linear / fs).sqrt();
 
-        // УПРОЩЕННЫЙ AGC НА ОСНОВЕ КОЛИЧЕСТВА АКТИВНЫХ СПУТНИКОВ
-        // Используем уже известное количество генерируемых сигналов вместо повторной проверки
-        let cn0_scaled = self.power_control.init_cn0 * 100.0;
-        let single_sat_amplitude =
-            10.0_f64.powf((cn0_scaled - REFERENCE_CN0) / 1000.0) / (samples_per_ms as f64).sqrt();
-        let total_expected_amplitude = active_satellites as f64 * single_sat_amplitude;
+        // RMS суммы некоррелированных спутников: A_total = sqrt(N) * A_single
+        let total_rms_amplitude = (active_satellites as f64).sqrt() * single_sat_amplitude;
 
-        // ЦЕЛЕВАЯ АМПЛИТУДА ДЛЯ ОПТИМАЛЬНОГО ИСПОЛЬЗОВАНИЯ ДИНАМИЧЕСКОГО ДИАПАЗОНА:
-        // Оставляем 20% запас для предотвращения клиппинга при флуктуациях сигнала.
-        // Максимальная амплитуда цифрового сигнала = ±1.0, целевая = 0.8 для лучшего SNR
-        let target_amplitude = 0.8; // 80% от максимальной амплитуды для оптимального SNR
+        // Учитываем шум (σ=0.1) в общей RMS
+        let noise_sigma = 0.1;
+        let total_rms_with_noise = (total_rms_amplitude * total_rms_amplitude
+            + noise_sigma * noise_sigma).sqrt();
 
-        // РАСЧЕТ НАЧАЛЬНОГО КОЭФФИЦИЕНТА AGC:
-        // agc_gain = target_amplitude / total_expected_amplitude
-        // Если ожидаемая амплитуда превышает целевую, коэффициент будет < 1.0 (ослабление)
-        // Если ожидаемая амплитуда меньше целевой, коэффициент остается 1.0 (без изменений)
-        let initial_agc_gain = if total_expected_amplitude > 0.0 {
-            target_amplitude / total_expected_amplitude
+        // Целевой RMS = 0.25: при гауссовом распределении 3σ ≈ 0.75, ~5% headroom до 1.0
+        let target_rms = 0.25;
+        let initial_agc_gain = if total_rms_with_noise > 0.0 {
+            target_rms / total_rms_with_noise
         } else {
-            1.0 // Аварийное значение при отсутствии спутников
+            1.0
         };
 
-        // ОГРАНИЧЕНИЕ ДИАПАЗОНА AGC:
-        // Минимум 0.01 (-40 дБ) - предотвращает полное подавление сигнала
-        // Максимум 3.0 (+9.5 дБ) - позволяет усиление для слабых сигналов при малом количестве спутников
-        let mut agc_gain = initial_agc_gain.clamp(0.01, 3.0);
+        let mut agc_gain = initial_agc_gain.clamp(0.001, 100.0);
 
-        // СЧЕТЧИКИ ДЛЯ СТАТИСТИКИ И АДАПТАЦИИ:
-        let mut total_clipped_samples = 0i64; // Общее количество клиппированных отсчетов
-        let mut total_samples_written = 0i64; // Общее количество записанных отсчетов
-        let mut agc_samples_for_stats = 0i64; // Отсчеты для анализа AGC (сбрасывается периодически)
-        let mut agc_clipped_for_stats = 0i64; // Клиппированные отсчеты для анализа AGC
+        // СЧЕТЧИКИ ДЛЯ СТАТИСТИКИ
+        let mut total_clipped_samples = 0i64;
+        let mut total_samples_written = 0i64;
 
-        println!("🎚️  AGC: Начальный коэффициент: {:.3} (спутников: {}, ожидаемая амплитуда: {:.3}, целевая: {:.1})", 
-                 agc_gain, active_satellites, total_expected_amplitude, target_amplitude);
-        println!(
-            "📊 AGC: Расчёт на основе {} активных генерируемых сигналов",
-            active_satellites
-        );
+        println!("[AGC] Начальный gain: {:.3} (спутников: {}, RMS сигнала: {:.4}, RMS+шум: {:.4}, целевой RMS: {:.2})",
+                 agc_gain, active_satellites, total_rms_amplitude, total_rms_with_noise, target_rms);
 
         // ОСНОВНОЙ ЦИКЛ: Обработка по блокам
         let num_blocks = (total_duration_ms + BLOCK_SIZE_MS - 1) / BLOCK_SIZE_MS;
 
-        // ========== АДАПТИВНАЯ КАЛИБРОВКА AGC ПО ПЕРВОМУ БЛОКУ ==========
-        let mut calibration_done = false;
-        
-        // Сохраняем целевые значения для быстрого восстановления AGC
-        let target_agc_for_recovery = if total_expected_amplitude > 0.0 {
-            (target_amplitude / total_expected_amplitude).clamp(0.01, 3.0)
-        } else {
-            1.0
-        };
+        // ОПТИМИЗАЦИЯ: Выделяем буферы один раз перед циклом, переиспользуем между блоками
+        let max_block_samples = BLOCK_SIZE_MS as usize * samples_per_ms;
+        let mut block_signal = vec![ComplexNumber::from_parts(0.0, 0.0); max_block_samples];
+        let mut iq8_data = vec![0u8; max_block_samples * 2];
 
         for block_idx in 0..num_blocks {
             let block_start_ms = block_idx * BLOCK_SIZE_MS;
@@ -2511,106 +2484,26 @@ impl IFDataGen {
             // Убираем промежуточные сообщения
 
             // ПОТОКОВОЕ НАКОПЛЕНИЕ и запись для этого блока
-            // Убираем промежуточные сообщения
             let block_samples = block_duration_ms as usize * samples_per_ms;
 
-            // Буфер для накопления данных блока (не весь файл!)
-            let mut block_signal = vec![ComplexNumber::from_parts(0.0, 0.0); block_samples];
-            
-            // 🚨 КРИТИЧНО: Добавляем тепловой шум ПЕРЕД накоплением спутниковых сигналов!
-            // Без шума сигналы от разных спутников взаимно уничтожаются из-за разных фаз
-            //
-            // ПРАВИЛЬНЫЙ РАСЧЁТ УРОВНЯ ШУМА:
-            // Noise floor -174 dBm/Hz + 10*log10(BW) = thermal noise power
-            // Для 5 MHz: -174 + 10*log10(5e6) = -174 + 67 = -107 dBm
-            // Но сигналы имеют CN0 ~45 dB-Hz, что даёт амплитуду ~0.112
-            // Правильная sigma для шума должна быть намного меньше 1.0!
-            //
-            // Используем sigma = 0.1 для разумного соотношения сигнал/шум
-            let noise_sigma = 0.1; // ИСПРАВЛЕНО: было 1.0, что давало огромный клиппинг!
-            FastMath::generate_noise_block(&mut block_signal, noise_sigma);
+            // 1. Шум заполняет буфер (σ зависит от физики, не от AGC)
+            FastMath::generate_noise_block(&mut block_signal[..block_samples], noise_sigma);
 
-            // Накапливаем сигналы всех спутников для этого блока с глобальным AGC
-            // TODO: Реализовать индивидуальную амплитуду для каждого спутника в будущем
-            
-
-            
-            for sample_idx in 0..block_samples {
-                for satellite in sat_if_signals.iter().flatten() {
-                    if let Some(block_data) = &satellite.block_data {
-                        if sample_idx < block_data.len() {
-                            let mut sat_sample = block_data[sample_idx];
-
-                            // ПРИМЕНЯЕМ ГЛОБАЛЬНЫЙ AGC К КАЖДОМУ СПУТНИКУ ПЕРЕД СУММИРОВАНИЕМ
-                            sat_sample.real *= agc_gain;
-                            sat_sample.imag *= agc_gain;
-
-                            block_signal[sample_idx].real += sat_sample.real;
-                            block_signal[sample_idx].imag += sat_sample.imag;
-                        }
+            // 2. Накапливаем спутниковые сигналы БЕЗ agc_gain
+            for satellite in sat_if_signals.iter().flatten() {
+                if let Some(block_data) = &satellite.block_data {
+                    let len = block_data.len().min(block_samples);
+                    for i in 0..len {
+                        block_signal[i].real += block_data[i].real;
+                        block_signal[i].imag += block_data[i].imag;
                     }
                 }
             }
 
-            // ========== ПРЕДВАРИТЕЛЬНАЯ КАЛИБРОВКА AGC НА ПЕРВОМ БЛОКЕ ==========
-            //
-            // НАЗНАЧЕНИЕ: Корректировка теоретически рассчитанного коэффициента AGC
-            // на основе реальной амплитуды сгенерированного сигнала.
-            //
-            // НЕОБХОДИМОСТЬ: Теоретическая модель может не учитывать:
-            // - Особенности генерации кодов разных спутниковых систем
-            // - Различия в мощности сигналов разных спутников
-            // - Фазовые соотношения между спутниками в конкретный момент времени
-            // - Особенности модуляции (BPSK, BOC, AltBOC)
-            //
-            // МЕТОД: Анализ первых 1000 отсчетов сигнала для определения:
-            // - Максимальной амплитуды (пиковое значение)
-            // - Средней амплитуды (RMS-подобная оценка)
-            if !calibration_done && block_idx == 0 {
-                let mut max_amplitude = 0.0f64; // Максимальная мгновенная амплитуда
-                let mut amplitude_sum = 0.0f64; // Сумма амплитуд для расчета среднего
-
-                // Анализируем первые 1000 отсчетов (≈0.5 мс при 2 МГц дискретизации)
-                // Этого достаточно для статистически значимой оценки амплитуды
-                let calibration_samples = block_signal.len().min(1000);
-
-                for sample in &block_signal[..calibration_samples] {
-                    // Вычисляем модуль комплексного числа: |I + jQ| = √(I² + Q²)
-                    let amplitude = (sample.real * sample.real + sample.imag * sample.imag).sqrt();
-                    max_amplitude = max_amplitude.max(amplitude);
-                    amplitude_sum += amplitude;
-                }
-
-                let avg_amplitude = amplitude_sum / calibration_samples as f64;
-
-                // РАСЧЕТ КАЛИБРОВОЧНОГО КОЭФФИЦИЕНТА:
-                // Используем средневзвешенную амплитуду (70% avg + 30% max) для более сбалансированной оценки
-                // Это предотвращает переоптимизацию по пиковым значениям
-                let effective_amplitude = 0.7 * avg_amplitude + 0.3 * max_amplitude;
-                let calibrated_gain = if effective_amplitude > 0.0 {
-                    (target_amplitude / effective_amplitude).clamp(0.001, 3.0)
-                } else {
-                    agc_gain // Оставляем исходный коэффициент при нулевом сигнале
-                };
-
-                // ПРИМЕНЕНИЕ КАЛИБРОВКИ:
-                // Корректируем коэффициент только при значительном расхождении (>10%)
-                // для избежания излишних корректировок от шума
-                if (calibrated_gain - agc_gain).abs() > 0.1 {
-                    println!(
-                        "🔧 КАЛИБРОВКА AGC: Макс.: {:.3}, Средн.: {:.3}, Эфф.(70/30): {:.3}",
-                        max_amplitude, avg_amplitude, effective_amplitude
-                    );
-                    println!(
-                        "🔧 AGC скорректирован: {:.3} → {:.3} (изменение {:.1}%)",
-                        agc_gain,
-                        calibrated_gain,
-                        (calibrated_gain - agc_gain) / agc_gain * 100.0
-                    );
-                    agc_gain = calibrated_gain;
-                }
-
-                calibration_done = true; // Калибровка выполняется только один раз
+            // 3. Применяем AGC ко ВСЕМУ блоку (шум + сигнал) — как в реальном приёмнике
+            for i in 0..block_samples {
+                block_signal[i].real *= agc_gain;
+                block_signal[i].imag *= agc_gain;
             }
 
             // ========== КВАНТОВАНИЕ И ЗАПИСЬ БЛОКА В ФАЙЛ ==========
@@ -2625,143 +2518,91 @@ impl IFDataGen {
             // МАСШТАБИРОВАНИЕ: Отсчеты с плавающей точкой [-1.0, +1.0] масштабируются к [-127, +127]
             // Множитель 127 обеспечивает оптимальное использование динамического диапазона
             let write_start = std::time::Instant::now();
-            let mut iq8_data = Vec::with_capacity(block_samples * 2); // I и Q компоненты
-            let mut clipped_in_block = 0; // Счетчик клиппированных отсчетов в текущем блоке
+            let mut clipped_in_block = 0u64;
 
-            for sample in &block_signal {
-                // МАСШТАБИРОВАНИЕ И ОГРАНИЧЕНИЕ ДИАПАЗОНА:
-                // Преобразование [-1.0, +1.0] → [-128, +127] с ограничением
+            // SIMD-квантование: обработка 4 сэмплов за итерацию через f64x4
+            let scale = f64x4::splat(127.0);
+            let clamp_lo = f64x4::splat(-128.0);
+            let clamp_hi = f64x4::splat(127.0);
+
+            let chunks = block_samples / 4;
+
+            for chunk in 0..chunks {
+                let base = chunk * 4;
+                let s0 = &block_signal[base];
+                let s1 = &block_signal[base + 1];
+                let s2 = &block_signal[base + 2];
+                let s3 = &block_signal[base + 3];
+
+                let reals = f64x4::new([s0.real, s1.real, s2.real, s3.real]);
+                let imags = f64x4::new([s0.imag, s1.imag, s2.imag, s3.imag]);
+
+                // Клиппинг-детекция скалярно (дешевле чем SIMD extract для 4 элементов)
+                if s0.real.abs() > 1.0 || s0.imag.abs() > 1.0 { clipped_in_block += 1; }
+                if s1.real.abs() > 1.0 || s1.imag.abs() > 1.0 { clipped_in_block += 1; }
+                if s2.real.abs() > 1.0 || s2.imag.abs() > 1.0 { clipped_in_block += 1; }
+                if s3.real.abs() > 1.0 || s3.imag.abs() > 1.0 { clipped_in_block += 1; }
+
+                // SIMD масштабирование и clamp
+                let i_scaled = (reals * scale).max(clamp_lo).min(clamp_hi);
+                let q_scaled = (imags * scale).max(clamp_lo).min(clamp_hi);
+
+                let i_arr = i_scaled.as_array_ref();
+                let q_arr = q_scaled.as_array_ref();
+
+                let out_base = base * 2;
+                iq8_data[out_base]     = (i_arr[0] as i8) as u8;
+                iq8_data[out_base + 1] = (q_arr[0] as i8) as u8;
+                iq8_data[out_base + 2] = (i_arr[1] as i8) as u8;
+                iq8_data[out_base + 3] = (q_arr[1] as i8) as u8;
+                iq8_data[out_base + 4] = (i_arr[2] as i8) as u8;
+                iq8_data[out_base + 5] = (q_arr[2] as i8) as u8;
+                iq8_data[out_base + 6] = (i_arr[3] as i8) as u8;
+                iq8_data[out_base + 7] = (q_arr[3] as i8) as u8;
+            }
+
+            // Остаток (< 4 сэмплов)
+            for idx in (chunks * 4)..block_samples {
+                let sample = &block_signal[idx];
                 let i_scaled = (sample.real * 127.0).clamp(-128.0, 127.0) as i8;
                 let q_scaled = (sample.imag * 127.0).clamp(-128.0, 127.0) as i8;
-
-                // ОБНАРУЖЕНИЕ КЛИППИНГА:
-                // Клиппинг происходит, когда амплитуда сигнала превышает динамический диапазон
-                // Проверяем до масштабирования для точного подсчета
                 if sample.real.abs() > 1.0 || sample.imag.abs() > 1.0 {
                     clipped_in_block += 1;
                 }
-
-                // УПАКОВКА В IQ8 ФОРМАТ:
-                // Приведение i8 к u8 для сохранения в файл (сдвиг на 128)
-                iq8_data.push(i_scaled as u8);
-                iq8_data.push(q_scaled as u8);
+                iq8_data[idx * 2] = i_scaled as u8;
+                iq8_data[idx * 2 + 1] = q_scaled as u8;
             }
+            let clipped_in_block = clipped_in_block;
 
             // Записываем блок в файл
-            if_file.write_all(&iq8_data)?;
+            if_file.write_all(&iq8_data[..block_samples * 2])?;
 
             total_clipped_samples += clipped_in_block as i64;
             total_samples_written += block_samples as i64 * 2; // I + Q
 
-            // Обновляем счетчики AGC
-            agc_clipped_for_stats += clipped_in_block as i64;
-            agc_samples_for_stats += block_samples as i64 * 2; // I + Q
+            // ========== RMS-BASED AGC ==========
+            // Измеряем RMS блока ПЕРЕД квантованием (сигнал уже масштабирован AGC)
+            let rms = {
+                let sum_sq: f64 = block_signal[..block_samples].iter()
+                    .map(|s| s.real * s.real + s.imag * s.imag)
+                    .sum();
+                (sum_sq / block_samples as f64).sqrt()
+            };
 
-            // ========== ИНТЕЛЛЕКТУАЛЬНЫЙ АДАПТИВНЫЙ AGC МОНИТОРИНГ ==========
-            //
-            // НАЗНАЧЕНИЕ: Непрерывное отслеживание уровня клиппинга и автоматическая
-            // корректировка коэффициента усиления для поддержания оптимального уровня сигнала.
-            //
-            // ПРИНЦИП РАБОТЫ:
-            // 1. Мониторинг каждого блока (1000 мс) для быстрой реакции
-            // 2. Агрессивное снижение при критическом клиппинге
-            // 3. Осторожное восстановление при низком клиппинге
-            //
-            // КЛИППИНГ КАК МЕТРИКА КАЧЕСТВА:
-            // - 0-1%: Оптимальные условия, можно медленно увеличивать усиление
-            // - 1-5%: Мягкое снижение для предотвращения дальнейшего ухудшения
-            // - 5-20%: Умеренное снижение для быстрой коррекции
-            // - 20-50%: Быстрое снижение для предотвращения катастрофы
-            // - >50%: Критическое состояние, экстренное вмешательство
-            if agc_samples_for_stats > 0 {
-                // РАСЧЕТ КОЭФФИЦИЕНТА КЛИППИНГА:
-                // Отношение клиппированных отсчетов к общему числу отсчетов в текущем блоке
-                let agc_clipping_rate = agc_clipped_for_stats as f64 / agc_samples_for_stats as f64;
+            // Адаптируем gain: целевой RMS = 0.25 (3σ ≈ 0.75, ~5% headroom до 1.0)
+            if rms > 0.0 {
+                let correction = target_rms / rms;
+                // Плавная коррекция: двигаемся к цели на 50% за блок
+                agc_gain *= 1.0 + 0.5 * (correction - 1.0);
+                agc_gain = agc_gain.clamp(0.001, 100.0);
+            }
 
-                // ========== АДАПТИВНАЯ ЛОГИКА КОРРЕКЦИИ ==========
-
-                // КРИТИЧЕСКИЙ УРОВЕНЬ (>50%): Немедленное агрессивное вмешательство
-                // При таком уровне клиппинга сигнал полностью искажается
-                if agc_clipping_rate > 0.5 {
-                    agc_gain *= 0.7; // Снижаем на 30% (-3.1 дБ)
-                    println!(
-                        "[AGC] 🔥 КРИТИЧЕСКИЙ клиппинг {:.1}%! Экстренное снижение до {:.3}",
-                        agc_clipping_rate * 100.0,
-                        agc_gain
-                    );
-                    // Обнуляем счетчики для новой оценки на следующем блоке
-                    agc_clipped_for_stats = 0;
-                    agc_samples_for_stats = 0;
-
-                // ВЫСОКИЙ УРОВЕНЬ (20-50%): Быстрое вмешательство
-                } else if agc_clipping_rate > 0.2 {
-                    agc_gain *= 0.8; // Снижаем на 20% (-1.9 дБ)
-                    agc_gain = agc_gain.max(0.01); // КРИТИЧНО: Ограничиваем минимум!
-                    println!(
-                        "[AGC] ⚡ ВЫСОКИЙ клиппинг {:.1}%! Быстрое снижение до {:.3}",
-                        agc_clipping_rate * 100.0,
-                        agc_gain
-                    );
-                    agc_clipped_for_stats = 0;
-                    agc_samples_for_stats = 0;
-
-                // УМЕРЕННЫЙ УРОВЕНЬ (5-20%): Умеренная коррекция
-                } else if agc_clipping_rate > 0.05 {
-                    agc_gain *= 0.9; // Снижаем на 10% (-0.9 дБ)
-                    println!(
-                        "[AGC] ⚠️  УМЕРЕННЫЙ клиппинг {:.1}%! Снижение до {:.3}",
-                        agc_clipping_rate * 100.0,
-                        agc_gain
-                    );
-                    agc_clipped_for_stats = 0;
-                    agc_samples_for_stats = 0;
-
-                // МЯГКИЙ УРОВЕНЬ (1-5%): Плавная коррекция без сброса счетчиков
-                } else if agc_clipping_rate > 0.01 {
-                    agc_gain *= 0.95; // Снижаем на 5% (-0.4 дБ)
-                    println!(
-                        "[AGC] 🎚️  Мягкий клиппинг {:.2}%, плавное снижение до {:.3}",
-                        agc_clipping_rate * 100.0,
-                        agc_gain
-                    );
-                    // НЕ сбрасываем счетчики для постепенного накопления статистики
-
-                    // ОПТИМАЛЬНЫЕ УСЛОВИЯ (<0.1%): Адаптивное восстановление коэффициента усиления
-                } else if agc_clipping_rate < 0.001 
-                {
-                    // БЫСТРОЕ ВОССТАНОВЛЕНИЕ: При отсутствии клиппинга агрессивно возвращаемся к оптимальному уровню
-                    
-                    // Если AGC значительно ниже целевого и нет клиппинга, быстро восстанавливаем
-                    if agc_gain < target_agc_for_recovery * 0.8 {
-                        // Быстрый скачок к 90% от целевого значения за 2-3 итерации
-                        let target_90_percent = target_agc_for_recovery * 0.9;
-                        agc_gain = (agc_gain + target_90_percent) / 2.0; // Средневзвешенное: быстрый переход
-                        agc_gain = agc_gain.clamp(0.01, 3.0);
-                    } else {
-                        // Тонкая настройка когда уже близко к цели
-                        agc_gain *= 1.05;
-                        if agc_gain > 3.0 {
-                            agc_gain = 3.0;
-                        }
-                    }
-                    let recovery_info = if agc_gain < target_agc_for_recovery * 0.8 {
-                        "БЫСТРЫЙ СКАЧОК"
-                    } else {
-                        "тонкая настройка (+5%)"
-                    };
-                    
-                    println!(
-                        "[AGC] 📈 Оптимальные условия ({:.3}%), {} до {:.3} (цель: {:.3})",
-                        agc_clipping_rate * 100.0,
-                        recovery_info,
-                        agc_gain,
-                        target_agc_for_recovery
-                    );
-                }
-
-                // ОКОНЧАТЕЛЬНОЕ ОГРАНИЧЕНИЕ ДИАПАЗОНА:
-                // Принудительно ограничиваем коэффициент в безопасных пределах
-                agc_gain = agc_gain.clamp(0.001, 1.0); // [-60 дБ, 0 дБ]
+            let clipping_rate = clipped_in_block as f64 / block_samples as f64;
+            if block_idx < 3 || (block_idx + 1) % 10 == 0 || clipping_rate > 0.01 {
+                println!(
+                    "[AGC] Block {}: RMS={:.3}, gain={:.3}, clip={:.2}%",
+                    block_idx, rms, agc_gain, clipping_rate * 100.0
+                );
             }
 
             let write_duration = write_start.elapsed();
@@ -5013,7 +4854,7 @@ impl IFDataGen {
         let mut if_file = match File::create(filename_str) {
             Ok(file) => {
                 println!("[INFO]\tOutput file opened successfully.");
-                BufWriter::new(file)
+                BufWriter::with_capacity(1 << 20, file)
             }
             Err(_) => {
                 println!("[ERROR]\tFailed to open output file: {}", filename_str);
