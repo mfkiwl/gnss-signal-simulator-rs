@@ -3984,19 +3984,19 @@ impl IFDataGen {
 
                 // Check each GLONASS signal
                 let glo_signals = [
-                    (SIGNAL_INDEX_G1, crate::types::GEN_G1),
-                    (SIGNAL_INDEX_G2, crate::types::GEN_G2),
-                    (SIGNAL_INDEX_G3, crate::types::GEN_G3),
+                    (SIGNAL_INDEX_G1, crate::types::GEN_G1, 0usize),
+                    (SIGNAL_INDEX_G2, crate::types::GEN_G2, 1usize),
+                    (SIGNAL_INDEX_G3, crate::types::GEN_G3, 2usize),
                 ];
 
-                for &(signal_index, signal_mask) in &glo_signals {
+                for &(signal_index, signal_mask, freq_array_index) in &glo_signals {
                     if self
                         .output_param
                         .CompactConfig
                         .is_signal_enabled(signal_mask)
                     {
                         let base = SIGNAL_CENTER_FREQ[GnssSystem::GlonassSystem as usize]
-                            [signal_index.min(7)];
+                            [freq_array_index];
                         let step = if signal_index == SIGNAL_INDEX_G2 {
                             437500.0
                         } else if signal_index == SIGNAL_INDEX_G1 {

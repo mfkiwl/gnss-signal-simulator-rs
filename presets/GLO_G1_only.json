@@ -27,20 +27,20 @@
 		"trajectoryList": [
             {
                 "type": "Const",
-                "time": 1.0
+                "time": 10.0
             }
 		]
 	},
 	"ephemeris": {
 		"type": "RINEX",
-		"name": "EphData/rinex_v3_20251560000.rnx"
+		"name": "EphData/BRDC00IGS_R_20251560000_01D_MN.rnx"
 	},
 	"output": {
 		"type": "IFdata",
 		"format": "IQ8",
 		"sampleFreq": 10.0,
 		"centerFreq": 1602.0,
-        "name": "generated_files/GLO_G1_only_1s.C8",
+        "name": "generated_files/GLO_G1_only_10s.C8",
 		"config": {
 			"elevationMask": 5
 		},

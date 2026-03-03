@@ -63,6 +63,13 @@ ZSCORE_THRESHOLD = 30
 NON_COHERENT_GPS = 10
 NON_COHERENT_BDS = 10
 NON_COHERENT_GAL = 20
+NON_COHERENT_GLO = 10
+
+# GLONASS FDMA
+GLO_CODE_LENGTH = 511
+GLO_CODE_PERIOD_MS = 1
+GLO_F_BASE = 1602.0e6       # G1 base frequency (Hz)
+GLO_F_STEP = 0.5625e6       # FDMA channel step (Hz)
 
 PI2 = 2.0 * math.pi
 
@@ -214,6 +221,30 @@ def generate_e1_boc(svid):
 
 
 # ============================================================
+# GLONASS G1 Code Generation (FDMA — single code for all SVs)
+# ============================================================
+
+_GLO_G1_CODE = None
+
+def generate_glonass_g1_code(svid=None):
+    """Generate GLONASS G1 ranging code (511 chips). Same for all satellites (FDMA).
+    svid parameter is accepted for API compatibility but ignored."""
+    global _GLO_G1_CODE
+    if _GLO_G1_CODE is not None:
+        return _GLO_G1_CODE.copy()
+
+    state = 0x1FC  # G1 LFSR init
+    poly = 0x110   # G1 polynomial (x^5 + x^9)
+    code = np.zeros(GLO_CODE_LENGTH, dtype=np.int8)
+    for i in range(GLO_CODE_LENGTH):
+        code[i] = 1 if (state & 0x100) else 0  # output = bit 8
+        fb = bin(state & poly).count('1') & 1   # feedback = parity
+        state = (state << 1) | fb
+    _GLO_G1_CODE = 1 - 2 * code  # 0/1 → +1/-1
+    return _GLO_G1_CODE.copy()
+
+
+# ============================================================
 # CLI & Preset Parser
 # ============================================================
 
@@ -274,7 +305,12 @@ def parse_preset(preset_path):
                     enabled.add('BDS')
                 elif sys_name == 'Galileo' and sig == 'E1':
                     enabled.add('GAL')
+                elif sys_name == 'GLONASS' and sig == 'G1':
+                    enabled.add('GLO')
     config['enabled_systems'] = enabled if enabled else {'GPS', 'BDS', 'GAL'}
+
+    if 'output' in data and 'centerFreq' in data['output']:
+        config['center_freq'] = data['output']['centerFreq'] * 1e6
 
     if 'output' in data and 'config' in data['output']:
         config['elevation_mask'] = data['output']['config'].get('elevationMask', 5)
@@ -319,7 +355,7 @@ def parse_rinex_nav(filepath, target_gps_week, target_gps_sow, time_window=7200)
         return {}
 
     target_time = target_gps_week * 604800.0 + target_gps_sow
-    result = {'GPS': {}, 'BDS': {}, 'GAL': {}}
+    result = {'GPS': {}, 'BDS': {}, 'GAL': {}, 'GLO': {}}
 
     with open(filepath, 'r') as f:
         lines = f.readlines()
@@ -344,7 +380,7 @@ def parse_rinex_nav(filepath, target_gps_week, target_gps_sow, time_window=7200)
             i += 1
             continue
 
-        if sys_char not in ('G', 'C', 'E'):
+        if sys_char not in ('G', 'C', 'E', 'R'):
             i += n_data + 1
             continue
 
@@ -363,7 +399,60 @@ def parse_rinex_nav(filepath, target_gps_week, target_gps_sow, time_window=7200)
         for j in range(1, n_data + 1):
             if i + j < len(lines):
                 data_values.extend(parse_rinex_line_values(lines[i + j]))
+
+        # Parse epoch from header line for GLONASS (UTC-based)
+        epoch_year = epoch_month = epoch_day = epoch_hour = epoch_min = epoch_sec = 0
+        try:
+            epoch_year = int(line[4:8])
+            epoch_month = int(line[9:11])
+            epoch_day = int(line[12:14])
+            epoch_hour = int(line[15:17])
+            epoch_min = int(line[18:20])
+            epoch_sec = int(line[21:23])
+        except (ValueError, IndexError):
+            pass
+
         i += n_data + 1
+
+        # --- GLONASS ephemeris (3 data lines: X/Y/Z in km, V in km/s, A in km/s²) ---
+        if sys_char == 'R':
+            if len(data_values) < 12:
+                continue
+
+            # GLONASS epoch is in UTC, convert to GPS seconds
+            try:
+                utc_dt = datetime(epoch_year, epoch_month, epoch_day,
+                                  epoch_hour, epoch_min, epoch_sec)
+                gps_w, gps_s = utc_to_gps_time(utc_dt)
+                toe_gps = gps_w * 604800.0 + gps_s
+            except Exception:
+                continue
+
+            # Time filter
+            if abs(toe_gps - target_time) > time_window:
+                continue
+
+            # Line 1: X(km), Xdot(km/s), Xdotdot(km/s²), health
+            # Line 2: Y(km), Ydot(km/s), Ydotdot(km/s²), freq_number
+            # Line 3: Z(km), Zdot(km/s), Zdotdot(km/s²), age
+            eph = {
+                'svid': svid,
+                'x': data_values[0],    # km
+                'vx': data_values[1],   # km/s
+                'ax': data_values[2],   # km/s²
+                'health': data_values[3],
+                'y': data_values[4],    # km
+                'vy': data_values[5],   # km/s
+                'ay': data_values[6],   # km/s²
+                'freq_num': int(data_values[7]),  # FDMA channel number k
+                'z': data_values[8],    # km
+                'vz': data_values[9],   # km/s
+                'az': data_values[10],  # km/s²
+                'toe_gps': toe_gps,
+                'af0': af0,
+            }
+            result['GLO'].setdefault(svid, []).append(eph)
+            continue
 
         if len(data_values) < 20:
             continue
@@ -491,6 +580,19 @@ def kepler_propagate(eph, transmit_time, system='GPS'):
     return x, y, z
 
 
+def glonass_propagate(eph, transmit_time):
+    """Propagate GLONASS satellite position using 2nd-order Taylor expansion.
+    GLONASS ephemeris has XYZ in km, velocities in km/s, accelerations in km/s².
+    Returns ECEF position in meters."""
+    dt = transmit_time - eph['toe_gps']
+    # Clamp to ±15 minutes for validity
+    dt = max(-900.0, min(900.0, dt))
+    x = (eph['x'] + eph['vx'] * dt + 0.5 * eph['ax'] * dt ** 2) * 1000.0
+    y = (eph['y'] + eph['vy'] * dt + 0.5 * eph['ay'] * dt ** 2) * 1000.0
+    z = (eph['z'] + eph['vz'] * dt + 0.5 * eph['az'] * dt ** 2) * 1000.0
+    return x, y, z
+
+
 # ============================================================
 # Coordinate Conversion & Satellite Visibility
 # ============================================================
@@ -536,15 +638,21 @@ def ecef_to_el_az(rx_ecef, sat_ecef, rx_lat_deg, rx_lon_deg):
 def compute_satellite_doppler(eph, target_time, rx_ecef, system='GPS'):
     """Doppler via numerical velocity (central difference, dt=0.5s)."""
     dt = 0.5
-    pos1 = kepler_propagate(eph, target_time - dt, system)
-    pos2 = kepler_propagate(eph, target_time + dt, system)
+    if system == 'GLO':
+        propagate = glonass_propagate
+        freq = GLO_F_BASE + eph.get('freq_num', 0) * GLO_F_STEP
+    else:
+        propagate = lambda e, t: kepler_propagate(e, t, system)
+        freq = F_L1
+    pos1 = propagate(eph, target_time - dt)
+    pos2 = propagate(eph, target_time + dt)
     vel = [(pos2[i] - pos1[i]) / (2 * dt) for i in range(3)]
-    pos_t = kepler_propagate(eph, target_time, system)
+    pos_t = propagate(eph, target_time)
     los = [pos_t[i] - rx_ecef[i] for i in range(3)]
     dist = math.sqrt(sum(x * x for x in los))
     unit_los = [x / dist for x in los]
     v_r = sum(vel[i] * unit_los[i] for i in range(3))
-    return -v_r / SPEED_OF_LIGHT * F_L1
+    return -v_r / SPEED_OF_LIGHT * freq
 
 
 def compute_visible_satellites(best_eph, target_time, rx_lat, rx_lon, rx_alt, el_mask=5):
@@ -555,13 +663,19 @@ def compute_visible_satellites(best_eph, target_time, rx_lat, rx_lon, rx_alt, el
         visible[system] = {}
         for svid, eph in sv_dict.items():
             try:
-                pos = kepler_propagate(eph, target_time, system)
+                if system == 'GLO':
+                    pos = glonass_propagate(eph, target_time)
+                else:
+                    pos = kepler_propagate(eph, target_time, system)
                 el, az = ecef_to_el_az(rx_ecef, pos, rx_lat, rx_lon)
                 doppler = compute_satellite_doppler(eph, target_time, rx_ecef, system)
-                visible[system][svid] = {
+                info = {
                     'el': el, 'az': az, 'doppler': doppler,
                     'visible': el >= el_mask,
                 }
+                if system == 'GLO':
+                    info['freq_num'] = eph.get('freq_num', 0)
+                visible[system][svid] = info
             except Exception:
                 pass
     return visible
@@ -742,6 +856,137 @@ def acquire_system(signal, system_name, svid_range, code_gen_fn, code_period_ms,
     }
 
 
+def acquire_glonass_system(signal, sat_info_glo, center_freq, sample_rate,
+                           non_coherent=NON_COHERENT_GLO, threshold=ZSCORE_THRESHOLD):
+    """GLONASS FDMA acquisition: same PRN code, different carrier per satellite.
+    Each SV is searched at its FDMA IF offset + Doppler range."""
+    samples_per_ms = int(sample_rate * 1e-3)
+    samples_per_code = GLO_CODE_PERIOD_MS * samples_per_ms
+
+    blocks = [signal[i * samples_per_code:(i + 1) * samples_per_code]
+              for i in range(len(signal) // samples_per_code)]
+
+    g1_code = generate_glonass_g1_code()
+    local_code = resample_code(g1_code, samples_per_code)
+    code_fft_conj = np.conj(fft(local_code))
+    t = np.arange(samples_per_code) / sample_rate
+    n = samples_per_code
+
+    # Build search list: (svid, freq_num, if_offset)
+    search_list = []
+    for svid, info in sorted(sat_info_glo.items()):
+        if not info['visible']:
+            continue
+        freq_num = info.get('freq_num', 0)
+        carrier_freq = GLO_F_BASE + freq_num * GLO_F_STEP
+        if_offset = carrier_freq - center_freq
+        search_list.append((svid, freq_num, if_offset))
+
+    all_results = []
+    found_sats = []
+    total = len(search_list)
+
+    print(f"\n{'=' * 60}")
+    print(f"  GLONASS G1 FDMA ACQUISITION")
+    print(f"{'=' * 60}")
+    print(f"  Center freq: {center_freq / 1e6:.4f} MHz")
+    print(f"  Doppler: +/-{DOPPLER_RANGE} Hz, step {DOPPLER_STEP} Hz, z-threshold={threshold}")
+    print(f"  Searching {total} visible GLONASS SVs")
+
+    doppler_bins = np.arange(-DOPPLER_RANGE, DOPPLER_RANGE + 1, DOPPLER_STEP)
+
+    for idx, (svid, freq_num, if_offset) in enumerate(search_list):
+        print(f"\r  Searching GLO R{svid:02d} (k={freq_num:+d}, IF={if_offset / 1e3:+.1f} kHz)... ({idx + 1}/{total})",
+              end='', flush=True)
+
+        best_zscore = 0.0
+        best_doppler = 0
+        best_code_phase = 0
+        best_corr = None
+
+        for doppler in doppler_bins:
+            correlation_sum = np.zeros(n)
+            count = min(non_coherent, len(blocks))
+
+            for blk in blocks[:count]:
+                carrier = np.exp(-1j * 2 * np.pi * (if_offset + doppler) * t)
+                baseband = blk[:n] * carrier
+                corr = np.abs(ifft(fft(baseband) * code_fft_conj)) ** 2
+                correlation_sum += corr
+
+            peak_idx = np.argmax(correlation_sum)
+            peak_val = correlation_sum[peak_idx]
+
+            mask = np.ones(n, dtype=bool)
+            exclude = max(50, n // 100)
+            mask[max(0, peak_idx - exclude):min(n, peak_idx + exclude)] = False
+            noise = correlation_sum[mask]
+            noise_mean = np.mean(noise)
+            noise_std = np.std(noise)
+            zscore = (peak_val - noise_mean) / noise_std if noise_std > 0 else 0
+
+            if zscore > best_zscore:
+                best_zscore = zscore
+                best_doppler = doppler
+                best_code_phase = peak_idx
+                best_corr = correlation_sum.copy()
+
+        found = best_zscore > threshold
+        r = {'svid': svid, 'doppler': best_doppler, 'code_phase': best_code_phase,
+             'zscore': best_zscore, 'found': found, 'freq_num': freq_num, 'if_offset': if_offset}
+        all_results.append(r)
+        if found:
+            found_sats.append(r)
+
+    print(f"\r{'':75}")
+
+    # Top-10 diagnostics
+    top = sorted(all_results, key=lambda x: -x['zscore'])[:10]
+    print(f"  {'SV':>4}  {'k':>3}  {'IF':>10}  {'Doppler':>10}  {'Z-score':>10}  Status")
+    print(f"  {'---':>4}  {'---':>3}  {'---':>10}  {'---':>10}  {'---':>10}  ------")
+    for r in top:
+        st = "FOUND" if r['zscore'] > threshold else "noise"
+        print(f"  R{r['svid']:02d}  {r.get('freq_num', 0):+3d}  "
+              f"{r.get('if_offset', 0) / 1e3:>+8.1f}kHz  {r['doppler']:>+8.0f} Hz  "
+              f"{r['zscore']:>9.1f}  {st}")
+    print(f"\n  RESULT: {len(found_sats)} GLONASS satellites found")
+
+    # Heatmap for strongest SV
+    best_heatmap = None
+    best_corr_out = None
+    best_doppler_bins = None
+    if found_sats:
+        best_sv = sorted(found_sats, key=lambda x: -x['zscore'])[0]
+        print(f"  Computing 2D heatmap for R{best_sv['svid']:02d}...")
+        if_off = best_sv['if_offset']
+        hm = np.zeros((len(doppler_bins), n))
+        for d_idx, doppler in enumerate(doppler_bins):
+            correlation_sum = np.zeros(n)
+            count = min(non_coherent, len(blocks))
+            for blk in blocks[:count]:
+                carrier = np.exp(-1j * 2 * np.pi * (if_off + doppler) * t)
+                baseband = blk[:n] * carrier
+                corr = np.abs(ifft(fft(baseband) * code_fft_conj)) ** 2
+                correlation_sum += corr
+            hm[d_idx, :] = correlation_sum
+        peak_flat = np.argmax(hm)
+        pk_d, pk_c = np.unravel_index(peak_flat, hm.shape)
+        best_heatmap = hm
+        best_corr_out = hm[pk_d, :]
+        best_doppler_bins = doppler_bins
+
+    return {
+        'system': 'GLONASS G1',
+        'found': found_sats,
+        'all': all_results,
+        'heatmap': best_heatmap,
+        'correlation': best_corr_out,
+        'doppler_bins': best_doppler_bins,
+        'code_period_ms': GLO_CODE_PERIOD_MS,
+        'samples_per_code': samples_per_code,
+    }
+
+
 # ============================================================
 # CN0 Estimation
 # ============================================================
@@ -758,8 +1003,11 @@ def estimate_cn0(zscore, code_period_ms, non_coherent_count):
 # Report Generation (3 Pages)
 # ============================================================
 
-SYS_COLORS = {'GPS': '#2196F3', 'BDS': '#F44336', 'GAL': '#4CAF50'}
-SYS_PREFIX = {'GPS L1CA': ('G', 'GPS'), 'BeiDou B1C': ('C', 'BDS'), 'Galileo E1': ('E', 'GAL')}
+SYS_COLORS = {'GPS': '#2196F3', 'BDS': '#F44336', 'GAL': '#4CAF50', 'GLO': '#FF9800'}
+SYS_PREFIX = {
+    'GPS L1CA': ('G', 'GPS'), 'BeiDou B1C': ('C', 'BDS'),
+    'Galileo E1': ('E', 'GAL'), 'GLONASS G1': ('R', 'GLO'),
+}
 
 
 def _all_found_bars(results_list, threshold):
@@ -778,7 +1026,8 @@ def _all_found_bars(results_list, threshold):
 
 def _cn0_bars(results_list):
     """Collect CN0 estimations for all found sats."""
-    nc_map = {'GPS L1CA': NON_COHERENT_GPS, 'BeiDou B1C': NON_COHERENT_BDS, 'Galileo E1': NON_COHERENT_GAL}
+    nc_map = {'GPS L1CA': NON_COHERENT_GPS, 'BeiDou B1C': NON_COHERENT_BDS,
+              'Galileo E1': NON_COHERENT_GAL, 'GLONASS G1': NON_COHERENT_GLO}
     items = []
     for res in results_list:
         if not res:
@@ -794,7 +1043,8 @@ def _cn0_bars(results_list):
 
 
 def generate_report(iq_file, signal, sample_rate, rms_values,
-                    gps_res, bds_res, gal_res, sat_info, config, output_path, threshold):
+                    gps_res, bds_res, gal_res, sat_info, config, output_path, threshold,
+                    glo_res=None):
     """Generate 3-page PDF report."""
     import matplotlib
     matplotlib.use('Agg')
@@ -802,7 +1052,7 @@ def generate_report(iq_file, signal, sample_rate, rms_values,
     from matplotlib.backends.backend_pdf import PdfPages
     from matplotlib.patches import Patch
 
-    results_list = [gps_res, bds_res, gal_res]
+    results_list = [gps_res, bds_res, gal_res, glo_res]
 
     with PdfPages(output_path) as pdf:
         # ======================================================
@@ -927,7 +1177,7 @@ def generate_report(iq_file, signal, sample_rate, rms_values,
         if sat_info:
             for system, sv_dict in sat_info.items():
                 color = SYS_COLORS.get(system, 'gray')
-                prefix = {'GPS': 'G', 'BDS': 'C', 'GAL': 'E'}.get(system, '?')
+                prefix = {'GPS': 'G', 'BDS': 'C', 'GAL': 'E', 'GLO': 'R'}.get(system, '?')
                 for svid, info in sv_dict.items():
                     if info['el'] < 0:
                         continue
@@ -1015,15 +1265,16 @@ def generate_report(iq_file, signal, sample_rate, rms_values,
         plt.close(fig)
 
         # ======================================================
-        # PAGE 3 — Correlation Details (2x3)
+        # PAGE 3 — Correlation Details (2x4)
         # ======================================================
-        fig, axes = plt.subplots(2, 3, figsize=(18, 10))
+        fig, axes = plt.subplots(2, 4, figsize=(22, 10))
         fig.suptitle('Correlation Analysis', fontsize=14, fontweight='bold')
 
         sys_plots = [
             ('GPS L1CA', gps_res, GPS_CODE_LENGTH, 50, SYS_COLORS['GPS']),
             ('BeiDou B1C', bds_res, BDS_CODE_LENGTH, 5, SYS_COLORS['BDS']),
             ('Galileo E1', gal_res, GAL_CODE_LENGTH, 5, SYS_COLORS['GAL']),
+            ('GLONASS G1', glo_res, GLO_CODE_LENGTH, 50, SYS_COLORS['GLO']),
         ]
 
         for col, (sys_name, res, chip_count, zoom_chips, color) in enumerate(sys_plots):
@@ -1166,11 +1417,17 @@ def main():
             sat_info = compute_visible_satellites(
                 best_eph, target_time,
                 config['rx_lat'], config['rx_lon'], config['rx_alt'], el_mask)
-            for system in ['GPS', 'BDS', 'GAL']:
+            for system in ['GPS', 'BDS', 'GAL', 'GLO']:
                 if system in sat_info:
                     vis = sum(1 for s in sat_info[system].values() if s['visible'])
                     tot = len(sat_info[system])
-                    print(f"  {system} visible: {vis}/{tot} (el>{el_mask} deg)")
+                    if system == 'GLO' and vis > 0:
+                        channels = ', '.join(f'R{sv}(k={info["freq_num"]:+d})'
+                                             for sv, info in sorted(sat_info[system].items())
+                                             if info['visible'])
+                        print(f"  {system} visible: {vis}/{tot} (el>{el_mask} deg): {channels}")
+                    else:
+                        print(f"  {system} visible: {vis}/{tot} (el>{el_mask} deg)")
 
     # ---- RMS Stability ----
     print("\nComputing RMS stability...")
@@ -1208,7 +1465,7 @@ def main():
             print(f"  GAL: {len(gal_range)} SVs")
 
     # ---- Acquisition ----
-    gps_res = bds_res = gal_res = None
+    gps_res = bds_res = gal_res = glo_res = None
 
     if gps_range:
         gps_res = acquire_system(signal, 'GPS L1CA', gps_range, generate_ca_code,
@@ -1220,19 +1477,30 @@ def main():
         gal_res = acquire_system(signal, 'Galileo E1', gal_range, generate_e1_boc,
                                  GAL_CODE_PERIOD_MS, sample_rate, NON_COHERENT_GAL, threshold)
 
+    # GLONASS FDMA acquisition (requires sat_info for frequency channels)
+    glo_enabled = 'GLO' in enabled
+    center_freq = config.get('center_freq', F_L1)
+    if glo_enabled and sat_info and 'GLO' in sat_info:
+        glo_visible = {sv: info for sv, info in sat_info['GLO'].items() if info['visible']}
+        if glo_visible:
+            glo_res = acquire_glonass_system(signal, sat_info['GLO'], center_freq,
+                                             sample_rate, NON_COHERENT_GLO, threshold)
+
     # ---- Summary ----
     gps_n = len(gps_res['found']) if gps_res else 0
     bds_n = len(bds_res['found']) if bds_res else 0
     gal_n = len(gal_res['found']) if gal_res else 0
-    total_found = gps_n + bds_n + gal_n
+    glo_n = len(glo_res['found']) if glo_res else 0
+    total_found = gps_n + bds_n + gal_n + glo_n
 
     print(f"\n{'=' * 60}")
     print(f"  SUMMARY")
     print(f"{'=' * 60}")
-    print(f"  GPS L1CA:   {gps_n} satellites")
-    print(f"  BeiDou B1C: {bds_n} satellites")
-    print(f"  Galileo E1: {gal_n} satellites")
-    print(f"  TOTAL:      {total_found} satellites")
+    print(f"  GPS L1CA:    {gps_n} satellites")
+    print(f"  BeiDou B1C:  {bds_n} satellites")
+    print(f"  Galileo E1:  {gal_n} satellites")
+    print(f"  GLONASS G1:  {glo_n} satellites")
+    print(f"  TOTAL:       {total_found} satellites")
 
     if gps_res and gps_res['found']:
         sats_str = ', '.join(f'G{s["svid"]:02d}(z={s["zscore"]:.0f})' for s in sorted(gps_res['found'], key=lambda x: -x['zscore']))
@@ -1243,6 +1511,9 @@ def main():
     if gal_res and gal_res['found']:
         sats_str = ', '.join(f'E{s["svid"]:02d}(z={s["zscore"]:.0f})' for s in sorted(gal_res['found'], key=lambda x: -x['zscore']))
         print(f"  GAL: {sats_str}")
+    if glo_res and glo_res['found']:
+        sats_str = ', '.join(f'R{s["svid"]:02d}(k={s.get("freq_num", 0):+d},z={s["zscore"]:.0f})' for s in sorted(glo_res['found'], key=lambda x: -x['zscore']))
+        print(f"  GLO: {sats_str}")
 
     # ---- Generate report ----
     output_path = args.output or 'generated_files/verification_report.pdf'
@@ -1251,7 +1522,8 @@ def main():
     print(f"\nGenerating report: {output_path}")
     try:
         generate_report(args.iq_file, signal, sample_rate, rms_values,
-                        gps_res, bds_res, gal_res, sat_info, config, output_path, threshold)
+                        gps_res, bds_res, gal_res, sat_info, config, output_path, threshold,
+                        glo_res=glo_res)
     except Exception as e:
         print(f"  Error: {e}")
         import traceback

@@ -53,9 +53,10 @@ The project now supports simultaneous multi-system signal generation with mathem
 ### Supported GNSS Systems
 
 - **GPS L1CA**: Legacy civilian signal (1575.42 MHz)
-- **BeiDou B1C**: Modern civilian signal (1575.42 MHz)  
+- **BeiDou B1C**: Modern civilian signal (1575.42 MHz)
 - **Galileo E1**: European civilian signal (1575.42 MHz)
-- **Multi-system**: Simultaneous GPS + BeiDou + Galileo generation
+- **GLONASS G1**: FDMA signal (1602.0 + k×0.5625 MHz, k=-7..+6)
+- **Multi-system**: Simultaneous GPS + BeiDou + Galileo + GLONASS generation
 
 ### Unified Epoch Algorithm
 
@@ -98,7 +99,14 @@ A critical feature ensuring navigational correctness by forcing all satellites t
 
 - `presets/GPS_L1_only.json` - GPS L1CA only generation
 - `presets/GPS_BDS_GAL_triple_system.json` - Triple system: GPS + BeiDou + Galileo generation
+- `presets/GLO_G1_only.json` - GLONASS G1 only, 10 MHz, Montana
+- `presets/GPS_BDS_GAL_GLO_L1G1_46MHz.json` - Quad system: GPS + BeiDou + Galileo + GLONASS
 - Other multi-system configurations available
+
+### RINEX Data Files
+
+- `Rinex_Data/rinex_v3_20251560000.rnx` — 2025-06-05, GPS/BDS/GAL (no GLONASS)
+- `Rinex_Data/BRDC00IGS_R_20251560000_01D_MN.rnx` — 2025-06-05, full merged with GLONASS (1238 R* records)
 
 ### Current Status
 
@@ -241,9 +249,37 @@ Additionally, BOC subchip modulation and pilot channel (QMBOC/CBOC) were missing
 | Galileo E1 | 6       | 6     | 364–425       |
 | **Total**  | **23**  | **23**| **100%**      |
 
+### GLONASS G1 Support (March 2026)
+
+**GLONASS FDMA Signal Generation — fully operational:**
+
+- **FDMA carrier**: Each satellite on its own frequency: f = 1602.0 + k×0.5625 MHz (k = -7..+6)
+- **PRN code**: Single 511-chip Gold code shared by all satellites (LFSR: init=0x1FC, poly=0x110, 9-bit)
+- **RINEX 3.04**: `R*` records parsed with 3 data lines (X/Y/Z in km, V in km/s, A in km/s²)
+- **Orbit propagation**: Runge-Kutta 4th order in PZ-90 (Rust), Taylor 2nd order (Python verification)
+- **G-NAV navigation**: GLONASS navigation message frames generated per ICD
+
+**CRITICAL BUG FIXES (March 2026):**
+
+1. **`& 0x3FF` AVX-512 redirect** in `src/sat_if_signal.rs:761`:
+   - **Issue**: Condition `data_length > 1024` did not redirect GLONASS 511-chip codes
+   - **Fix**: Changed to `data_length != 1023` — only GPS L1CA (1023 chips) stays in AVX-512 fast path
+   - **Impact**: GLONASS PRN code generation now uses correct `rem_euclid(data_length)` path
+
+2. **GLONASS base frequency lookup** in `src/ifdatagen.rs:3998`:
+   - **Issue**: `SIGNAL_CENTER_FREQ[GlonassSystem][signal_index.min(7)]` used `signal_index=24` (SIGNAL_INDEX_G1), `.min(7)=7`, giving index 7 → 0.0 Hz instead of 1602 MHz
+   - **Fix**: Added explicit `freq_array_index` (0=G1, 1=G2, 2=G3) matching BeiDou pattern
+   - **Impact**: All GLONASS signals were generated at aliased wrong frequencies; now correct FDMA carriers
+
+**Verification Results (GLONASS G1, 10 MHz, Montana, 10s):**
+
+| Generated | Found | z-score range |
+|-----------|-------|---------------|
+| 7 SVs     | 5     | 54–56         |
+
 ### Enhanced Signal Verification Tool (March 2026)
 
-**File**: `verify_signal_enhanced.py` (~1100 lines) — full diagnostic tool generating 3-page PDF reports.
+**File**: `verify_signal_enhanced.py` (~1400 lines) — full diagnostic tool generating 3-page PDF reports.
 
 **Usage**:
 ```
@@ -260,13 +296,15 @@ Options:
 **3-Page PDF Report**:
 - **Page 1 — Signal Overview**: Welch PSD, I/Q histogram with Gaussian fit, I/Q constellation with RMS circle, RMS stability (AGC convergence)
 - **Page 2 — Acquisition Results**: Z-score bar chart (color by system), polar skyplot (expected vs detected from RINEX), CN0 estimation, Doppler measured vs expected scatter
-- **Page 3 — Correlation Analysis**: Zoomed correlation peaks (GPS triangular BPSK, BDS/GAL BOC(1,1) split-peak), 2D Doppler×CodePhase heatmaps per system
+- **Page 3 — Correlation Analysis**: Zoomed correlation peaks (GPS triangular BPSK, BDS/GAL BOC(1,1) split-peak, GLONASS BPSK), 2D Doppler×CodePhase heatmaps per system
 
 **Key Features**:
-- Built-in RINEX 3.04 parser (GPS 7-line, BDS 7-line with BDT+1356 week correction, Galileo 7-line)
+- Built-in RINEX 3.04 parser (GPS 7-line, BDS 7-line with BDT+1356 week correction, Galileo 7-line, GLONASS 3-line with km→m)
 - Keplerian orbit propagator (GPS ICD-200 algorithm) with BeiDou GEO satellite handling
+- GLONASS orbit propagator (2nd-order Taylor expansion from ECEF position/velocity/acceleration)
+- GLONASS FDMA acquisition: per-satellite IF offset based on frequency channel number k
 - Elevation/azimuth computation for skyplot, numerical Doppler from orbit velocity
 - CN0 estimation from z-score: `CN0 = 10*log10(z² / (2*N*T))`
-- `--fast` mode reduces search from 131 SVIDs to ~29 visible ones
+- `--fast` mode reduces search from 131+ SVIDs to visible ones only
 
 **Previous tool**: `verify_signal.py` (615 lines) — basic acquisition + single PNG, remains as reference

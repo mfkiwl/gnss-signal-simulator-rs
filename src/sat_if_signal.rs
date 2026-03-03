@@ -756,11 +756,13 @@ impl SatIfSignal {
             }
         }
 
-        // BOC/сложные сигналы (BDS B1C, GAL E1) — AVX-512 fast path не поддерживает BOC.
-        // Перенаправляем на get_if_sample_cached, который корректно обрабатывает BOC.
+        // BOC/сложные сигналы (BDS B1C, GAL E1) и non-GPS коды (ГЛОНАСС G1/G2 = 511 чипов) —
+        // AVX-512 fast path использует `& 0x3FF` (modulo 1024), что корректно ТОЛЬКО для
+        // GPS L1CA (1023 чипа). Все остальные коды перенаправляем на get_if_sample_cached,
+        // который использует rem_euclid(data_length).
         if let Some(attr) = &self.prn_sequence.attribute {
             let is_boc = (attr.attribute & PRN_ATTRIBUTE_BOC) != 0;
-            if is_boc || self.data_length > 1024 {
+            if is_boc || self.data_length != 1023 {
                 return self.get_if_sample_cached(cur_time);
             }
         }
