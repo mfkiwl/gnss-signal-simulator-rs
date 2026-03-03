@@ -1,192 +1,275 @@
-# GNSS IF Data Generator (Rust)
+# gnss-signal-simulator-rs
 
-Генератор промежуточных частотных (IF) данных сигналов ГНСС (GPS/GLONASS/BeiDou/Galileo) на Rust.
-Поддерживает многопоточность, кэширование горячих путей, AVX‑512 и (опционально) ускорение на GPU (CUDA).
+**Multi-constellation GNSS IF signal simulator written in Rust**
 
-## Быстрый старт
+Generate realistic IQ baseband samples for GPS, Galileo, BeiDou, and GLONASS from RINEX 3.04 navigation data. The only GNSS signal simulator written in Rust — zero-copy, memory-safe, with AVX-512 and optional CUDA acceleration.
 
-- Требуется: стабильный Rust (edition 2021) и `cargo`.
-- Рекомендуется: x86_64 CPU. AVX‑512 используется автоматически, если доступен на вашей машине.
-- Опционально (для GPU): NVIDIA драйвер + CUDA 12.5 (NVRTC), см. раздел «GPU» ниже.
+---
 
-Проверка сборки и тестов:
+## Supported Signals
 
-```
-cargo check
-cargo test
-```
+| System | Signal | Frequency | Modulation | Code Length | Verified z-score |
+|--------|--------|-----------|------------|-------------|-----------------|
+| GPS | L1CA | 1575.42 MHz | BPSK(1) | 1023 | 58–88 |
+| GPS | L5 | 1176.45 MHz | BPSK(10) | 10230 | Verified |
+| GPS | L2C | 1227.60 MHz | BPSK(1) | 10230 | Verified |
+| GPS | L1C | 1575.42 MHz | BOC(1,1) | 10230 | Verified |
+| Galileo | E1 | 1575.42 MHz | CBOC(6,1,1/11) | 4092 | 364–425 |
+| Galileo | E5a | 1176.45 MHz | BPSK(10) | 10230 | 434–502 |
+| Galileo | E5b | 1207.14 MHz | BPSK(10) | 10230 | 449–514 |
+| Galileo | E6 | 1278.75 MHz | BPSK(5) | 5115 | 270–299 |
+| BeiDou | B1C | 1575.42 MHz | BOC(1,1)+QMBOC | 10230 | 574–955 |
+| GLONASS | G1 | 1602+k×0.5625 MHz | BPSK(0.5) FDMA | 511 | 54–56 |
 
-Оптимизированная сборка:
+> z-score = (correlation peak − mean) / std, threshold ≥ 30. Values above 50 indicate reliable detection.
 
-```
+## Key Features
+
+- **4 GNSS constellations, 10 signals** — simultaneous multi-system generation into a single IQ file
+- **RINEX 3.04 ephemeris parsing** — GPS (7-line), BeiDou (7-line with BDT correction), Galileo (7-line), GLONASS (3-line with km→m)
+- **Keplerian orbit propagation** — GPS ICD-200 algorithm; GLONASS RK4 in PZ-90
+- **Unified epoch algorithm** — forces all satellites to use ephemeris from the same time epoch
+- **Physically correct AGC** — RMS-based controller, Gaussian I/Q distribution, ~0% clipping
+- **AVX-512 acceleration** — automatic runtime detection, SIMD-optimized hot paths
+- **Optional CUDA GPU offload** — mass PRN×carrier×amplitude computation per millisecond
+- **Multithreading** — Rayon-based parallel satellite processing
+- **IQ8 output** — signed 8-bit I/Q interleaved samples, compatible with SDR receivers (GNURadio, SDR#)
+- **Python verification tool** — 3-page PDF report with PSD, acquisition, correlation analysis
+- **Minimal dependencies** — only `rand`, `rayon`, `wide`, `serde_json` (+ optional `cudarc`)
+- **~38,000 lines of Rust** — full GNSS stack implemented from scratch
+
+## Quick Start
+
+### Requirements
+
+- Stable Rust (edition 2021) and `cargo`
+- Recommended: x86_64 CPU (AVX-512 used automatically if available)
+- Optional: NVIDIA driver + CUDA 12.5 for GPU acceleration
+
+### Build and Run
+
+```bash
+# Build optimized release
 cargo build --release
-```
 
-## Запуск генератора
-
-Основной бинарь читает JSON‑пресеты из папки `presets/` и формирует IF‑файл в `generated_files/`.
-
-Простой запуск (GPS L1CA):
-
-```
+# Generate GPS L1CA signal (simplest example)
 cargo run --release -- presets/GPS_L1_only.json
+
+# Generate triple-system GPS + BeiDou + Galileo
+cargo run --release -- presets/GPS_BDS_GAL_triple_system.json
+
+# Generate quad-system GPS + BeiDou + Galileo + GLONASS (46.5 MHz)
+cargo run --release -- presets/GPS_BDS_GAL_GLO_L1G1_46MHz.json
+
+# Verbose output
+cargo run --release -- -v presets/GPS_L1_only.json
 ```
 
-Полезные опции:
+Output: binary IQ file (e.g. `generated_files/GPS_L1_only.C8`).
 
-- `-v, --verbose` — подробные логи
-- `-q, --quiet` — только ошибки
-- `--help` — краткая справка
+### Build with GPU (optional)
 
-Пример:
-
-```
-cargo run --release -- -v presets/GPS_BDS_GAL_triple_system.json
-```
-
-Параллельный режим (Rayon): включён по умолчанию. Чтобы отключить принудительно:
-
-```
-GNSS_PARALLEL_MODE=false cargo run --release -- presets/GPS_BDS_GAL_triple_system.json
-```
-
-Ожидаемый результат: бинарный IF‑файл (IQ4/IQ8) по пути, указанному в пресете (`output.name`), например:
-`generated_files/GPS_L1_only.C8`.
-
-### Входные данные (RINEX/Eph)
-
-- Эфемериды/альманахи берутся из `Rinex_Data/` и/или `EphData/`.
-- В пресетах указывайте относительные пути (пример есть в готовых JSON).
-- Эти каталоги read‑only в Git; вы можете добавлять свои файлы локально.
-
-Если конфиг не найден, программа создаст пример `config.json` и предложит отредактировать.
-
-## Ускорение: AVX‑512 и GPU (CUDA)
-
-- AVX‑512: включается автоматически (детектируется на рантайме). Без AVX‑512 используется высокоэффективный CPU‑путь.
-- GPU (опционально): оффлоад горячего участка (массовое `PRN × carrier × amp × NAV`) реализован для каждой миллисекунды.
-  Включается при сборке с фичей `gpu` и наличии CUDA в системе.
-
-Сборка и запуск с GPU:
-
-```
+```bash
+cargo build --release --features gpu
 cargo run --release --features gpu -- presets/GPS_L1_only.json
 ```
 
-Требования к CUDA:
+Requires CUDA 12.5 with NVRTC. Falls back to CPU automatically if CUDA is unavailable.
 
-- CUDA 12.5 (совместимо с фичей `cudarc` = `cuda-12050`), установленный NVRTC.
-- Windows: убедитесь, что `CUDA_PATH` задан и `nvrtc64_120_0.dll` видна в `PATH`.
-- Linux: проверьте наличие `libnvrtc.so` в `LD_LIBRARY_PATH`.
+## Presets
 
-Проверить работу GPU можно бенчмарком:
+Ready-to-use JSON configurations in `presets/`:
+
+| Preset | Systems | Sample Rate | Location | Duration |
+|--------|---------|-------------|----------|----------|
+| `GPS_L1_only.json` | GPS L1CA | 5 MHz | Montana | 10s |
+| `GPS_L5_only.json` | GPS L5 | 21 MHz | Montana | 10s |
+| `GPS_BDS_GAL_triple_system.json` | GPS+BDS+GAL | 5 MHz | Chicago | 10s |
+| `GPS_BDS_GAL_GLO_L1G1_46MHz.json` | GPS+BDS+GAL+GLO | 46.5 MHz | Montana | 10s |
+| `GAL_E1_only.json` | Galileo E1 | 5 MHz | Montana | 10s |
+| `GAL_E5a_only.json` | Galileo E5a | 21 MHz | Montana | 10s |
+| `GAL_E5b_only.json` | Galileo E5b | 21 MHz | Montana | 10s |
+| `GAL_E6_only.json` | Galileo E6 | 11 MHz | Montana | 10s |
+| `GLO_G1_only.json` | GLONASS G1 | 10 MHz | Montana | 10s |
+| `BDS_B1C_Only.json` | BeiDou B1C | 5 MHz | — | 10s |
+
+Custom presets: copy any JSON, edit receiver position (LLA), sample rate, RINEX path, duration, and signal selection.
+
+## Signal Verification
+
+The included Python tool `verify_signal_enhanced.py` generates a 3-page PDF diagnostic report.
+
+### Usage
+
+```bash
+# Install dependencies
+pip install numpy matplotlib
+
+# Verify with auto-configuration from preset
+python verify_signal_enhanced.py generated_files/GPS_BDS_GAL_triple_system.C8 \
+    --preset presets/GPS_BDS_GAL_triple_system.json
+
+# Fast mode (search only RINEX-visible satellites)
+python verify_signal_enhanced.py generated_files/GPS_L1_only.C8 \
+    --preset presets/GPS_L1_only.json --fast
+
+# Custom parameters
+python verify_signal_enhanced.py generated_files/output.C8 \
+    --sample-rate 5.0 --threshold 30 --output report.pdf
+```
+
+### PDF Report Contents
+
+- **Page 1 — Signal Overview**: Welch PSD, I/Q histogram with Gaussian fit, constellation diagram, RMS stability
+- **Page 2 — Acquisition Results**: z-score bar chart (color-coded by system), polar skyplot (expected vs detected), CN0 estimation, Doppler accuracy
+- **Page 3 — Correlation Analysis**: Zoomed correlation peaks per system, 2D Doppler×Code heatmaps
+
+### Verification Results
+
+**Triple-system (GPS + BeiDou + Galileo, 5 MHz, 10s, Chicago):**
+
+| System | RINEX Visible | Detected | z-score Range |
+|--------|--------------|----------|---------------|
+| GPS L1CA | 11 | 11 | 58–88 |
+| BeiDou B1C | 8 | 6 | 574–955 |
+| Galileo E1 | 10 | 6 | 364–425 |
+| **Total** | **29** | **23** | **100% of generated** |
+
+**Galileo multi-band (Montana, 10s each):**
+
+| Signal | Sample Rate | Detected | z-score Range |
+|--------|-------------|----------|---------------|
+| E5a | 21 MHz | 7/7 | 434–502 |
+| E5b | 21 MHz | 7/7 | 449–514 |
+| E6 | 11 MHz | 7/7 | 270–299 |
+
+**GLONASS G1 (10 MHz, Montana, 10s):**
+
+| Generated | Detected | z-score Range |
+|-----------|----------|---------------|
+| 7 SVs | 5 | 54–56 |
+
+## Architecture
 
 ```
-cargo run --release --features gpu --bin bench
+src/
+├── main.rs              # Entry point — reads JSON preset, runs generation
+├── lib.rs               # Public module exports
+├── ifdatagen.rs         # Core IF data generation (AGC, satellite signals, noise)
+├── sat_if_signal.rs     # Per-satellite IF sample generation (PRN codes, BOC)
+├── coordinate.rs        # Keplerian propagator, ECEF/LLA/ENU conversions
+├── json_interpreter.rs  # RINEX 3.04 parser, JSON preset parser
+├── gnsstime.rs          # GPS/BDT/GST/GLONASS time system conversions
+├── types.rs             # Core types: GpsEphemeris, BeiDouEphemeris, KinematicInfo
+├── constants.rs         # WGS84, PZ-90, CGCS2000 constants
+├── prngenerate.rs       # PRN code generation (Gold, Weil/Legendre, memory codes)
+├── memory_code_e1.rs    # Galileo E1 memory codes (4092 chips)
+├── memory_code_e6.rs    # Galileo E6 memory codes (5115 chips)
+├── fastmath.rs          # Optimized sin/cos/atan2 approximations
+├── complex_number.rs    # Lightweight complex arithmetic
+├── satellite_param.rs   # Satellite parameters and signal configuration
+├── satellite_signal.rs  # Signal-level satellite processing
+├── almanac.rs           # Almanac parsing and type detection
+├── trajectory.rs        # Receiver trajectory generation
+├── *navbit.rs           # Navigation message generators (GPS LNAV, Galileo I/NAV,
+│                        #   F/NAV, BeiDou BCNav1/2/3, GLONASS G-NAV, etc.)
+└── bin/
+    ├── spectrum_analyzer.rs  # IF spectrum analysis (PSD, peaks, CSV export)
+    ├── nav_test.rs           # Navigation bit unit tests
+    ├── bench.rs              # CPU/AVX-512/GPU benchmarks
+    └── extreme_bench.rs      # Stress benchmarks
 ```
 
-Если CUDA недоступна, код автоматически падает обратно на AVX‑512/CPU.
+### RINEX Data
 
-## Качество сигнала и AGC
+- `Rinex_Data/rinex_v3_20251560000.rnx` — 2025-06-05, GPS/BDS/GAL
+- `Rinex_Data/BRDC00IGS_R_20251560000_01D_MN.rnx` — 2025-06-05, full merged GPS/BDS/GAL/GLO
 
-Генератор включает физически корректную модель AGC (Automatic Gain Control), аналогичную реальному приёмнику:
+## Output Format
 
-- AGC масштабирует **весь сигнал** (шум + спутники) перед квантованием в 8-бит IQ
-- Начальный gain рассчитывается по той же формуле, что и амплитуда спутников: `A = sqrt(2 * 10^(CN0/10) / Fs)`
-- Адаптивная RMS-коррекция поддерживает целевой RMS = 0.25 (3σ ≈ 0.75, ~5% headroom)
-- Результат: гауссова гистограмма I/Q, ~0% клиппинга, круглая constellation diagram
-
-### Верификация
-
-В комплекте скрипт `verify_signal.py` (требует `numpy`, `matplotlib`):
+**IQ8**: signed 8-bit interleaved I/Q samples (`.C8` extension)
 
 ```
-python3 verify_signal.py
+[I₀, Q₀, I₁, Q₁, I₂, Q₂, ...]   — each sample is int8 (-128..+127)
 ```
 
-Скрипт проверяет:
-- Спектр мощности (PSD)
-- Гистограмму I/Q компонент (должна быть гауссова)
-- Constellation diagram (I/Q scatter — должен быть круглый)
-- **GPS L1CA acquisition** (Gold codes, 1023 chips, 1 ms period)
-- **BeiDou B1C acquisition** (Weil/Legendre codes, BOC(1,1), 10230 chips, 10 ms period)
-- **Galileo E1 acquisition** (memory codes, BOC(1,1), 4092 chips, 4 ms period)
+- AGC target RMS: 0.25 (quantized: ~31.75 in int8 units)
+- Compatible with GNURadio (`file_source` → `char_to_float`), SDR#, and custom SDR receivers
+- File size: `2 × sample_rate × duration` bytes (e.g. 5 MHz × 10s = 100 MB)
 
-Метрика обнаружения: z-score = (peak − mean) / std, порог ≥ 30.
+## Spectrum Analyzer
 
-Результат сохраняется в `generated_files/signal_verification.png`.
+Built-in IF spectrum analysis tool:
 
-Типичный результат (triple-system, 10 с, 5 МГц):
-
-| Система    | Видимых | Найдено | z-score    |
-|------------|---------|---------|------------|
-| GPS L1CA   | 11      | 11      | 58–88      |
-| BeiDou B1C | 6       | 6       | 574–955    |
-| Galileo E1 | 6       | 6       | 364–425    |
-| **Всего**  | **23**  | **23**  | **100 %**  |
-
-## Анализ сгенерированного IF
-
-В комплекте есть спектральный анализатор IF‑файлов:
-
-```
-cargo run --release --bin spectrum_analyzer -- <file> <iq4|iq8> [sample_rate] [center_freq]
-# Пример:
+```bash
 cargo run --release --bin spectrum_analyzer -- generated_files/GPS_L1_only.C8 iq8 5000000 0 --csv
 ```
 
-Флаг `--csv` сохраняет спектр в `spectrum.csv`.
+Outputs PSD to terminal and optionally to `spectrum.csv`.
 
-## Полезные бинарники
+## Development
 
-- `spectrum_analyzer` — анализ IF выборок (PSD, пики).
-- `nav_test` — минимальный тест L1CA навигационных бит.
-- `bench` — сводные бенчмарки CPU/AVX‑512/GPU.
-- `extreme_bench` — стресс‑бенч (долго и тяжело; запускать осознанно).
-
-Запуск:
-
-```
-cargo run --release --bin nav_test
-cargo run --release --bin bench
+```bash
+cargo check          # Fast syntax/type check
+cargo test           # Run unit tests
+cargo fmt --all      # Format code
+cargo clippy         # Lint
 ```
 
-## Структура проекта (важные каталоги)
+## Troubleshooting
 
-- `src/` — библиотека и главное приложение (`lib.rs`, `main.rs`, `ifdatagen.rs`, GNSS‑модули).
-- `src/bin/` — вспомогательные бинарники: `spectrum_analyzer`, `nav_test`, бенчи.
-- `presets/` — JSON‑пресеты сценариев.
-- `Rinex_Data/`, `EphData/` — входные эфемериды/альманахи (RO в Git).
-- `generated_files/` — крупные выходы (игнорируются Git).
+| Problem | Solution |
+|---------|----------|
+| "Configuration file not found" | Use presets from `presets/` or edit generated `config.json` |
+| "RINEX file not found" | Check relative paths in preset, ensure files exist in `Rinex_Data/` |
+| CUDA not found | Install CUDA 12.5, verify NVRTC in PATH/LD_LIBRARY_PATH |
+| Slow generation | Use `--release`, enable `GNSS_PARALLEL_MODE=true`, use `--features gpu` |
+| 0 visible satellites | Check RINEX date matches preset time, verify receiver coordinates |
 
-## Разработка
+## License
 
-Форматирование и линт:
+See source files for license information.
 
+---
+
+## Описание (Русский)
+
+**Мультисистемный симулятор GNSS-сигналов на Rust**
+
+Генерация реалистичных IQ-отсчётов промежуточной частоты для GPS, Galileo, BeiDou и GLONASS из навигационных данных RINEX 3.04.
+
+### Поддерживаемые сигналы
+
+- **GPS**: L1CA, L5, L2C, L1C
+- **Galileo**: E1 (CBOC), E5a, E5b, E6
+- **BeiDou**: B1C (BOC+QMBOC)
+- **GLONASS**: G1 (FDMA)
+
+### Быстрый старт
+
+```bash
+# Сборка
+cargo build --release
+
+# Генерация GPS L1CA
+cargo run --release -- presets/GPS_L1_only.json
+
+# Тройная система GPS + BeiDou + Galileo
+cargo run --release -- presets/GPS_BDS_GAL_triple_system.json
+
+# Верификация сигнала (Python)
+python verify_signal_enhanced.py generated_files/GPS_L1_only.C8 \
+    --preset presets/GPS_L1_only.json
 ```
-cargo fmt --all
-cargo clippy -- -D warnings
-```
 
-Тесты:
+### Основные возможности
 
-```
-cargo test
-```
-
-Оптимизированная сборка (с GPU):
-
-```
-cargo build --release --features gpu
-```
-
-## Типичные проблемы
-
-- «Configuration file not found»: используйте пресеты из `presets/` или отредактируйте созданный `config.json`.
-- «RINEX/ephemeris file not found»: проверьте относительные пути в пресете и наличие файлов в `Rinex_Data/`/`EphData/`.
-- CUDA не находится: установите CUDA 12.5, проверьте NVRTC (`nvrtc64_120_0.dll`/`libnvrtc.so`) и переменные окружения.
-- Медленная генерация: используйте `--release`, включите `GNSS_PARALLEL_MODE=true`, при наличии — `--features gpu`.
-
-## Лицензия
-
-См. исходные файлы/заметки проекта. Не коммитьте крупные бинарники и секреты.
+- 4 навигационные системы, 10 сигналов, одновременная генерация
+- Парсинг эфемерид RINEX 3.04 (GPS/BDS/GAL/GLO)
+- Кеплеровская пропагация орбит + ГЛОНАСС RK4 в ПЗ-90
+- Физически корректная модель АРУ (AGC)
+- Ускорение AVX-512 + многопоточность (Rayon)
+- Опциональный GPU offload (CUDA 12.5)
+- Выход IQ8 (8-бит I/Q), совместимый с SDR-приёмниками
+- Инструмент верификации с 3-страничным PDF-отчётом
+- ~38 000 строк Rust, минимум зависимостей
