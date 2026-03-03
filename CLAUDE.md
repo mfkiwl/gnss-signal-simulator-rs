@@ -240,3 +240,33 @@ Additionally, BOC subchip modulation and pilot channel (QMBOC/CBOC) were missing
 | BeiDou B1C | 6       | 6     | 574–955       |
 | Galileo E1 | 6       | 6     | 364–425       |
 | **Total**  | **23**  | **23**| **100%**      |
+
+### Enhanced Signal Verification Tool (March 2026)
+
+**File**: `verify_signal_enhanced.py` (~1100 lines) — full diagnostic tool generating 3-page PDF reports.
+
+**Usage**:
+```
+python verify_signal_enhanced.py <iq_file> [--preset presets/GPS_BDS_GAL_triple_system.json]
+
+Options:
+  --preset PATH       JSON preset (auto-detects sample rate, receiver pos, RINEX, systems)
+  --sample-rate MHz   Sample rate (default 5.0, overrides preset)
+  --output PATH       Report path (default: generated_files/verification_report.pdf)
+  --fast              Fast mode: search only RINEX-visible SVIDs
+  --threshold FLOAT   Z-score threshold (default 30)
+```
+
+**3-Page PDF Report**:
+- **Page 1 — Signal Overview**: Welch PSD, I/Q histogram with Gaussian fit, I/Q constellation with RMS circle, RMS stability (AGC convergence)
+- **Page 2 — Acquisition Results**: Z-score bar chart (color by system), polar skyplot (expected vs detected from RINEX), CN0 estimation, Doppler measured vs expected scatter
+- **Page 3 — Correlation Analysis**: Zoomed correlation peaks (GPS triangular BPSK, BDS/GAL BOC(1,1) split-peak), 2D Doppler×CodePhase heatmaps per system
+
+**Key Features**:
+- Built-in RINEX 3.04 parser (GPS 7-line, BDS 7-line with BDT+1356 week correction, Galileo 7-line)
+- Keplerian orbit propagator (GPS ICD-200 algorithm) with BeiDou GEO satellite handling
+- Elevation/azimuth computation for skyplot, numerical Doppler from orbit velocity
+- CN0 estimation from z-score: `CN0 = 10*log10(z² / (2*N*T))`
+- `--fast` mode reduces search from 131 SVIDs to ~29 visible ones
+
+**Previous tool**: `verify_signal.py` (615 lines) — basic acquisition + single PNG, remains as reference
