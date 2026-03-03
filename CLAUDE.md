@@ -101,16 +101,47 @@ A critical feature ensuring navigational correctness by forcing all satellites t
   - **BeiDou**: BDT time corrected to GPS time for unified filtering
   - **Galileo**: GST time synchronized with GPS time for consistency
 
-### Available Presets
+### Available Presets (36 files)
 
-- `presets/GPS_L1_only.json` - GPS L1CA only generation
-- `presets/GPS_BDS_GAL_triple_system.json` - Triple system: GPS + BeiDou + Galileo generation
-- `presets/GLO_G1_only.json` - GLONASS G1 only, 10 MHz, Montana
-- `presets/GPS_BDS_GAL_GLO_L1G1_46MHz.json` - Quad system: GPS + BeiDou + Galileo + GLONASS
-- `presets/GAL_E5a_only.json` - Galileo E5a only, 21 MHz, Montana
-- `presets/GAL_E5b_only.json` - Galileo E5b only, 21 MHz, Montana
-- `presets/GAL_E6_only.json` - Galileo E6 only, 11 MHz, Montana
-- Other multi-system configurations available
+**Single-system:**
+- `presets/gps_l1ca.json` - GPS L1CA, 5 MHz
+- `presets/gps_l1c.json` - GPS L1C, 5 MHz
+- `presets/gps_l2c.json` - GPS L2C, 5 MHz
+- `presets/gps_l2p.json` - GPS L2P, 11 MHz
+- `presets/gps_l2c_l2p.json` - GPS L2C+L2P, 11 MHz
+- `presets/gps_l5.json` - GPS L5, 21 MHz
+- `presets/bds_b1c.json` - BeiDou B1C, 5 MHz
+- `presets/bds_b1i.json` - BeiDou B1I, 5 MHz
+- `presets/bds_b1i_b1c.json` - BeiDou B1I+B1C, 20 MHz
+- `presets/bds_b2a.json` - BeiDou B2a, 21 MHz
+- `presets/bds_b2b.json` - BeiDou B2b, 21 MHz
+- `presets/bds_b2i_b2b.json` - BeiDou B2I+B2b, 21 MHz
+- `presets/bds_b3i.json` - BeiDou B3I, 21 MHz
+- `presets/gal_e1.json` - Galileo E1, 5 MHz
+- `presets/gal_e5a.json` - Galileo E5a, 21 MHz
+- `presets/gal_e5b.json` - Galileo E5b, 21 MHz
+- `presets/gal_e6.json` - Galileo E6, 11 MHz
+- `presets/glo_g1.json` - GLONASS G1, 10 MHz
+- `presets/glo_g2.json` - GLONASS G2, 10 MHz
+- `presets/glo_g3.json` - GLONASS G3, 12 MHz
+
+**Multi-system:**
+- `presets/gps_bds_l1.json` - GPS+BDS L1 band, 5 MHz
+- `presets/gps_gal_l1.json` - GPS+GAL L1 band, 5 MHz
+- `presets/gps_glo_l1g1.json` - GPS+GLO L1/G1, 46.5 MHz
+- `presets/gps_gal_l5e5a.json` - GPS L5+GAL E5a, 21 MHz
+- `presets/gps_bds_l5b2a.json` - GPS L5+BDS B2a, 21 MHz
+- `presets/gal_bds_l1.json` - GAL+BDS L1 band, 5 MHz
+- `presets/gal_bds_e5b_b2b.json` - GAL E5b+BDS B2b, 21 MHz
+- `presets/gps_bds_gal_l1.json` - Triple L1: GPS+BDS+GAL, 5 MHz
+- `presets/gps_bds_gal_l1_full.json` - Triple L1 full: L1CA+L1C+B1C+E1, 5 MHz
+- `presets/gps_bds_gal_l1_b1i.json` - Triple L1+B1I: 21 MHz
+- `presets/gps_bds_gal_l5e5a.json` - Triple L5/E5a/B2a, 24 MHz
+- `presets/gps_bds_gal_l2e5b.json` - Triple L2/E5b/B2, 24 MHz
+- `presets/gps_bds_glo_l2.json` - GPS+BDS+GLO L2, 24 MHz
+- `presets/quad_l1g1.json` - Quad L1/G1: all 4 systems, 46.5 MHz
+- `presets/quad_l5e5a.json` - Quad L5/E5a/B2a, 24 MHz
+- `presets/quad_l2e5b.json` - Quad L2/E5b/B2/G2, 24 MHz
 
 ### RINEX Data Files
 
@@ -292,7 +323,7 @@ Additionally, BOC subchip modulation and pilot channel (QMBOC/CBOC) were missing
 
 **Usage**:
 ```
-python verify_signal_enhanced.py <iq_file> [--preset presets/GPS_BDS_GAL_triple_system.json]
+python verify_signal_enhanced.py <iq_file> [--preset presets/gps_bds_gal_l1.json]
 
 Options:
   --preset PATH       JSON preset (auto-detects sample rate, receiver pos, RINEX, systems)

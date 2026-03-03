@@ -8,8 +8,8 @@ Generates a 3-page PDF report:
   Page 3: Correlation details (zoomed peaks, 2D heatmaps)
 
 Usage:
-  python verify_signal_enhanced.py <iq_file> [--preset presets/GPS_BDS_GAL_triple_system.json]
-  python verify_signal_enhanced.py generated_files/GPS_L1_only_10s.C8 --sample-rate 5.0
+  python verify_signal_enhanced.py <iq_file> [--preset presets/gps_bds_gal_l1.json]
+  python verify_signal_enhanced.py generated_files/gps_l1ca.C8 --sample-rate 5.0
 """
 
 import numpy as np

@@ -259,7 +259,7 @@ fn print_help(program_name: &str) {
         program_name
     );
     println!(
-        "  {} presets/GPS_L1_only.json # Use preset configuration",
+        "  {} presets/gps_l1ca.json     # Use preset configuration",
         program_name
     );
     println!();

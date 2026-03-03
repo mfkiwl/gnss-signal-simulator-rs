@@ -53,25 +53,25 @@ Generate realistic IQ baseband samples for GPS, Galileo, BeiDou, and GLONASS fro
 cargo build --release
 
 # Generate GPS L1CA signal (simplest example)
-cargo run --release -- presets/GPS_L1_only.json
+cargo run --release -- presets/gps_l1ca.json
 
 # Generate triple-system GPS + BeiDou + Galileo
-cargo run --release -- presets/GPS_BDS_GAL_triple_system.json
+cargo run --release -- presets/gps_bds_gal_l1.json
 
 # Generate quad-system GPS + BeiDou + Galileo + GLONASS (46.5 MHz)
-cargo run --release -- presets/GPS_BDS_GAL_GLO_L1G1_46MHz.json
+cargo run --release -- presets/quad_l1g1.json
 
 # Verbose output
-cargo run --release -- -v presets/GPS_L1_only.json
+cargo run --release -- -v presets/gps_l1ca.json
 ```
 
-Output: binary IQ file (e.g. `generated_files/GPS_L1_only.C8`).
+Output: binary IQ file (e.g. `generated_files/gps_l1ca.C8`).
 
 ### Build with GPU (optional)
 
 ```bash
 cargo build --release --features gpu
-cargo run --release --features gpu -- presets/GPS_L1_only.json
+cargo run --release --features gpu -- presets/gps_l1ca.json
 ```
 
 Requires CUDA 12.5 with NVRTC. Falls back to CPU automatically if CUDA is unavailable.
@@ -80,18 +80,20 @@ Requires CUDA 12.5 with NVRTC. Falls back to CPU automatically if CUDA is unavai
 
 Ready-to-use JSON configurations in `presets/`:
 
-| Preset | Systems | Sample Rate | Location | Duration |
-|--------|---------|-------------|----------|----------|
-| `GPS_L1_only.json` | GPS L1CA | 5 MHz | Montana | 10s |
-| `GPS_L5_only.json` | GPS L5 | 21 MHz | Montana | 10s |
-| `GPS_BDS_GAL_triple_system.json` | GPS+BDS+GAL | 5 MHz | Chicago | 10s |
-| `GPS_BDS_GAL_GLO_L1G1_46MHz.json` | GPS+BDS+GAL+GLO | 46.5 MHz | Montana | 10s |
-| `GAL_E1_only.json` | Galileo E1 | 5 MHz | Montana | 10s |
-| `GAL_E5a_only.json` | Galileo E5a | 21 MHz | Montana | 10s |
-| `GAL_E5b_only.json` | Galileo E5b | 21 MHz | Montana | 10s |
-| `GAL_E6_only.json` | Galileo E6 | 11 MHz | Montana | 10s |
-| `GLO_G1_only.json` | GLONASS G1 | 10 MHz | Montana | 10s |
-| `BDS_B1C_Only.json` | BeiDou B1C | 5 MHz | — | 10s |
+| Preset | Systems | Sample Rate |
+|--------|---------|-------------|
+| `gps_l1ca.json` | GPS L1CA | 5 MHz |
+| `gps_l5.json` | GPS L5 | 21 MHz |
+| `bds_b1c.json` | BeiDou B1C | 5 MHz |
+| `gal_e1.json` | Galileo E1 | 5 MHz |
+| `gal_e5a.json` | Galileo E5a | 21 MHz |
+| `gal_e5b.json` | Galileo E5b | 21 MHz |
+| `gal_e6.json` | Galileo E6 | 11 MHz |
+| `glo_g1.json` | GLONASS G1 | 10 MHz |
+| `gps_bds_gal_l1.json` | GPS+BDS+GAL L1 | 5 MHz |
+| `quad_l1g1.json` | GPS+BDS+GAL+GLO L1/G1 | 46.5 MHz |
+
+All 36 presets use Montana location, 10s duration, elevation mask 5°, full RINEX.
 
 Custom presets: copy any JSON, edit receiver position (LLA), sample rate, RINEX path, duration, and signal selection.
 
@@ -106,12 +108,12 @@ The included Python tool `verify_signal_enhanced.py` generates a 3-page PDF diag
 pip install numpy matplotlib
 
 # Verify with auto-configuration from preset
-python verify_signal_enhanced.py generated_files/GPS_BDS_GAL_triple_system.C8 \
-    --preset presets/GPS_BDS_GAL_triple_system.json
+python verify_signal_enhanced.py generated_files/gps_bds_gal_l1.C8 \
+    --preset presets/gps_bds_gal_l1.json
 
 # Fast mode (search only RINEX-visible satellites)
-python verify_signal_enhanced.py generated_files/GPS_L1_only.C8 \
-    --preset presets/GPS_L1_only.json --fast
+python verify_signal_enhanced.py generated_files/gps_l1ca.C8 \
+    --preset presets/gps_l1ca.json --fast
 
 # Custom parameters
 python verify_signal_enhanced.py generated_files/output.C8 \
@@ -202,7 +204,7 @@ src/
 Built-in IF spectrum analysis tool:
 
 ```bash
-cargo run --release --bin spectrum_analyzer -- generated_files/GPS_L1_only.C8 iq8 5000000 0 --csv
+cargo run --release --bin spectrum_analyzer -- generated_files/gps_l1ca.C8 iq8 5000000 0 --csv
 ```
 
 Outputs PSD to terminal and optionally to `spectrum.csv`.
@@ -252,14 +254,14 @@ See source files for license information.
 cargo build --release
 
 # Генерация GPS L1CA
-cargo run --release -- presets/GPS_L1_only.json
+cargo run --release -- presets/gps_l1ca.json
 
 # Тройная система GPS + BeiDou + Galileo
-cargo run --release -- presets/GPS_BDS_GAL_triple_system.json
+cargo run --release -- presets/gps_bds_gal_l1.json
 
 # Верификация сигнала (Python)
-python verify_signal_enhanced.py generated_files/GPS_L1_only.C8 \
-    --preset presets/GPS_L1_only.json
+python verify_signal_enhanced.py generated_files/gps_l1ca.C8 \
+    --preset presets/gps_l1ca.json
 ```
 
 ### Основные возможности
