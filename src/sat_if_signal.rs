@@ -762,7 +762,7 @@ impl SatIfSignal {
         // который использует rem_euclid(data_length).
         if let Some(attr) = &self.prn_sequence.attribute {
             let is_boc = (attr.attribute & PRN_ATTRIBUTE_BOC) != 0;
-            if is_boc || self.data_length != 1023 {
+            if is_boc || self.data_length != crate::constants::GPS_L1CA_CODE_LENGTH {
                 return self.get_if_sample_cached(cur_time);
             }
         }

@@ -400,23 +400,22 @@ def parse_rinex_nav(filepath, target_gps_week, target_gps_sow, time_window=7200)
             if i + j < len(lines):
                 data_values.extend(parse_rinex_line_values(lines[i + j]))
 
-        # Parse epoch from header line for GLONASS (UTC-based)
-        epoch_year = epoch_month = epoch_day = epoch_hour = epoch_min = epoch_sec = 0
-        try:
-            epoch_year = int(line[4:8])
-            epoch_month = int(line[9:11])
-            epoch_day = int(line[12:14])
-            epoch_hour = int(line[15:17])
-            epoch_min = int(line[18:20])
-            epoch_sec = int(line[21:23])
-        except (ValueError, IndexError):
-            pass
-
         i += n_data + 1
 
         # --- GLONASS ephemeris (3 data lines: X/Y/Z in km, V in km/s, A in km/s²) ---
         if sys_char == 'R':
             if len(data_values) < 12:
+                continue
+
+            # Parse epoch from header line (GLONASS uses UTC)
+            try:
+                epoch_year = int(line[4:8])
+                epoch_month = int(line[9:11])
+                epoch_day = int(line[12:14])
+                epoch_hour = int(line[15:17])
+                epoch_min = int(line[18:20])
+                epoch_sec = int(line[21:23])
+            except (ValueError, IndexError):
                 continue
 
             # GLONASS epoch is in UTC, convert to GPS seconds
@@ -735,10 +734,12 @@ def compute_rms_stability(filename, sample_rate, block_ms=100):
 # ============================================================
 
 def acquire_satellite_generic(signal_blocks, local_code_resampled, doppler_range, doppler_step,
-                              sample_rate, non_coherent_count, save_heatmap=False):
+                              sample_rate, non_coherent_count, save_heatmap=False,
+                              if_offset=IF_FREQ):
     """
     FFT-based parallel code phase search.
     Returns (found, doppler, code_phase, zscore, best_corr, heatmap, doppler_bins).
+    if_offset: carrier IF offset in Hz (default IF_FREQ=0 for L1 baseband, non-zero for GLONASS FDMA).
     """
     n = len(local_code_resampled)
     code_fft_conj = np.conj(fft(local_code_resampled))
@@ -753,11 +754,11 @@ def acquire_satellite_generic(signal_blocks, local_code_resampled, doppler_range
     heatmap = np.zeros((len(doppler_bins), n)) if save_heatmap else None
 
     for d_idx, doppler in enumerate(doppler_bins):
+        carrier = np.exp(-1j * 2 * np.pi * (if_offset + doppler) * t)
         correlation_sum = np.zeros(n)
         count = min(non_coherent_count, len(signal_blocks))
 
         for blk in signal_blocks[:count]:
-            carrier = np.exp(-1j * 2 * np.pi * (IF_FREQ + doppler) * t)
             baseband = blk[:n] * carrier
             corr = np.abs(ifft(fft(baseband) * code_fft_conj)) ** 2
             correlation_sum += corr
@@ -859,7 +860,8 @@ def acquire_system(signal, system_name, svid_range, code_gen_fn, code_period_ms,
 def acquire_glonass_system(signal, sat_info_glo, center_freq, sample_rate,
                            non_coherent=NON_COHERENT_GLO, threshold=ZSCORE_THRESHOLD):
     """GLONASS FDMA acquisition: same PRN code, different carrier per satellite.
-    Each SV is searched at its FDMA IF offset + Doppler range."""
+    Each SV is searched at its FDMA IF offset + Doppler range.
+    Reuses acquire_satellite_generic with per-satellite if_offset."""
     samples_per_ms = int(sample_rate * 1e-3)
     samples_per_code = GLO_CODE_PERIOD_MS * samples_per_ms
 
@@ -868,9 +870,6 @@ def acquire_glonass_system(signal, sat_info_glo, center_freq, sample_rate,
 
     g1_code = generate_glonass_g1_code()
     local_code = resample_code(g1_code, samples_per_code)
-    code_fft_conj = np.conj(fft(local_code))
-    t = np.arange(samples_per_code) / sample_rate
-    n = samples_per_code
 
     # Build search list: (svid, freq_num, if_offset)
     search_list = []
@@ -893,47 +892,16 @@ def acquire_glonass_system(signal, sat_info_glo, center_freq, sample_rate,
     print(f"  Doppler: +/-{DOPPLER_RANGE} Hz, step {DOPPLER_STEP} Hz, z-threshold={threshold}")
     print(f"  Searching {total} visible GLONASS SVs")
 
-    doppler_bins = np.arange(-DOPPLER_RANGE, DOPPLER_RANGE + 1, DOPPLER_STEP)
-
     for idx, (svid, freq_num, if_offset) in enumerate(search_list):
         print(f"\r  Searching GLO R{svid:02d} (k={freq_num:+d}, IF={if_offset / 1e3:+.1f} kHz)... ({idx + 1}/{total})",
               end='', flush=True)
 
-        best_zscore = 0.0
-        best_doppler = 0
-        best_code_phase = 0
-        best_corr = None
+        found, doppler, cp, zscore, _, _, _ = acquire_satellite_generic(
+            blocks, local_code, DOPPLER_RANGE, DOPPLER_STEP,
+            sample_rate, non_coherent, save_heatmap=False, if_offset=if_offset)
 
-        for doppler in doppler_bins:
-            correlation_sum = np.zeros(n)
-            count = min(non_coherent, len(blocks))
-
-            for blk in blocks[:count]:
-                carrier = np.exp(-1j * 2 * np.pi * (if_offset + doppler) * t)
-                baseband = blk[:n] * carrier
-                corr = np.abs(ifft(fft(baseband) * code_fft_conj)) ** 2
-                correlation_sum += corr
-
-            peak_idx = np.argmax(correlation_sum)
-            peak_val = correlation_sum[peak_idx]
-
-            mask = np.ones(n, dtype=bool)
-            exclude = max(50, n // 100)
-            mask[max(0, peak_idx - exclude):min(n, peak_idx + exclude)] = False
-            noise = correlation_sum[mask]
-            noise_mean = np.mean(noise)
-            noise_std = np.std(noise)
-            zscore = (peak_val - noise_mean) / noise_std if noise_std > 0 else 0
-
-            if zscore > best_zscore:
-                best_zscore = zscore
-                best_doppler = doppler
-                best_code_phase = peak_idx
-                best_corr = correlation_sum.copy()
-
-        found = best_zscore > threshold
-        r = {'svid': svid, 'doppler': best_doppler, 'code_phase': best_code_phase,
-             'zscore': best_zscore, 'found': found, 'freq_num': freq_num, 'if_offset': if_offset}
+        r = {'svid': svid, 'doppler': doppler, 'code_phase': cp,
+             'zscore': zscore, 'found': found, 'freq_num': freq_num, 'if_offset': if_offset}
         all_results.append(r)
         if found:
             found_sats.append(r)
@@ -953,34 +921,21 @@ def acquire_glonass_system(signal, sat_info_glo, center_freq, sample_rate,
 
     # Heatmap for strongest SV
     best_heatmap = None
-    best_corr_out = None
+    best_corr = None
     best_doppler_bins = None
     if found_sats:
         best_sv = sorted(found_sats, key=lambda x: -x['zscore'])[0]
         print(f"  Computing 2D heatmap for R{best_sv['svid']:02d}...")
-        if_off = best_sv['if_offset']
-        hm = np.zeros((len(doppler_bins), n))
-        for d_idx, doppler in enumerate(doppler_bins):
-            correlation_sum = np.zeros(n)
-            count = min(non_coherent, len(blocks))
-            for blk in blocks[:count]:
-                carrier = np.exp(-1j * 2 * np.pi * (if_off + doppler) * t)
-                baseband = blk[:n] * carrier
-                corr = np.abs(ifft(fft(baseband) * code_fft_conj)) ** 2
-                correlation_sum += corr
-            hm[d_idx, :] = correlation_sum
-        peak_flat = np.argmax(hm)
-        pk_d, pk_c = np.unravel_index(peak_flat, hm.shape)
-        best_heatmap = hm
-        best_corr_out = hm[pk_d, :]
-        best_doppler_bins = doppler_bins
+        _, _, _, _, best_corr, best_heatmap, best_doppler_bins = acquire_satellite_generic(
+            blocks, local_code, DOPPLER_RANGE, DOPPLER_STEP,
+            sample_rate, non_coherent, save_heatmap=True, if_offset=best_sv['if_offset'])
 
     return {
         'system': 'GLONASS G1',
         'found': found_sats,
         'all': all_results,
         'heatmap': best_heatmap,
-        'correlation': best_corr_out,
+        'correlation': best_corr,
         'doppler_bins': best_doppler_bins,
         'code_period_ms': GLO_CODE_PERIOD_MS,
         'samples_per_code': samples_per_code,
@@ -1043,16 +998,14 @@ def _cn0_bars(results_list):
 
 
 def generate_report(iq_file, signal, sample_rate, rms_values,
-                    gps_res, bds_res, gal_res, sat_info, config, output_path, threshold,
-                    glo_res=None):
-    """Generate 3-page PDF report."""
+                    results_list, sat_info, config, output_path, threshold):
+    """Generate 3-page PDF report.
+    results_list: [gps_res, bds_res, gal_res, glo_res] (None for absent systems)."""
     import matplotlib
     matplotlib.use('Agg')
     import matplotlib.pyplot as plt
     from matplotlib.backends.backend_pdf import PdfPages
     from matplotlib.patches import Patch
-
-    results_list = [gps_res, bds_res, gal_res, glo_res]
 
     with PdfPages(output_path) as pdf:
         # ======================================================
@@ -1270,6 +1223,10 @@ def generate_report(iq_file, signal, sample_rate, rms_values,
         fig, axes = plt.subplots(2, 4, figsize=(22, 10))
         fig.suptitle('Correlation Analysis', fontsize=14, fontweight='bold')
 
+        gps_res = results_list[0] if len(results_list) > 0 else None
+        bds_res = results_list[1] if len(results_list) > 1 else None
+        gal_res = results_list[2] if len(results_list) > 2 else None
+        glo_res = results_list[3] if len(results_list) > 3 else None
         sys_plots = [
             ('GPS L1CA', gps_res, GPS_CODE_LENGTH, 50, SYS_COLORS['GPS']),
             ('BeiDou B1C', bds_res, BDS_CODE_LENGTH, 5, SYS_COLORS['BDS']),
@@ -1522,8 +1479,8 @@ def main():
     print(f"\nGenerating report: {output_path}")
     try:
         generate_report(args.iq_file, signal, sample_rate, rms_values,
-                        gps_res, bds_res, gal_res, sat_info, config, output_path, threshold,
-                        glo_res=glo_res)
+                        [gps_res, bds_res, gal_res, glo_res],
+                        sat_info, config, output_path, threshold)
     except Exception as e:
         print(f"  Error: {e}")
         import traceback

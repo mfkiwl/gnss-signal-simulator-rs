@@ -308,3 +308,14 @@ Options:
 - `--fast` mode reduces search from 131+ SVIDs to visible ones only
 
 **Previous tool**: `verify_signal.py` (615 lines) — basic acquisition + single PNG, remains as reference
+
+### Code Simplification (March 2026)
+
+**Rust:**
+- Added `GPS_L1CA_CODE_LENGTH` constant (`src/constants.rs`) replacing magic number `1023` in the AVX-512 redirect condition (`src/sat_if_signal.rs:765`)
+
+**Python (`verify_signal_enhanced.py`):**
+- **Carrier hoisting**: `np.exp()` carrier computation moved outside the block loop in `acquire_satellite_generic()` — carrier is constant across blocks at same Doppler bin, saving ~9x redundant calls
+- **GLONASS acquisition deduplication**: `acquire_glonass_system()` refactored to reuse `acquire_satellite_generic()` via new `if_offset` parameter instead of reimplementing the entire correlation engine (~80 lines removed)
+- **RINEX epoch parsing**: moved inside GLONASS-only branch — no longer runs for GPS/BDS/GAL records
+- **`generate_report()` signature**: replaced 4 separate result parameters (`gps_res`, `bds_res`, `gal_res`, `glo_res`) with single `results_list` array

@@ -96,6 +96,9 @@ pub const SIGNAL_INDEX_G1: usize = 24;
 pub const SIGNAL_INDEX_G2: usize = 25;
 pub const SIGNAL_INDEX_G3: usize = 26;
 
+// PRN code lengths (chips per period)
+pub const GPS_L1CA_CODE_LENGTH: i32 = 1023;
+
 // BCNav1Bit constants
 pub const B1C_SUBFRAME2_SYMBOL_LENGTH: usize = 100;
 pub const B1C_SUBFRAME3_SYMBOL_LENGTH: usize = 44;
