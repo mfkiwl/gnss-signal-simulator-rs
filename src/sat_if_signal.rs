@@ -535,10 +535,14 @@ impl SatIfSignal {
                 1.0
             };
 
-            let nav_value = if self.data_signal.real >= 0.0 {
-                1.0
-            } else {
-                -1.0
+            let nav_value = {
+                let r = self.data_signal.real;
+                let i = self.data_signal.imag;
+                if r.abs() >= i.abs() {
+                    if r >= 0.0 { 1.0 } else { -1.0 }
+                } else {
+                    if i >= 0.0 { 1.0 } else { -1.0 }
+                }
             };
 
             // ULTRA FAST trigonometry using lookup table
@@ -586,10 +590,14 @@ impl SatIfSignal {
         }
         let amp = self.computation_cache.cached_amp;
         let phase_step = phase_increment / (self.sample_number as f64);
-        let nav_value = if self.data_signal.real >= 0.0 {
-            1.0
-        } else {
-            -1.0
+        let nav_value = {
+            let r = self.data_signal.real;
+            let i = self.data_signal.imag;
+            if r.abs() >= i.abs() {
+                if r >= 0.0 { 1.0 } else { -1.0 }
+            } else {
+                if i >= 0.0 { 1.0 } else { -1.0 }
+            }
         };
 
         // SIMD векторы для обработки 4 элементов за раз
@@ -795,10 +803,14 @@ impl SatIfSignal {
         let amp = self.computation_cache.cached_amp;
         let code_step = self.computation_cache.cached_code_step;
         let phase_step = self.computation_cache.cached_phase_step;
-        let nav_value = if self.data_signal.real >= 0.0 {
-            1.0
-        } else {
-            -1.0
+        let nav_value = {
+            let r = self.data_signal.real;
+            let i = self.data_signal.imag;
+            if r.abs() >= i.abs() {
+                if r >= 0.0 { 1.0 } else { -1.0 }
+            } else {
+                if i >= 0.0 { 1.0 } else { -1.0 }
+            }
         };
 
         // Подготовка PRN и carrier кэшей
@@ -1079,10 +1091,14 @@ impl SatIfSignal {
         let amp = computation_cache.cached_amp;
         let code_step = computation_cache.cached_code_step;
         let _phase_step = computation_cache.cached_phase_step;
-        let nav_value = if self.data_signal.real >= 0.0 {
-            1.0
-        } else {
-            -1.0
+        let nav_value = {
+            let r = self.data_signal.real;
+            let i = self.data_signal.imag;
+            if r.abs() >= i.abs() {
+                if r >= 0.0 { 1.0 } else { -1.0 }
+            } else {
+                if i >= 0.0 { 1.0 } else { -1.0 }
+            }
         };
 
         let ms_offset_time = cur_time.MilliSeconds - self.signal_time.MilliSeconds;
@@ -1147,10 +1163,14 @@ impl SatIfSignal {
         let amp = self.computation_cache.cached_amp;
         let code_step = self.computation_cache.cached_code_step;
         let phase_step = self.computation_cache.cached_phase_step;
-        let nav_value = if self.data_signal.real >= 0.0 {
-            1.0
-        } else {
-            -1.0
+        let nav_value = {
+            let r = self.data_signal.real;
+            let i = self.data_signal.imag;
+            if r.abs() >= i.abs() {
+                if r >= 0.0 { 1.0 } else { -1.0 }
+            } else {
+                if i >= 0.0 { 1.0 } else { -1.0 }
+            }
         };
 
         // BOC flag для обработки subchip модуляции

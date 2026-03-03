@@ -88,6 +88,24 @@ GPS_L1C_CODE_LENGTH = 10230
 GPS_L1C_CODE_PERIOD_MS = 10    # 1.023 Mchip/s -> 10230/1.023e6 = 10 ms
 NON_COHERENT_L1C = 5
 
+# Galileo E5a
+F_E5A = 1176.45e6
+GAL_E5A_CODE_LENGTH = 10230
+GAL_E5A_CODE_PERIOD_MS = 1    # 10.23 Mchip/s -> 10230/10.23e6 = 1 ms
+NON_COHERENT_E5A = 10
+
+# Galileo E5b
+F_E5B = 1207.14e6
+GAL_E5B_CODE_LENGTH = 10230
+GAL_E5B_CODE_PERIOD_MS = 1
+NON_COHERENT_E5B = 10
+
+# Galileo E6
+F_E6 = 1278.75e6
+GAL_E6_CODE_LENGTH = 5115
+GAL_E6_CODE_PERIOD_MS = 1    # 5.115 Mchip/s -> 5115/5.115e6 = 1 ms
+NON_COHERENT_E6 = 10
+
 PI2 = 2.0 * math.pi
 
 
@@ -393,6 +411,97 @@ def generate_l1c_boc(svid):
 
 
 # ============================================================
+# Galileo E5a Code Generation (Gold Code, 14-bit LFSRs)
+# ============================================================
+
+E5A_I_PRN_INIT = [
+    0x30c5, 0x189c, 0x2e8b, 0x217f, 0x26ca, 0x3733, 0x1b8c, 0x155f, 0x0357, 0x309e,
+    0x2ee4, 0x0eba, 0x3cff, 0x1e26, 0x0d1c, 0x1b05, 0x28aa, 0x1399, 0x29fe, 0x0198,
+    0x1370, 0x1eba, 0x2f25, 0x33c2, 0x160a, 0x1901, 0x39d7, 0x2597, 0x3193, 0x2eae,
+    0x0350, 0x1889, 0x3335, 0x2474, 0x374e, 0x05df, 0x22ce, 0x3b15, 0x3b9b, 0x29ad,
+    0x182c, 0x2e17, 0x0d84, 0x332d, 0x3935, 0x2abb, 0x21f3, 0x33d1, 0x1eca, 0x16bf,
+]
+
+
+def generate_e5a_code(svid):
+    """Generate Galileo E5a-I code (10230 chips). Returns +/-1 array."""
+    if svid < 1 or svid > 50:
+        return None
+    code = generate_gold_code(
+        E5A_I_PRN_INIT[svid - 1], 0x28d8,  # G1: per-SV init, poly
+        0x3fff, 0x20a1,                      # G2: all-ones init, poly
+        10230, 14, 10230)                    # 10230 chips, 14-bit, no reset
+    return 1.0 - 2.0 * code.astype(np.float64)
+
+
+# ============================================================
+# Galileo E5b Code Generation (Gold Code, 14-bit LFSRs)
+# ============================================================
+
+E5B_I_PRN_INIT = [
+    0x0e90, 0x2c27, 0x00aa, 0x1e76, 0x1871, 0x0560, 0x035f, 0x2c13, 0x03d5, 0x219f,
+    0x04f4, 0x2fd9, 0x31a0, 0x387c, 0x0d34, 0x0fbe, 0x3499, 0x10eb, 0x01ed, 0x2c3f,
+    0x13a4, 0x135f, 0x3a4d, 0x212a, 0x39a5, 0x2bb4, 0x2303, 0x34ab, 0x04df, 0x31ff,
+    0x2e52, 0x24ff, 0x3c7d, 0x363d, 0x3669, 0x165c, 0x0f1b, 0x108e, 0x3b36, 0x055b,
+    0x0ae9, 0x3051, 0x1808, 0x357e, 0x30d6, 0x3f1b, 0x2c12, 0x3bf8, 0x0db8, 0x140f,
+]
+
+
+def generate_e5b_code(svid):
+    """Generate Galileo E5b-I code (10230 chips). Returns +/-1 array."""
+    if svid < 1 or svid > 50:
+        return None
+    code = generate_gold_code(
+        E5B_I_PRN_INIT[svid - 1], 0x2992,  # G1: per-SV init, poly
+        0x3fff, 0x3408,                      # G2: all-ones init, poly
+        10230, 14, 10230)                    # 10230 chips, 14-bit, no reset
+    return 1.0 - 2.0 * code.astype(np.float64)
+
+
+# ============================================================
+# Galileo E6 Pilot Code Generation (Memory Codes)
+# ============================================================
+
+_E6_MEMORY_CODE = None
+
+def _load_e6_memory_code():
+    """Load E6 memory codes from src/memory_code_e6.rs."""
+    global _E6_MEMORY_CODE
+    if _E6_MEMORY_CODE is not None:
+        return _E6_MEMORY_CODE
+
+    import re
+    rs_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'src', 'memory_code_e6.rs')
+    with open(rs_path) as f:
+        text = f.read()
+    # Extract all hex u32 values from the array
+    vals = re.findall(r'0x([0-9a-fA-F]+)', text)
+    _E6_MEMORY_CODE = [int(v, 16) for v in vals]
+    return _E6_MEMORY_CODE
+
+
+def generate_e6_pilot_code(svid):
+    """Generate Galileo E6 pilot code (5115 chips). Returns +/-1 array.
+    Memory code layout: pilot at offset (svid+49)*160, 5 sectors of 1023 chips."""
+    if svid < 1 or svid > 50:
+        return None
+    mem = _load_e6_memory_code()
+    offset = (svid - 1 + 50) * 160  # pilot offset = (svid+49)*160 with 0-based svid
+    code = np.zeros(5115, dtype=np.float64)
+    for sector in range(5):
+        for j in range(1023):
+            word_idx = sector * 32 + (j >> 5)
+            bit_offset = 31 - (j & 0x1f)
+            abs_idx = offset + word_idx
+            if abs_idx < len(mem):
+                bit = (mem[abs_idx] >> bit_offset) & 1
+                code[sector * 1023 + j] = 1.0 - 2.0 * bit
+            else:
+                code[sector * 1023 + j] = 1.0
+    return code
+
+
+# ============================================================
 # CLI & Preset Parser
 # ============================================================
 
@@ -458,6 +567,12 @@ def parse_preset(preset_path):
             enabled.add('BDS')
         elif sys_name == 'Galileo' and sig == 'E1':
             enabled.add('GAL')
+        elif sys_name == 'Galileo' and sig == 'E5a':
+            enabled.add('GAL_E5A')
+        elif sys_name == 'Galileo' and sig == 'E5b':
+            enabled.add('GAL_E5B')
+        elif sys_name == 'Galileo' and sig == 'E6':
+            enabled.add('GAL_E6')
         elif sys_name == 'GLONASS' and sig == 'G1':
             enabled.add('GLO')
 
@@ -1135,12 +1250,15 @@ def estimate_cn0(zscore, code_period_ms, non_coherent_count):
 SYS_COLORS = {
     'GPS': '#2196F3', 'GPS_L5': '#1565C0', 'GPS_L2C': '#42A5F5', 'GPS_L1C': '#0D47A1',
     'BDS': '#F44336', 'GAL': '#4CAF50', 'GLO': '#FF9800',
+    'GAL_E5A': '#388E3C', 'GAL_E5B': '#66BB6A', 'GAL_E6': '#A5D6A7',
 }
 SYS_PREFIX = {
     'GPS L1CA': ('G', 'GPS'), 'GPS L5': ('G', 'GPS_L5'),
     'GPS L2C': ('G', 'GPS_L2C'), 'GPS L1C': ('G', 'GPS_L1C'),
     'BeiDou B1C': ('C', 'BDS'),
     'Galileo E1': ('E', 'GAL'), 'GLONASS G1': ('R', 'GLO'),
+    'Galileo E5a': ('E', 'GAL_E5A'), 'Galileo E5b': ('E', 'GAL_E5B'),
+    'Galileo E6': ('E', 'GAL_E6'),
 }
 
 
@@ -1165,6 +1283,8 @@ def _cn0_bars(results_list):
         'GPS L2C': NON_COHERENT_L2C, 'GPS L1C': NON_COHERENT_L1C,
         'BeiDou B1C': NON_COHERENT_BDS,
         'Galileo E1': NON_COHERENT_GAL, 'GLONASS G1': NON_COHERENT_GLO,
+        'Galileo E5a': NON_COHERENT_E5A, 'Galileo E5b': NON_COHERENT_E5B,
+        'Galileo E6': NON_COHERENT_E6,
     }
     items = []
     for res in results_list:
@@ -1303,12 +1423,15 @@ def generate_report(iq_file, signal, sample_rate, rms_values,
         ax_sky.set_title('Skyplot', pad=15)
 
         found_set = set()
+        # Normalize sys_key to base system for skyplot matching
+        _sky_base = {'GAL_E5A': 'GAL', 'GAL_E5B': 'GAL', 'GAL_E6': 'GAL'}
         for res in results_list:
             if not res:
                 continue
             _, sys_key = SYS_PREFIX.get(res['system'], ('?', ''))
+            base_key = _sky_base.get(sys_key, sys_key)
             for sat in res['found']:
-                found_set.add((sys_key, sat['svid']))
+                found_set.add((base_key, sat['svid']))
 
         if sat_info:
             for system, sv_dict in sat_info.items():
@@ -1413,6 +1536,9 @@ def generate_report(iq_file, signal, sample_rate, rms_values,
             'BeiDou B1C': (BDS_CODE_LENGTH, 5),
             'Galileo E1': (GAL_CODE_LENGTH, 5),
             'GLONASS G1': (GLO_CODE_LENGTH, 50),
+            'Galileo E5a': (GAL_E5A_CODE_LENGTH, 50),
+            'Galileo E5b': (GAL_E5B_CODE_LENGTH, 50),
+            'Galileo E6': (GAL_E6_CODE_LENGTH, 50),
         }
 
         # Build sys_plots from actual results
@@ -1605,7 +1731,8 @@ def main():
     any_gps = any(s in enabled for s in ('GPS', 'GPS_L5', 'GPS_L2C', 'GPS_L1C'))
     gps_range = list(range(1, 33)) if any_gps else []
     bds_range = list(range(1, 64)) if 'BDS' in enabled else []
-    gal_range = list(range(1, 37)) if 'GAL' in enabled else []
+    any_gal = any(s in enabled for s in ('GAL', 'GAL_E5A', 'GAL_E5B', 'GAL_E6'))
+    gal_range = list(range(1, 37)) if any_gal else []
 
     if args.fast and sat_info:
         print("\n  ** Fast mode: searching only RINEX-visible SVIDs **")
@@ -1653,9 +1780,27 @@ def main():
         results_list.append(res)
 
     # Galileo E1
-    if gal_range:
+    if 'GAL' in enabled and gal_range:
         res = acquire_system(signal, 'Galileo E1', gal_range, generate_e1_boc,
                              GAL_CODE_PERIOD_MS, sample_rate, NON_COHERENT_GAL, threshold)
+        results_list.append(res)
+
+    # Galileo E5a
+    if 'GAL_E5A' in enabled and gal_range:
+        res = acquire_system(signal, 'Galileo E5a', gal_range, generate_e5a_code,
+                             GAL_E5A_CODE_PERIOD_MS, sample_rate, NON_COHERENT_E5A, threshold)
+        results_list.append(res)
+
+    # Galileo E5b
+    if 'GAL_E5B' in enabled and gal_range:
+        res = acquire_system(signal, 'Galileo E5b', gal_range, generate_e5b_code,
+                             GAL_E5B_CODE_PERIOD_MS, sample_rate, NON_COHERENT_E5B, threshold)
+        results_list.append(res)
+
+    # Galileo E6
+    if 'GAL_E6' in enabled and gal_range:
+        res = acquire_system(signal, 'Galileo E6', gal_range, generate_e6_pilot_code,
+                             GAL_E6_CODE_PERIOD_MS, sample_rate, NON_COHERENT_E6, threshold)
         results_list.append(res)
 
     # GLONASS FDMA acquisition (requires sat_info for frequency channels)

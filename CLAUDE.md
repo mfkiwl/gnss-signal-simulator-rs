@@ -54,7 +54,10 @@ The project now supports simultaneous multi-system signal generation with mathem
 
 - **GPS L1CA**: Legacy civilian signal (1575.42 MHz)
 - **BeiDou B1C**: Modern civilian signal (1575.42 MHz)
-- **Galileo E1**: European civilian signal (1575.42 MHz)
+- **Galileo E1**: European civilian signal (1575.42 MHz), CBOC(6,1,1/11), memory codes
+- **Galileo E5a**: Modern civilian signal (1176.45 MHz), BPSK(10), Gold code 14-bit
+- **Galileo E5b**: Modern civilian signal (1207.14 MHz), BPSK(10), Gold code 14-bit
+- **Galileo E6**: High Accuracy Service signal (1278.75 MHz), BPSK(5), memory codes
 - **GLONASS G1**: FDMA signal (1602.0 + k×0.5625 MHz, k=-7..+6)
 - **Multi-system**: Simultaneous GPS + BeiDou + Galileo + GLONASS generation
 
@@ -70,12 +73,15 @@ A critical feature ensuring navigational correctness by forcing all satellites t
 - **CGCS2000 coordinate system**: Native BeiDou coordinate reference frame
 - **Backward compatibility**: Conversion methods for legacy GPS-based code
 
-### Galileo E1 Support
+### Galileo Multi-Band Support
 
 - **Full RINEX 3.04 Galileo parsing**: Native support for Galileo ephemeris data
 - **GST time system**: Galileo System Time support with GPS time synchronization
-- **I/NAV navigation message**: Proper Galileo E1 signal generation
-- **European constellation**: Complete support for Galileo satellite constellation
+- **E1 (1575.42 MHz)**: I/NAV navigation message, CBOC(6,1,1/11) modulation, 4092-chip memory codes
+- **E5a (1176.45 MHz)**: F/NAV navigation message, BPSK(10), 10230-chip Gold codes (14-bit LFSR)
+- **E5b (1207.14 MHz)**: I/NAV navigation message, BPSK(10), 10230-chip Gold codes (14-bit LFSR)
+- **E6 (1278.75 MHz)**: High Accuracy Service, BPSK(5), 5115-chip memory codes (pilot-only)
+- **European constellation**: Complete support for Galileo satellite constellation (SVID 1-36)
 
 ### Time System Corrections
 
@@ -101,6 +107,9 @@ A critical feature ensuring navigational correctness by forcing all satellites t
 - `presets/GPS_BDS_GAL_triple_system.json` - Triple system: GPS + BeiDou + Galileo generation
 - `presets/GLO_G1_only.json` - GLONASS G1 only, 10 MHz, Montana
 - `presets/GPS_BDS_GAL_GLO_L1G1_46MHz.json` - Quad system: GPS + BeiDou + Galileo + GLONASS
+- `presets/GAL_E5a_only.json` - Galileo E5a only, 21 MHz, Montana
+- `presets/GAL_E5b_only.json` - Galileo E5b only, 21 MHz, Montana
+- `presets/GAL_E6_only.json` - Galileo E6 only, 11 MHz, Montana
 - Other multi-system configurations available
 
 ### RINEX Data Files
@@ -303,6 +312,8 @@ Options:
 - Keplerian orbit propagator (GPS ICD-200 algorithm) with BeiDou GEO satellite handling
 - GLONASS orbit propagator (2nd-order Taylor expansion from ECEF position/velocity/acceleration)
 - GLONASS FDMA acquisition: per-satellite IF offset based on frequency channel number k
+- Galileo E5a/E5b acquisition: Gold code generation (14-bit LFSR) with per-SV initial states
+- Galileo E6 acquisition: memory code parsing from `src/memory_code_e6.rs`, pilot-only correlation
 - Elevation/azimuth computation for skyplot, numerical Doppler from orbit velocity
 - CN0 estimation from z-score: `CN0 = 10*log10(z² / (2*N*T))`
 - `--fast` mode reduces search from 131+ SVIDs to visible ones only
@@ -319,3 +330,19 @@ Options:
 - **GLONASS acquisition deduplication**: `acquire_glonass_system()` refactored to reuse `acquire_satellite_generic()` via new `if_offset` parameter instead of reimplementing the entire correlation engine (~80 lines removed)
 - **RINEX epoch parsing**: moved inside GLONASS-only branch — no longer runs for GPS/BDS/GAL records
 - **`generate_report()` signature**: replaced 4 separate result parameters (`gps_res`, `bds_res`, `gal_res`, `glo_res`) with single `results_list` array
+
+### Galileo E5a/E5b/E6 Verification (March 2026)
+
+**Bug fix in `src/sat_if_signal.rs`**: `nav_value` extraction used `data_signal.real >= 0.0` which always returned +1.0 for E5a/E5b signals (where nav data is in `data_signal.imag` and `real=0.0`). Fixed to select sign from the component with larger absolute value.
+
+**Python verifier additions**: E5a/E5b Gold code generators (14-bit LFSR, per-SV initial states from `prngenerate.rs`), E6 memory code parser (reads `src/memory_code_e6.rs`, pilot channel extraction).
+
+**Verification results (Montana, 10s each):**
+
+| Signal | Freq (MHz) | Code | Sample Rate | Generated | Found | z-score |
+|--------|-----------|------|-------------|-----------|-------|---------|
+| E5a | 1176.45 | BPSK(10), 10230 Gold | 21 MHz | 7 SVs | 7 | 434–502 |
+| E5b | 1207.14 | BPSK(10), 10230 Gold | 21 MHz | 7 SVs | 7 | 449–514 |
+| E6 | 1278.75 | BPSK(5), 5115 memory | 11 MHz | 7 SVs | 7 | 270–299 |
+
+All Galileo bands now verified: **E1 + E5a + E5b + E6 = 4/4 bands, 100% satellite detection.**
