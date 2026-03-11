@@ -2406,13 +2406,13 @@ impl IFDataGen {
         let init_cn0 = self.power_control.init_cn0; // типично 47.0 dB-Hz
         let cn0_linear = 10.0_f64.powf(init_cn0 / 10.0);
         let fs = samples_per_ms as f64 * 1000.0;
-        let single_sat_amplitude = (2.0 * cn0_linear / fs).sqrt();
+        let single_sat_amplitude = (cn0_linear / fs).sqrt();
 
         // RMS суммы некоррелированных спутников: A_total = sqrt(N) * A_single
         let total_rms_amplitude = (active_satellites as f64).sqrt() * single_sat_amplitude;
 
         // Учитываем шум (σ=0.1) в общей RMS
-        let noise_sigma = 0.1;
+        let noise_sigma = 1.0;
         let total_rms_with_noise = (total_rms_amplitude * total_rms_amplitude
             + noise_sigma * noise_sigma).sqrt();
 
@@ -2456,86 +2456,76 @@ impl IFDataGen {
             );
             std::io::stdout().flush().unwrap();
 
-            let block_start_time = start_time_gnss.add_milliseconds(block_start_ms as f64);
+            let block_samples = block_duration_ms as usize * samples_per_ms;
 
-            // Dynamic satellite parameter update: recalculate positions, velocities,
-            // Doppler shifts every block (1000ms) to track orbital motion
-            if block_idx > 0 {
-                let position_ecef = lla_to_ecef(&self.start_pos);
-                self.update_sat_param_list(block_start_time, position_ecef, 0, &[], None);
+            let generation_start = std::time::Instant::now();
 
-                // Push updated parameters into each SatIfSignal
-                let center_freq = self.output_param.CenterFreq as f64;
+            // 1. Noise fills the block buffer first
+            FastMath::generate_noise_block(&mut block_signal[..block_samples], noise_sigma);
+
+            // 2. Per-ms signal generation with periodic Kepler updates
+            // Kepler propagation every PARAM_UPDATE_INTERVAL_MS (expensive),
+            // but sample generation every 1ms (cheap) — matches C++ accuracy
+            const PARAM_UPDATE_INTERVAL_MS: i32 = 20;
+            let center_freq = self.output_param.CenterFreq as f64;
+            let position_ecef = lla_to_ecef(&self.start_pos);
+            for ms_offset in 0..block_duration_ms {
+                let ms_time = start_time_gnss.add_milliseconds((block_start_ms + ms_offset) as f64);
+
+                // Update orbital params periodically (Kepler propagation is expensive)
+                let global_ms = block_start_ms + ms_offset;
+                if ms_offset == 0 || global_ms % PARAM_UPDATE_INTERVAL_MS == 0 {
+                    self.update_sat_param_list(ms_time, position_ecef, 0, &[], None);
+
+                    // Push updated params to each satellite
+                    for sig_option in sat_if_signals.iter_mut() {
+                        if let Some(ref mut sig) = sig_option {
+                            let param_ref = match sig.system {
+                                GnssSystem::GpsSystem => {
+                                    if sig.svid > 0 && (sig.svid as usize) <= TOTAL_GPS_SAT {
+                                        Some(&self.gps_sat_param[sig.svid as usize - 1])
+                                    } else { None }
+                                }
+                                GnssSystem::BdsSystem => {
+                                    if sig.svid > 0 && (sig.svid as usize) <= TOTAL_BDS_SAT {
+                                        Some(&self.bds_sat_param[sig.svid as usize - 1])
+                                    } else { None }
+                                }
+                                GnssSystem::GalileoSystem => {
+                                    if sig.svid > 0 && (sig.svid as usize) <= TOTAL_GAL_SAT {
+                                        Some(&self.gal_sat_param[sig.svid as usize - 1])
+                                    } else { None }
+                                }
+                                GnssSystem::GlonassSystem => {
+                                    if sig.svid > 0 && (sig.svid as usize) <= TOTAL_GLO_SAT {
+                                        Some(&self.glo_sat_param[sig.svid as usize - 1])
+                                    } else { None }
+                                }
+                                _ => None,
+                            };
+                            if let Some(new_param) = param_ref {
+                                sig.push_sat_param_for_ms(new_param, center_freq);
+                            }
+                        }
+                    }
+                }
+
+                // Generate 1ms of samples for each satellite and accumulate
                 for sig_option in sat_if_signals.iter_mut() {
                     if let Some(ref mut sig) = sig_option {
-                        let param_ref = match sig.system {
-                            GnssSystem::GpsSystem => {
-                                if sig.svid > 0 && (sig.svid as usize) <= TOTAL_GPS_SAT {
-                                    Some(&self.gps_sat_param[sig.svid as usize - 1])
-                                } else { None }
-                            }
-                            GnssSystem::BdsSystem => {
-                                if sig.svid > 0 && (sig.svid as usize) <= TOTAL_BDS_SAT {
-                                    Some(&self.bds_sat_param[sig.svid as usize - 1])
-                                } else { None }
-                            }
-                            GnssSystem::GalileoSystem => {
-                                if sig.svid > 0 && (sig.svid as usize) <= TOTAL_GAL_SAT {
-                                    Some(&self.gal_sat_param[sig.svid as usize - 1])
-                                } else { None }
-                            }
-                            GnssSystem::GlonassSystem => {
-                                if sig.svid > 0 && (sig.svid as usize) <= TOTAL_GLO_SAT {
-                                    Some(&self.glo_sat_param[sig.svid as usize - 1])
-                                } else { None }
-                            }
-                            _ => None,
-                        };
-                        if let Some(new_param) = param_ref {
-                            sig.update_satellite_params(new_param, center_freq, &block_start_time);
+                        sig.get_if_sample_cached(ms_time);
+
+                        let buf_offset = ms_offset as usize * samples_per_ms;
+                        let n = sig.sample_array.len().min(samples_per_ms);
+                        for i in 0..n {
+                            block_signal[buf_offset + i].real += sig.sample_array[i].real;
+                            block_signal[buf_offset + i].imag += sig.sample_array[i].imag;
                         }
                     }
                 }
             }
 
-            // Каждый спутник работает параллельно на блок времени
-            let generation_start = std::time::Instant::now();
-
-            // Используем Rayon для параллельной обработки каждого спутника
-            sat_if_signals
-                .par_iter_mut()
-                .enumerate()
-                .for_each(|(_sat_idx, sat_option)| {
-                    if let Some(ref mut boxed_satellite) = sat_option {
-                        // Каждый спутник генерирует сигнал для этого блока времени
-                        boxed_satellite.generate_block_signal_parallel(
-                            block_start_time,
-                            block_duration_ms,
-                            samples_per_ms,
-                            self.output_param.SampleFreq as f64,
-                        );
-                    }
-                });
-
             let generation_duration = generation_start.elapsed();
-            // Убираем промежуточные сообщения
-
-            // ПОТОКОВОЕ НАКОПЛЕНИЕ и запись для этого блока
-            let block_samples = block_duration_ms as usize * samples_per_ms;
-
-            // 1. Шум заполняет буфер (σ зависит от физики, не от AGC)
-            FastMath::generate_noise_block(&mut block_signal[..block_samples], noise_sigma);
-
-            // 2. Накапливаем спутниковые сигналы БЕЗ agc_gain
-            for satellite in sat_if_signals.iter().flatten() {
-                if let Some(block_data) = &satellite.block_data {
-                    let len = block_data.len().min(block_samples);
-                    for i in 0..len {
-                        block_signal[i].real += block_data[i].real;
-                        block_signal[i].imag += block_data[i].imag;
-                    }
-                }
-            }
 
             // 3. Применяем AGC ко ВСЕМУ блоку (шум + сигнал) — как в реальном приёмнике
             for i in 0..block_samples {

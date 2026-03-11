@@ -424,3 +424,37 @@ All Galileo bands now verified: **E1 + E5a + E5b + E6 = 4/4 bands, 100% satellit
    - C++ SignalSim updates carrier phase every 1ms → no jumps
    - **Fix**: Removed hard re-anchor; carrier phase accumulates continuously via Doppler
    - Code phase re-anchor kept (DLL bandwidth is lower, filters 0.001 chip jumps)
+
+### C++ SignalSim Compliance (March 2026)
+
+**5 bugs fixed to match C++ SignalSim signal generation:**
+
+1. **BUG 1 (Critical): Complex I/Q modulation** (`src/sat_if_signal.rs:get_if_sample_cached`):
+   - **Issue**: Scalar `nav_value` (±1) extracted from `DataSignal`, losing I/Q channel orientation
+   - **C++**: `PrnValue = DataPrn[chip] ? -DataSignal : DataSignal` — complex multiplication preserving I/Q
+   - **Fix**: Complex modulation: `prn_r += data_signal.real * sign; prn_i += data_signal.imag * sign;` for both data and pilot channels, followed by complex carrier rotation `(prn_r*cos - prn_i*sin, prn_r*sin + prn_i*cos)`
+   - **Impact**: Fixed all signals with data in Q / pilot in I (GPS L5, BDS B1C, BDS B2a/B2b, GAL E5a/E5b)
+
+2. **BUG 2 (Critical): Per-ms generation loop** (`src/ifdatagen.rs:generate_with_true_parallelization`):
+   - **Issue**: Kepler propagation + param update once per 50ms block; sample generation in parallel blocks
+   - **C++**: `StepToNextMs → UpdateSatParamList` every 1ms, sequential sample generation
+   - **Fix**: Per-ms loop with Kepler updates every 20ms (`PARAM_UPDATE_INTERVAL_MS`), sample generation every 1ms via `push_sat_param_for_ms` + `get_if_sample_cached`. ECEF position hoisted out of inner loop.
+   - **Performance**: 24s for 10s triple-L1 signal (was 198s with every-1ms Kepler; was ~5s with old per-block)
+
+3. **BUG 3 (High): TMBOC/QMBOC pilot amplitude** (`src/satellite_signal.rs`):
+   - **Issue**: GPS L1C and BDS B1C pilot used `AMPLITUDE_3_4 = sqrt(3/4) = 0.866`
+   - **C++**: Uses `AMPLITUDE_29_44 = sqrt(29/44) = 0.812` accounting for BOC(6,1) component power
+   - **Fix**: New constant `AMPLITUDE_29_44`, applied to GPS L1C pilot and BDS B1C pilot
+
+4. **BUG 4 (High): Mid-sample nav bit transitions** (`src/sat_if_signal.rs:get_if_sample_cached`):
+   - **Issue**: Nav bits updated only at 1ms boundaries; signals with sub-ms code periods (BDS B1C 10ms, GPS L1C 10ms, GAL E1 4ms) could miss transitions within a sample block
+   - **C++**: `GetPrnValue` checks `chip_mod < prev_chip` → calls `GetSatelliteSignal()`
+   - **Fix**: Track `prev_data_chip`, detect wrap-around → advance `signal_time_local` and call `get_satellite_signal`
+
+5. **BUG 5 (Medium): Amplitude formula and noise level** (`src/sat_if_signal.rs`, `src/ifdatagen.rs`):
+   - **Issue**: `amp = sqrt(2 * CN0_linear / Fs)` and noise σ=0.1 — signal near noise floor (unrealistic)
+   - **C++**: `amp = sqrt(CN0_linear / Fs)` and noise σ=1.0 — signal 20-25 dB below noise (realistic GNSS)
+   - **Fix**: Removed `2.0 *` from amplitude, changed `noise_sigma = 1.0`
+   - **Impact**: Z-scores in verifier drop ~10-20x (expected — correct SNR is much lower); real receivers unaffected
+
+**New method**: `SatIfSignal::push_sat_param_for_ms()` — lightweight per-ms parameter push that updates `sat_param` and IF freq without re-anchoring code/carrier phase.

@@ -154,12 +154,12 @@ impl ComputationCache {
     /// code_rate = chip_rate * (1 + doppler_hz / carrier_freq_hz)
     /// Это критично для DLL tracking — без code Doppler код дрейфует ~0.002 чипа/мс
     pub fn update(&mut self, cn0: f64, sample_number: i32, if_freq: f64, chip_rate: f64, doppler_hz: f64, carrier_freq_hz: f64) {
-        // ФИЗИЧЕСКИ КОРРЕКТНАЯ ФОРМУЛА АМПЛИТУДЫ
-        // A = sqrt(2 * C/N0_linear / Fs)
+        // C++ compatible amplitude formula: A = sqrt(C/N0_linear / Fs)
+        // Matches SignalSim: pow(10, (CN0-3000)/2000.) / sqrt(SampleNumber)
         let cn0_db = cn0 / 100.0;
         let cn0_linear = 10.0_f64.powf(cn0_db / 10.0);
         let fs = sample_number as f64 * 1000.0;
-        self.cached_amp = (2.0 * cn0_linear / fs).sqrt();
+        self.cached_amp = (cn0_linear / fs).sqrt();
 
         // Code Doppler: code rate scales proportionally to carrier Doppler
         // Real GNSS signal: code_rate = nominal_chip_rate * (1 + v/c)
@@ -386,6 +386,17 @@ impl SatIfSignal {
 
         // Restore safety resets
         self.last_nav_bit_index = -1;
+        self.computation_cache.invalidate();
+    }
+
+    /// Lightweight per-ms parameter push (for per-ms main loop, matching C++ StepToNextMs).
+    /// Only updates sat_param and IF freq. Does NOT re-anchor code/carrier phase.
+    /// Phase continuity is maintained by get_if_sample_cached's Start→End model.
+    pub fn push_sat_param_for_ms(&mut self, new_param: &SatelliteParam, output_center_freq: f64) {
+        self.sat_param = Some(*new_param);
+        let signal_center_freq = self.get_signal_center_freq();
+        self.if_freq = (signal_center_freq - output_center_freq) as i32;
+        // Invalidate computation cache so amplitude/code_step are recalculated with new Doppler
         self.computation_cache.invalidate();
     }
 
@@ -1255,24 +1266,20 @@ impl SatIfSignal {
         let base_chip_offset = self.start_code_phase;
         let amp = self.computation_cache.cached_amp;
         let code_step = self.computation_cache.cached_code_step;
-        let nav_value = {
-            let r = self.data_signal.real;
-            let i = self.data_signal.imag;
-            if r.abs() >= i.abs() {
-                if r >= 0.0 { 1.0 } else { -1.0 }
-            } else {
-                if i >= 0.0 { 1.0 } else { -1.0 }
-            }
-        };
 
-        // BOC flag для обработки subchip модуляции
+        // BUG 1 FIX: No scalar nav_value — use complex data_signal/pilot_signal directly
+        // This preserves I/Q channel orientation for signals where data is in Q, pilot in I
+        // (GPS L5, BDS B1C, BDS B2A, GAL E5a, GAL E5b, etc.)
+
+        // BOC flag for subchip modulation
         let is_boc = (code_attribute.attribute & PRN_ATTRIBUTE_BOC) != 0;
 
-        // === НЕПРЕРЫВНАЯ ФАЗА НЕСУЩЕЙ ===
+        // === CONTINUOUS CARRIER PHASE ===
         let doppler_cycles_per_ms = doppler_hz / 1000.0;
         let phase_step = (doppler_cycles_per_ms + (self.if_freq as f64) / 1000.0)
             / (self.sample_number as f64);
 
+        // Extract fractional phase from start_carrier_phase (like C++: CurPhase = 1.0 - frac(Start))
         let mut cur_phase = self.start_carrier_phase - self.start_carrier_phase.floor();
         cur_phase = 1.0 - cur_phase;
         // Advance carrier phase for next ms (carrier_phase decreases for positive Doppler)
@@ -1287,92 +1294,120 @@ impl SatIfSignal {
         }
 
         {
-            // === КОРРЕКТНЫЙ ПУТЬ для ВСЕХ сигналов ===
             let data_length = self.data_length;
             let pilot_length = self.pilot_length;
             let is_cboc = (code_attribute.attribute & PRN_ATTRIBUTE_CBOC) != 0;
             let is_qmboc = (code_attribute.attribute & PRN_ATTRIBUTE_QMBOC) != 0;
-            let pilot_nav = if self.pilot_signal.real >= 0.0 { 1.0 } else { -1.0 };
-
+            let data_period = code_attribute.data_period;
             let two_pi = std::f64::consts::TAU;
+
+            // BUG 4 FIX: Local copies for mid-sample nav bit transitions
+            // When code chip counter wraps (crosses data period boundary), update nav bits
+            let mut data_signal_local = self.data_signal;
+            let mut pilot_signal_local = self.pilot_signal;
+            let mut signal_time_local = self.signal_time;
+            let mut prev_data_chip: i32 = -1;
 
             for i in 0..self.sample_number as usize {
                 let chip_raw = (base_chip_offset + (i as f64) * code_step) as i32;
 
-                // --- Data channel ---
+                // --- Data channel (COMPLEX modulation, BUG 1) ---
                 let chip_mod = chip_raw.rem_euclid(data_length);
-                let data_chip = if is_boc { (chip_mod >> 1) as usize } else { chip_mod as usize };
+                let data_chip_idx = if is_boc { chip_mod >> 1 } else { chip_mod };
 
-                let mut val = if let Some(data_prn) = &self.prn_sequence.data_prn {
-                    if data_chip < data_prn.len() && data_prn[data_chip] != 0 {
-                        -nav_value
+                // BUG 4: Mid-sample nav bit transition detection
+                // When data chip wraps around (new code period), advance signal_time and update nav bits
+                if prev_data_chip >= 0 && data_chip_idx < prev_data_chip {
+                    signal_time_local.MilliSeconds += data_period;
+                    self.satellite_signal.get_satellite_signal(
+                        signal_time_local,
+                        &mut data_signal_local,
+                        &mut pilot_signal_local,
+                    );
+                }
+                prev_data_chip = data_chip_idx;
+
+                let data_sign = if let Some(data_prn) = &self.prn_sequence.data_prn {
+                    if (data_chip_idx as usize) < data_prn.len() && data_prn[data_chip_idx as usize] != 0 {
+                        -1.0
                     } else {
-                        nav_value
+                        1.0
                     }
                 } else {
-                    nav_value
+                    1.0
                 };
 
-                // BOC subchip sign flip
+                // BUG 1: Complex data modulation — preserves I/Q orientation
+                let mut prn_r = data_signal_local.real * data_sign;
+                let mut prn_i = data_signal_local.imag * data_sign;
+
+                // BOC subchip sign flip for data
                 if is_boc && (chip_mod & 1) != 0 {
-                    val = -val;
+                    prn_r = -prn_r;
+                    prn_i = -prn_i;
                 }
 
-                // --- Pilot channel ---
+                // --- Pilot channel (COMPLEX modulation, BUG 1) ---
                 if let Some(pilot_prn) = &self.prn_sequence.pilot_prn {
                     if pilot_length > 0 {
                         let pilot_chip_mod = chip_raw.rem_euclid(pilot_length);
                         let pilot_chip = if is_boc { (pilot_chip_mod >> 1) as usize } else { pilot_chip_mod as usize };
 
                         if pilot_chip < pilot_prn.len() {
-                            let mut pilot_val = if pilot_prn[pilot_chip] != 0 {
-                                -pilot_nav
-                            } else {
-                                pilot_nav
-                            };
+                            let pilot_sign = if pilot_prn[pilot_chip] != 0 { -1.0 } else { 1.0 };
+                            // BUG 1: Complex pilot modulation
+                            let mut p_r = pilot_signal_local.real * pilot_sign;
+                            let mut p_i = pilot_signal_local.imag * pilot_sign;
 
+                            // BOC/QMBOC/CBOC flip logic for pilot
+                            let mut flip = false;
                             if (is_qmboc || is_cboc) && is_boc {
                                 if is_qmboc {
-                                    let symbol_pos = (self.signal_time.MilliSeconds % 330) / 10;
+                                    let symbol_pos = (signal_time_local.MilliSeconds % 330) / 10;
                                     if symbol_pos == 1 || symbol_pos == 5 || symbol_pos == 7 || symbol_pos == 30 {
                                         let sub_chip_pos = chip_raw.rem_euclid(12);
-                                        if sub_chip_pos >= 6 {
-                                            pilot_val = -pilot_val;
-                                        }
-                                    } else if (pilot_chip_mod & 1) != 0 {
-                                        pilot_val = -pilot_val;
-                                    }
+                                        if sub_chip_pos >= 6 { flip = true; }
+                                    } else if (pilot_chip_mod & 1) != 0 { flip = true; }
                                 } else {
+                                    // CBOC (Galileo E1)
                                     let chip_in_code = chip_raw.rem_euclid(4092);
                                     if (chip_in_code % 11) == 0 {
                                         let boc6_phase = chip_raw.rem_euclid(12);
-                                        if boc6_phase >= 6 {
-                                            pilot_val = -pilot_val;
-                                        }
-                                    } else if (pilot_chip_mod & 1) != 0 {
-                                        pilot_val = -pilot_val;
-                                    }
+                                        if boc6_phase >= 6 { flip = true; }
+                                    } else if (pilot_chip_mod & 1) != 0 { flip = true; }
                                 }
                             } else if is_boc && (pilot_chip_mod & 1) != 0 {
-                                pilot_val = -pilot_val;
+                                flip = true;
                             }
 
-                            val += pilot_val;
+                            if flip {
+                                p_r = -p_r;
+                                p_i = -p_i;
+                            }
+
+                            prn_r += p_r;
+                            prn_i += p_i;
                         }
                     }
                 }
 
-                // Carrier modulation with CONTINUOUS phase
+                // BUG 1: Complex carrier rotation (preserves I/Q modulation through to output)
+                // C++ equivalent: SampleArray[i] = PrnValue * GetRotateValue(phase) * Amp
                 let phase = cur_phase * two_pi;
                 let cos_val = phase.cos();
                 let sin_val = phase.sin();
                 cur_phase += phase_step;
 
                 self.sample_array[i] = ComplexNumber {
-                    real: val * cos_val * amp,
-                    imag: val * sin_val * amp,
+                    real: (prn_r * cos_val - prn_i * sin_val) * amp,
+                    imag: (prn_r * sin_val + prn_i * cos_val) * amp,
                 };
             }
+
+            // BUG 4: Save back local state after mid-sample transitions
+            self.data_signal = data_signal_local;
+            self.pilot_signal = pilot_signal_local;
+            self.signal_time = signal_time_local;
         }
 
         // Advance code phase by one ms (with code Doppler)

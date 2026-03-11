@@ -28,6 +28,7 @@ use crate::NavDataType;
 const AMPLITUDE_1_2: f64 = std::f64::consts::FRAC_1_SQRT_2;
 const AMPLITUDE_1_4: f64 = 0.5;
 const AMPLITUDE_3_4: f64 = 0.866_025_403_784_438_6;
+const AMPLITUDE_29_44: f64 = 0.811_844_540_519_421_5; // sqrt(29/44) for TMBOC/QMBOC pilot (accounts for BOC(6,1) component)
 
 pub struct SignalAttribute {
     pub code_length: i32,
@@ -467,7 +468,7 @@ impl SatelliteSignal {
                         imag: 0.0,
                     };
                     *pilot_signal = ComplexNumber {
-                        real: pilot_bit as f64 * AMPLITUDE_3_4,
+                        real: pilot_bit as f64 * AMPLITUDE_29_44,
                         imag: 0.0,
                     };
                 }
@@ -507,7 +508,7 @@ impl SatelliteSignal {
                         imag: -data_bit as f64 * AMPLITUDE_1_4,
                     };
                     *pilot_signal = ComplexNumber {
-                        real: pilot_bit as f64 * AMPLITUDE_3_4,
+                        real: pilot_bit as f64 * AMPLITUDE_29_44,
                         imag: 0.0,
                     };
                 }
