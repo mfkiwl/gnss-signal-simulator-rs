@@ -540,13 +540,16 @@ impl SatelliteSignal {
             },
             GnssSystem::GalileoSystem => match self.sat_signal {
                 E1 => {
+                    // Galileo OS SIS ICD: E1-B (data) on I channel, E1-C (pilot) on Q channel
+                    // s_E1 = (1/sqrt(2)) * [e_B*c_B*sc_B - e_C*c_C*sc_C * j]
+                    // Pilot on Q with negative sign per ICD composite signal definition
                     *data_signal = ComplexNumber {
                         real: -data_bit as f64 * AMPLITUDE_1_2,
                         imag: 0.0,
                     };
                     *pilot_signal = ComplexNumber {
-                        real: pilot_bit as f64 * AMPLITUDE_1_2,
-                        imag: 0.0,
+                        real: 0.0,
+                        imag: -pilot_bit as f64 * AMPLITUDE_1_2,
                     };
                 }
                 E5A | E5B => {

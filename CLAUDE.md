@@ -498,3 +498,12 @@ cargo run --bin nav_diagnostics -- --rinex Rinex_Data/BRDC00IGS_R_20251560000_01
 **Known issue**: `bcnavbit.rs:186` — MEO reference axis wrong. Condition `if sat_type == 3` should be `if sat_type == 2` for MEO (27906100 m). Currently MEO satellites use GEO/IGSO reference (42162200 m), causing ~14760 km orbit error in encoded nav messages.
 
 **Bug fix in `json_interpreter.rs`**: `read_nav_file_limited()` was not adding GPS and BeiDou ephemerides to `nav_data` (results discarded with `_eph`). Fixed to call `add_gps_ephemeris()`/`add_beidou_ephemeris()`.
+
+### Galileo E1 I/Q Channel Fix (March 2026)
+
+**CRITICAL BUG in `src/satellite_signal.rs:541-553`**: Galileo E1 pilot (E1-C) was on I channel instead of Q channel.
+
+- **Issue**: Both `data_signal.real` and `pilot_signal.real` were non-zero, `imag = 0` for both. This placed data (E1-B) and pilot (E1-C) on the same I channel, making them inseparable for a receiver.
+- **ICD requirement**: Galileo OS SIS ICD specifies E1-B (data) on I and E1-C (pilot) on Q: `s_E1 = e_B × cos(ωt) - e_C × sin(ωt)`
+- **Fix**: Changed pilot to Q channel: `pilot_signal = { real: 0.0, imag: -pilot_bit * AMPLITUDE_1_2 }`
+- **Impact**: Real receivers couldn't acquire Galileo E1 signals at all (0 Galileo satellites visible on phone). After fix, receivers can track pilot on Q for acquisition and data on I for nav message decoding.
