@@ -2481,7 +2481,7 @@ impl IFDataGen {
                     // At block boundaries (ms_offset==0): full update_satellite_params
                     // with code phase re-anchor from transmit time + signal_time sync.
                     // Between blocks: lightweight push_sat_param_for_ms (no re-anchor).
-                    let full_update = ms_offset == 0;
+                    let full_update = true; // C++ SignalSim: full update every 1ms
                     for sig_option in sat_if_signals.iter_mut() {
                         if let Some(ref mut sig) = sig_option {
                             let param_ref = match sig.system {
