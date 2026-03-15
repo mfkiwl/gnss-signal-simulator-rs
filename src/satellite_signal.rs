@@ -473,23 +473,25 @@ impl SatelliteSignal {
                     };
                 }
                 L2C => {
+                    // C++ SatelliteSignal.cpp:206-207: Data on I, Pilot on I (no PilotBit)
                     *data_signal = ComplexNumber {
                         real: data_bit as f64 * AMPLITUDE_1_2,
                         imag: 0.0,
                     };
                     *pilot_signal = ComplexNumber {
-                        real: pilot_bit as f64 * AMPLITUDE_1_2,
+                        real: AMPLITUDE_1_2,
                         imag: 0.0,
                     };
                 }
                 L5 => {
+                    // C++ SatelliteSignal.cpp:210-211: Data on Q (imag), Pilot on I (real)
                     *data_signal = ComplexNumber {
-                        real: data_bit as f64 * AMPLITUDE_1_2,
-                        imag: 0.0,
+                        real: 0.0,
+                        imag: data_bit as f64 * AMPLITUDE_1_2,
                     };
                     *pilot_signal = ComplexNumber {
-                        real: 0.0,
-                        imag: pilot_bit as f64 * AMPLITUDE_1_2,
+                        real: pilot_bit as f64 * AMPLITUDE_1_2,
+                        imag: 0.0,
                     };
                 }
                 L2P => {
@@ -540,9 +542,9 @@ impl SatelliteSignal {
             },
             GnssSystem::GalileoSystem => match self.sat_signal {
                 E1 => {
-                    // Galileo OS SIS ICD: E1-B (data) on I channel, E1-C (pilot) on Q channel
-                    // s_E1 = (1/sqrt(2)) * [e_B*c_B*sc_B - e_C*c_C*sc_C * j]
-                    // Pilot on Q with negative sign per ICD composite signal definition
+                    // Galileo OS SIS ICD: E1-B (data) on I, E1-C (pilot) on Q
+                    // s_E1 = e_B × cos(ωt) - e_C × sin(ωt)
+                    // Real receiver needs pilot on Q for acquisition/tracking
                     *data_signal = ComplexNumber {
                         real: -data_bit as f64 * AMPLITUDE_1_2,
                         imag: 0.0,

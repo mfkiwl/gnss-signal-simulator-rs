@@ -122,6 +122,9 @@ impl NavData {
         }
     }
 
+    pub fn set_gps_iono(&mut self, iono: IonoParam) { self.gps_iono = Some(iono); }
+    pub fn set_gps_utc(&mut self, utc: UtcParam) { self.gps_utc = Some(utc); }
+
     pub fn get_gps_iono(&self) -> Option<&IonoParam> {
         self.gps_iono.as_ref()
     }
@@ -1006,6 +1009,21 @@ impl IFDataGen {
 
             // Первичная загрузка: выбираем per-satellite, чтобы не расходиться с C-версией
             self.select_per_satellite_and_fill(&c_nav_data, utc_time);
+
+            // CRITICAL: Transfer ionospheric and UTC parameters from CNavData to NavData
+            // Without this, LNAV subframe 4 page 18 is empty → receiver has no iono/UTC corrections → NO FIX
+            if let (Some(alpha), Some(beta)) = (c_nav_data.gps_iono_alpha, c_nav_data.gps_iono_beta) {
+                self.nav_data.set_gps_iono(IonoParam {
+                    a0: alpha[0], a1: alpha[1], a2: alpha[2], a3: alpha[3],
+                    b0: beta[0], b1: beta[1], b2: beta[2], b3: beta[3],
+                    flag: 1,
+                });
+                println!("[INFO] GPS iono parameters transferred to NavData: alpha={:?}, beta={:?}", alpha, beta);
+            }
+            if let Some(utc) = c_nav_data.utc_param {
+                self.nav_data.set_gps_utc(utc);
+                println!("[INFO] GPS UTC parameters transferred to NavData: A0={}, A1={}, TLS={}", utc.A0, utc.A1, utc.TLS);
+            }
         } else {
             println!("[ERROR]\tRINEX file not found: {}", rinex_file);
         }
@@ -2475,13 +2493,19 @@ impl IFDataGen {
                 // Update orbital params periodically (Kepler propagation is expensive)
                 let global_ms = block_start_ms + ms_offset;
                 if ms_offset == 0 || global_ms % PARAM_UPDATE_INTERVAL_MS == 0 {
-                    self.update_sat_param_list(ms_time, position_ecef, 0, &[], None);
+                    // C++ UpdateSatParamList: GetPowerControlList(1) + CalculateParam + UpdateCN0
+                    let (power_slice, power_count) = self.power_control.get_power_control_list(1);
+                    let power_list_owned: Vec<SignalPower> = power_slice.to_vec();
+                    self.update_sat_param_list(ms_time, position_ecef, power_count, &power_list_owned, None);
 
                     // Push updated params to each satellite
                     // At block boundaries (ms_offset==0): full update_satellite_params
                     // with code phase re-anchor from transmit time + signal_time sync.
                     // Between blocks: lightweight push_sat_param_for_ms (no re-anchor).
-                    let full_update = true; // C++ SignalSim: full update every 1ms
+                    // C++ SatIfSignal: code phase from Start→End transmit time (continuous)
+                    // Full update (code re-anchor) only at block boundaries;
+                    // between blocks: lightweight push (Doppler/IF only, no re-anchor)
+                    let full_update = true; // Full update every 1ms — matches C++ SignalSim
                     for sig_option in sat_if_signals.iter_mut() {
                         if let Some(ref mut sig) = sig_option {
                             let param_ref = match sig.system {
@@ -3572,7 +3596,7 @@ impl IFDataGen {
         cur_time: GnssTime,
         _cur_pos: KinematicInfo,
         _list_count: usize,
-        _power_list: &[SignalPower],
+        power_list: &[SignalPower],
         _iono_param: Option<&IonoParam>,
     ) {
         // Convert receiver LLA position to ECEF for satellite parameter computation
@@ -3584,6 +3608,10 @@ impl IFDataGen {
             b0: 0.0, b1: 0.0, b2: 0.0, b3: 0.0,
             flag: 0,
         };
+
+        // CN0 update parameters (C++ IFdataGen.cpp:798 — UpdateCN0 after each CalculateParam)
+        let default_cn0 = self.power_control.init_cn0;
+        let adjust = self.power_control.adjust;
 
         // Update GPS satellite parameters
         let gps_iono = self.nav_data.get_gps_iono().cloned().unwrap_or(default_iono);
@@ -3597,43 +3625,55 @@ impl IFDataGen {
                         GnssSystem::GpsSystem, eph, &gps_iono,
                         &mut self.gps_sat_param[svid - 1],
                     );
+                    crate::satellite_param::get_satellite_cn0(
+                        power_list, default_cn0, adjust,
+                        &mut self.gps_sat_param[svid - 1],
+                    );
                 }
             }
         }
 
-        // Update BeiDou satellite parameters (BDT time)
+        // Update BeiDou satellite parameters
+        // C++ IFdataGen.cpp:800-804: passes GPS time; CalculateParam subtracts 14000ms internally
+        // Previously Rust converted to BDT first, causing DOUBLE subtraction (-28s instead of -14s)
         let bds_iono = self.nav_data.get_bds_iono()
             .or(self.nav_data.get_gps_iono())
             .cloned()
             .unwrap_or(default_iono);
         let utc_now = crate::gnsstime::gps_time_to_utc(cur_time, true);
-        let bds_time = crate::gnsstime::utc_to_bds_time(utc_now);
         for i in 0..self.bds_sat_number {
             if let Some(ref eph) = self.bds_eph_visible[i] {
                 let svid = eph.svid as usize;
                 if svid > 0 && svid <= TOTAL_BDS_SAT {
                     crate::satellite_param::get_satellite_param(
-                        &position_ecef, &position_lla, &bds_time,
+                        &position_ecef, &position_lla, &cur_time,
                         GnssSystem::BdsSystem, eph, &bds_iono,
+                        &mut self.bds_sat_param[svid - 1],
+                    );
+                    crate::satellite_param::get_satellite_cn0(
+                        power_list, default_cn0, adjust,
                         &mut self.bds_sat_param[svid - 1],
                     );
                 }
             }
         }
 
-        // Update Galileo satellite parameters (GST time)
+        // Update Galileo satellite parameters (GPS time — C++ passes GPS time directly)
         let gal_iono = self.nav_data.get_galileo_iono()
             .or(self.nav_data.get_gps_iono())
             .cloned()
             .unwrap_or(default_iono);
-        let gal_time = crate::gnsstime::utc_to_galileo_time(utc_now);
         for i in 0..self.gal_sat_number {
             if let Some(ref eph) = self.gal_eph_visible[i] {
                 let svid = eph.svid as usize;
                 if svid > 0 && svid <= TOTAL_GAL_SAT {
                     crate::satellite_param::get_satellite_param(
-                        &position_ecef, &position_lla, &gal_time,
+                        &position_ecef, &position_lla, &cur_time,
                         GnssSystem::GalileoSystem, eph, &gal_iono,
+                        &mut self.gal_sat_param[svid - 1],
+                    );
+                    crate::satellite_param::get_satellite_cn0(
+                        power_list, default_cn0, adjust,
                         &mut self.gal_sat_param[svid - 1],
                     );
                 }
@@ -3650,6 +3690,10 @@ impl IFDataGen {
                     crate::satellite_param::get_glonass_satellite_param(
                         &position_ecef, &position_lla, &glonass_time,
                         eph, &glo_iono,
+                        &mut self.glo_sat_param[n - 1],
+                    );
+                    crate::satellite_param::get_satellite_cn0(
+                        power_list, default_cn0, adjust,
                         &mut self.glo_sat_param[n - 1],
                     );
                 }
@@ -3832,11 +3876,8 @@ impl IFDataGen {
             if let Some(eph) = &self.bds_eph_visible[i] {
                 // Рассчитываем параметры спутника для правильного доплера
                 let position_lla = ecef_to_lla(&cur_pos);
-                // Используем BDT как секунды недели
-                let utc_now = crate::gnsstime::gps_time_to_utc(self.cur_time, true);
-                let bds_time = crate::gnsstime::utc_to_bds_time(utc_now);
-
-                // BeiDou использует модель NeQuick или Klobuchar (используем GPS параметры как fallback)
+                // C++ passes GPS time; CalculateParam subtracts 14000ms internally
+                // Previously Rust converted to BDT first, causing DOUBLE subtraction (-28s instead of -14s)
                 let default_iono = IonoParam {
                     a0: 0.0,
                     a1: 0.0,
@@ -3857,7 +3898,7 @@ impl IFDataGen {
                 crate::satellite_param::get_satellite_param(
                     &cur_pos,
                     &position_lla,
-                    &bds_time,
+                    &self.cur_time,
                     GnssSystem::BdsSystem,
                     eph,
                     iono_param,
@@ -3931,11 +3972,7 @@ impl IFDataGen {
             if let Some(eph) = &self.gal_eph_visible[i] {
                 // Рассчитываем параметры спутника для правильного доплера
                 let position_lla = ecef_to_lla(&cur_pos);
-                // Используем GST как секунды недели
-                let utc_now = crate::gnsstime::gps_time_to_utc(self.cur_time, true);
-                let gal_time = crate::gnsstime::utc_to_galileo_time(utc_now);
-
-                // Galileo использует модель NeQuick (используем GPS параметры как fallback)
+                // C++ passes GPS time directly (no GST conversion); CalculateParam has no time adjustment for Galileo
                 let default_iono = IonoParam {
                     a0: 0.0,
                     a1: 0.0,
@@ -3956,7 +3993,7 @@ impl IFDataGen {
                 crate::satellite_param::get_satellite_param(
                     &cur_pos,
                     &position_lla,
-                    &gal_time,
+                    &self.cur_time,
                     GnssSystem::GalileoSystem,
                     eph,
                     iono_param,
@@ -4526,6 +4563,20 @@ impl IFDataGen {
             match epoch_selection.as_str() {
                 "global" => self.select_global_epochs_and_fill(&c_nav_data, utc_time),
                 _ => self.select_per_satellite_and_fill(&c_nav_data, utc_time),
+            }
+
+            // CRITICAL: Transfer ionospheric and UTC parameters from CNavData to NavData
+            if let (Some(alpha), Some(beta)) = (c_nav_data.gps_iono_alpha, c_nav_data.gps_iono_beta) {
+                self.nav_data.set_gps_iono(IonoParam {
+                    a0: alpha[0], a1: alpha[1], a2: alpha[2], a3: alpha[3],
+                    b0: beta[0], b1: beta[1], b2: beta[2], b3: beta[3],
+                    flag: 1,
+                });
+                println!("[INFO] GPS iono parameters transferred to NavData: alpha={:?}, beta={:?}", alpha, beta);
+            }
+            if let Some(utc) = c_nav_data.utc_param {
+                self.nav_data.set_gps_utc(utc);
+                println!("[INFO] GPS UTC parameters transferred to NavData: A0={}, A1={}, TLS={}", utc.A0, utc.A1, utc.TLS);
             }
 
             // КРИТИЧЕСКО: Синхронизируем внутренний NavData для GLONASS,

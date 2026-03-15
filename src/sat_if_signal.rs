@@ -238,7 +238,7 @@ pub struct SatIfSignal {
     pilot_length: i32,
     start_carrier_phase: f64,
     end_carrier_phase: f64,
-    start_code_phase: f64,
+    start_code_phase: f64, // Code phase at start of ms (Doppler model, re-anchored by update_satellite_params)
     signal_time: GnssTime,
     start_transmit_time: GnssTime,
     end_transmit_time: GnssTime,
@@ -340,13 +340,15 @@ impl SatIfSignal {
             get_travel_time(p_sat_param, self.signal_index as usize),
         );
         self.start_transmit_time = self.signal_time;
-        // Initialize continuous code phase from transmit time (mirrors C++ CurChip formula)
+
+        // Initialize code phase from transmit time
         if let Some(attr) = &self.prn_sequence.attribute {
-            self.start_code_phase = (self.start_transmit_time.MilliSeconds as f64
+            self.start_code_phase = (self.signal_time.MilliSeconds as f64
                 % attr.pilot_period as f64
-                + self.start_transmit_time.SubMilliSeconds)
+                + self.signal_time.SubMilliSeconds)
                 * attr.chip_rate as f64;
         }
+
         self.satellite_signal.get_satellite_signal(
             self.signal_time,
             &mut self.data_signal,
@@ -368,30 +370,29 @@ impl SatIfSignal {
         let signal_center_freq = self.get_signal_center_freq();
         self.if_freq = (signal_center_freq - output_center_freq) as i32;
 
-        // Carrier phase: NO re-anchor — continuous Doppler accumulation.
-        // Only Doppler (from new sat_param) changes at block boundary = smooth frequency step.
-        // Phase itself never jumps. Accumulated drift ~0.003 cycles/block is harmless.
-
-        // Re-anchor code phase from true transmit time (DLL filters the ~0.001 chip jump)
+        // Code phase: re-anchor from true transmit time (~0.001 chip jump, filtered by DLL)
+        // Carrier phase: NO re-anchor — accumulates continuously via Doppler
         let travel_time = get_travel_time(new_param, self.signal_index as usize);
         let new_transmit_time = get_transmit_time(cur_time, travel_time);
+        self.signal_time = new_transmit_time;
+        self.start_transmit_time = new_transmit_time;
+
+        // Re-anchor code phase from transmit time
         if let Some(attr) = &self.prn_sequence.attribute {
             self.start_code_phase = (new_transmit_time.MilliSeconds as f64
                 % attr.pilot_period as f64
                 + new_transmit_time.SubMilliSeconds)
                 * attr.chip_rate as f64;
         }
-        self.start_transmit_time = new_transmit_time;
-        self.signal_time = new_transmit_time;
 
-        // Refresh nav bits for the new signal_time (prevents stale bits after re-anchor)
+        // Refresh nav bits for the new signal_time
         self.satellite_signal.get_satellite_signal(
             self.signal_time,
             &mut self.data_signal,
             &mut self.pilot_signal,
         );
 
-        // Restore safety resets
+        // Safety resets
         self.last_nav_bit_index = -1;
         self.computation_cache.invalidate();
     }
@@ -940,6 +941,7 @@ impl SatIfSignal {
 
         let code_attribute = self.prn_sequence.attribute.as_ref().unwrap();
         let chip_rate = code_attribute.chip_rate as f64;
+        let _pilot_period = code_attribute.pilot_period as f64;
 
         // Doppler MUST be computed BEFORE cache update — code Doppler depends on it
         let doppler_hz = get_doppler(p_sat_param, self.signal_index as usize);
@@ -959,9 +961,12 @@ impl SatIfSignal {
             );
         }
 
-        let base_chip_offset = self.start_code_phase;
         let amp = self.computation_cache.cached_amp;
+
+        // Code phase from start_code_phase (Doppler model)
+        let base_chip_offset = self.start_code_phase;
         let code_step = self.computation_cache.cached_code_step;
+
         let nav_value = {
             let r = self.data_signal.real;
             let i = self.data_signal.imag;
@@ -979,39 +984,37 @@ impl SatIfSignal {
             }
         }
 
-        // === НЕПРЕРЫВНАЯ ФАЗА НЕСУЩЕЙ ===
+        // Carrier phase: Doppler model (f64 sin/cos)
         let doppler_cycles_per_ms = doppler_hz / 1000.0;
-        let phase_step_continuous = (doppler_cycles_per_ms + (self.if_freq as f64) / 1000.0)
-            / (self.sample_number as f64);
-        let mut cur_phase = self.start_carrier_phase - self.start_carrier_phase.floor();
-        cur_phase = 1.0 - cur_phase;
+        let n = self.sample_number as f64;
+        let phase_step = (doppler_cycles_per_ms + self.if_freq as f64 / 1000.0) / n;
+        let frac_phase = self.start_carrier_phase - self.start_carrier_phase.floor();
+        let mut cur_phase = 1.0 - frac_phase;
+
+        // Update start_carrier_phase via Doppler accumulation
         self.start_carrier_phase -= doppler_cycles_per_ms;
 
-        // Генерация сэмплов с непрерывной фазой несущей (GPS L1CA only path)
-        let two_pi = std::f64::consts::TAU;
+        // Генерация сэмплов (GPS L1CA only path)
         for i in 0..self.sample_number as usize {
             let chip_offset = base_chip_offset + (i as f64) * code_step;
             let chip_index = (chip_offset as usize) & 0x3FF; // GPS L1CA: 1023 chips, & 0x3FF OK
 
             let prn_bit = self.prn_cache.get_prn_bit(chip_index);
 
-            // Carrier modulation with CONTINUOUS phase
-            let phase = cur_phase * two_pi;
-            let cos_val = phase.cos();
-            let sin_val = phase.sin();
-            cur_phase += phase_step_continuous;
+            // Carrier phase: f64 sin/cos
+            let angle = cur_phase * std::f64::consts::TAU;
+            let (sin_val, cos_val) = angle.sin_cos();
+            cur_phase += phase_step;
 
             self.sample_array[i] = ComplexNumber {
                 real: prn_bit * nav_value * cos_val * amp,
                 imag: prn_bit * nav_value * sin_val * amp,
             };
         }
-
-        // Advance code phase by one ms (with code Doppler)
+        // Advance code phase by one ms worth of chips
         self.start_code_phase += self.computation_cache.cached_chip_rate;
-        let pilot_chips = self.pilot_length as f64;
-        if pilot_chips > 0.0 && self.start_code_phase >= pilot_chips {
-            self.start_code_phase %= pilot_chips;
+        if self.pilot_length > 0 {
+            self.start_code_phase = self.start_code_phase.rem_euclid(self.pilot_length as f64);
         }
     }
 
@@ -1251,6 +1254,7 @@ impl SatIfSignal {
 
         let code_attribute = self.prn_sequence.attribute.as_ref().unwrap();
         let chip_rate = code_attribute.chip_rate as f64;
+        let _pilot_period = code_attribute.pilot_period as f64;
 
         // Doppler MUST be computed BEFORE cache update — code Doppler depends on it
         let doppler_hz = get_doppler(p_sat_param, self.signal_index as usize);
@@ -1270,27 +1274,24 @@ impl SatIfSignal {
             );
         }
 
-        let base_chip_offset = self.start_code_phase;
         let amp = self.computation_cache.cached_amp;
+
+        // Code phase from start_code_phase (Doppler model)
+        let base_chip_offset = self.start_code_phase;
         let code_step = self.computation_cache.cached_code_step;
 
         // BUG 1 FIX: No scalar nav_value — use complex data_signal/pilot_signal directly
         // This preserves I/Q channel orientation for signals where data is in Q, pilot in I
-        // (GPS L5, BDS B1C, BDS B2A, GAL E5a, GAL E5b, etc.)
 
         // BOC flag for subchip modulation
         let is_boc = (code_attribute.attribute & PRN_ATTRIBUTE_BOC) != 0;
 
-        // === CONTINUOUS CARRIER PHASE ===
+        // Carrier phase: Doppler model (f64 sin/cos)
         let doppler_cycles_per_ms = doppler_hz / 1000.0;
-        let phase_step = (doppler_cycles_per_ms + (self.if_freq as f64) / 1000.0)
-            / (self.sample_number as f64);
-
-        // Extract fractional phase from start_carrier_phase (like C++: CurPhase = 1.0 - frac(Start))
-        let mut cur_phase = self.start_carrier_phase - self.start_carrier_phase.floor();
-        cur_phase = 1.0 - cur_phase;
-        // Advance carrier phase for next ms (carrier_phase decreases for positive Doppler)
-        self.start_carrier_phase -= doppler_cycles_per_ms;
+        let n = self.sample_number as f64;
+        let phase_step = (doppler_cycles_per_ms + self.if_freq as f64 / 1000.0) / n;
+        let frac_phase = self.start_carrier_phase - self.start_carrier_phase.floor();
+        let mut cur_phase = 1.0 - frac_phase;
 
         // GLONASS half cycle compensation for odd frequency satellites
         if p_sat_param.system == GnssSystem::GlonassSystem
@@ -1300,13 +1301,15 @@ impl SatIfSignal {
             cur_phase += 0.5;
         }
 
+        // Update start_carrier_phase via Doppler accumulation (no re-anchor)
+        self.start_carrier_phase -= doppler_cycles_per_ms;
+
         {
             let data_length = self.data_length;
             let pilot_length = self.pilot_length;
             let is_cboc = (code_attribute.attribute & PRN_ATTRIBUTE_CBOC) != 0;
             let is_qmboc = (code_attribute.attribute & PRN_ATTRIBUTE_QMBOC) != 0;
             let data_period = code_attribute.data_period;
-            let two_pi = std::f64::consts::TAU;
 
             // BUG 4 FIX: Local copies for mid-sample nav bit transitions
             // When code chip counter wraps (crosses data period boundary), update nav bits
@@ -1398,11 +1401,9 @@ impl SatIfSignal {
                     }
                 }
 
-                // BUG 1: Complex carrier rotation (preserves I/Q modulation through to output)
-                // C++ equivalent: SampleArray[i] = PrnValue * GetRotateValue(phase) * Amp
-                let phase = cur_phase * two_pi;
-                let cos_val = phase.cos();
-                let sin_val = phase.sin();
+                // Carrier phase: f64 sin/cos (Doppler model)
+                let angle = cur_phase * std::f64::consts::TAU;
+                let (sin_val, cos_val) = angle.sin_cos();
                 cur_phase += phase_step;
 
                 self.sample_array[i] = ComplexNumber {
@@ -1416,12 +1417,10 @@ impl SatIfSignal {
             self.pilot_signal = pilot_signal_local;
             self.signal_time = signal_time_local;
         }
-
-        // Advance code phase by one ms (with code Doppler)
+        // Advance code phase by one ms worth of chips
         self.start_code_phase += self.computation_cache.cached_chip_rate;
-        let pilot_chips = self.pilot_length as f64;
-        if pilot_chips > 0.0 && self.start_code_phase >= pilot_chips {
-            self.start_code_phase %= pilot_chips;
+        if self.pilot_length > 0 {
+            self.start_code_phase = self.start_code_phase.rem_euclid(self.pilot_length as f64);
         }
     }
 

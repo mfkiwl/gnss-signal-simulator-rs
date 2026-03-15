@@ -648,6 +648,46 @@ pub fn read_nav_file_limited(nav_data: &mut CNavData, filename: &str, max_per_sy
                         nav_data.set_gps_iono_beta(iono_beta);
                     }
                 }
+            } else if line.contains("TIME SYSTEM CORR") {
+                if line.starts_with("GPUT") {
+                    if let Some(utc) = parse_gput_time_system_corr(&line) {
+                        nav_data.utc_param = Some(utc);
+                        println!("[INFO] GPS UTC parameters parsed from RINEX: A0={}, A1={}, tot={}, WN={}", utc.A0, utc.A1, utc.tot, utc.WN);
+                    }
+                }
+            } else if line.contains("LEAP SECONDS") {
+                if let Some(tls) = parse_leap_seconds(&line) {
+                    nav_data.leap_seconds = Some(tls);
+                    // Update or create UTC param with leap seconds
+                    if let Some(ref mut utc) = nav_data.utc_param {
+                        utc.TLS = tls as i8;
+                    } else {
+                        nav_data.utc_param = Some(UtcParam {
+                            TLS: tls as i8,
+                            flag: 1,
+                            ..UtcParam::default()
+                        });
+                    }
+                    // Also parse WNLSF and DN if available
+                    if line.len() >= 24 {
+                        if let Ok(tlsf) = line.get(6..12).unwrap_or("").trim().parse::<i32>() {
+                            if let Some(ref mut utc) = nav_data.utc_param {
+                                utc.TLSF = tlsf as i8;
+                            }
+                        }
+                        if let Ok(wnlsf) = line.get(12..18).unwrap_or("").trim().parse::<i32>() {
+                            if let Some(ref mut utc) = nav_data.utc_param {
+                                utc.WNLSF = wnlsf as i16;
+                            }
+                        }
+                        if let Ok(dn) = line.get(18..24).unwrap_or("").trim().parse::<u32>() {
+                            if let Some(ref mut utc) = nav_data.utc_param {
+                                utc.DN = dn as u8;
+                            }
+                        }
+                    }
+                    println!("[INFO] Leap seconds parsed from RINEX: {}", tls);
+                }
             }
             continue;
         }
@@ -826,6 +866,44 @@ pub fn read_nav_file_filtered(
                                 nav_data.set_gps_iono_beta(iono_beta);
                                 println!("[INFO] GPS iono beta parameters parsed: {:?}", iono_beta);
                             }
+                        }
+                    } else if line.contains("TIME SYSTEM CORR") {
+                        if line.starts_with("GPUT") {
+                            if let Some(utc) = parse_gput_time_system_corr(&line) {
+                                nav_data.utc_param = Some(utc);
+                                println!("[INFO] GPS UTC parameters parsed from RINEX: A0={}, A1={}, tot={}, WN={}", utc.A0, utc.A1, utc.tot, utc.WN);
+                            }
+                        }
+                    } else if line.contains("LEAP SECONDS") {
+                        if let Some(tls) = parse_leap_seconds(&line) {
+                            nav_data.leap_seconds = Some(tls);
+                            if let Some(ref mut utc) = nav_data.utc_param {
+                                utc.TLS = tls as i8;
+                            } else {
+                                nav_data.utc_param = Some(UtcParam {
+                                    TLS: tls as i8,
+                                    flag: 1,
+                                    ..UtcParam::default()
+                                });
+                            }
+                            if line.len() >= 24 {
+                                if let Ok(tlsf) = line.get(6..12).unwrap_or("").trim().parse::<i32>() {
+                                    if let Some(ref mut utc) = nav_data.utc_param {
+                                        utc.TLSF = tlsf as i8;
+                                    }
+                                }
+                                if let Ok(wnlsf) = line.get(12..18).unwrap_or("").trim().parse::<i32>() {
+                                    if let Some(ref mut utc) = nav_data.utc_param {
+                                        utc.WNLSF = wnlsf as i16;
+                                    }
+                                }
+                                if let Ok(dn) = line.get(18..24).unwrap_or("").trim().parse::<u32>() {
+                                    if let Some(ref mut utc) = nav_data.utc_param {
+                                        utc.DN = dn as u8;
+                                    }
+                                }
+                            }
+                            println!("[INFO] Leap seconds parsed from RINEX: {}", tls);
                         }
                     }
                     continue;
@@ -2482,6 +2560,44 @@ fn parse_rinex3_iono_beta(line: &str) -> Option<[f64; 4]> {
     } else {
         None
     }
+}
+
+/// Парсит GPS UTC параметры из RINEX TIME SYSTEM CORR строки (GPUT)
+/// RINEX 3.04 format: A4,1X,D17.10,D16.9,I7,I5
+/// Columns: 0-3=type, 5-21=A0(17ch), 22-37=A1(16ch), 38-44=T(7ch), 45-49=W(5ch)
+fn parse_gput_time_system_corr(line: &str) -> Option<UtcParam> {
+    // Example: GPUT -9.3132257462e-10-8.881784197e-16  61440 2370          TIME SYSTEM CORR
+    if line.len() < 50 { return None; }
+    let a0_str = line.get(5..22)?.trim().replace("D", "E").replace("d", "e");
+    let a1_str = line.get(22..38)?.trim().replace("D", "E").replace("d", "e");
+    let tot_str = line.get(38..45)?.trim();
+    let wn_str = line.get(45..50)?.trim();
+
+    let a0: f64 = a0_str.parse().ok()?;
+    let a1: f64 = a1_str.parse().ok()?;
+    let tot: u8 = tot_str.parse::<u32>().ok().map(|v| (v / 4096) as u8)?; // RINEX tot in seconds, UtcParam.tot in 2^12 units
+    let wn: i16 = wn_str.parse().ok()?;
+
+    Some(UtcParam {
+        A0: a0,
+        A1: a1,
+        A2: 0.0,
+        WN: wn,
+        WNLSF: 0,
+        tot,
+        TLS: 0, // Will be set by LEAP SECONDS line
+        TLSF: 0,
+        DN: 0,
+        flag: 1,
+    })
+}
+
+/// Парсит LEAP SECONDS из RINEX заголовка
+/// Формат: "    18    18  1929     7                                    LEAP SECONDS"
+fn parse_leap_seconds(line: &str) -> Option<i32> {
+    // First field (6 chars): current leap seconds
+    let tls_str = line.get(0..6)?.trim();
+    tls_str.parse().ok()
 }
 
 /// Парсит GPS эфемериды из RINEX 3.04 формата
