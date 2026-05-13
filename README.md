@@ -1,4 +1,5 @@
 # gnss-signal-simulator-rs
+[![Boosty](https://img.shields.io/badge/Boosty-Buy_me_a_coffee-FF7143?logo=boosty&logoColor=white&style=for-the-badge)](https://boosty.to/danusha/donate)
 
 **Multi-constellation GNSS IF signal simulator written in Rust**
 
