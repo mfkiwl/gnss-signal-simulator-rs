@@ -539,7 +539,7 @@ impl CNavBit {
                         data[4] |= self.utc_message[0];
                         data[5] = self.utc_message[1];
                         data[6] = self.utc_message[2];
-                        data[7] = self.utc_message[2]; // copy UTC fields
+                        data[7] = self.utc_message[3]; // word 4: WNLSF-LSB / DN / TLSF
                         data[8] = 0;
                     }
                     37 => {

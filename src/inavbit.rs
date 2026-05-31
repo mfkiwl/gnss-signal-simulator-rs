@@ -765,12 +765,13 @@ impl INavBit {
         ephdata[15] |= COMPOSE_BITS!(int_value, 2, 6);
 
         // word 5 - РАСШИРЕННЫЕ INTEGRITY ДАННЫЕ
-        ephdata[16] &= 0x03ffffff;
-        ephdata[16] = 0x14000000; // put Type=5 to 6MSB
+        // keep ionosphere (low 26 bits, written by set_iono_utc), set Type=5 in the 6 MSB
+        ephdata[16] = (ephdata[16] & 0x03ffffff) | 0x14000000;
 
         // РЕАЛЬНЫЕ TGD ПАРАМЕТРЫ: BGD E5a,E1 (10 bits)
+        // keep ionosphere bits (17..31) written by set_iono_utc; only (re)write the BGD field
         let int_value = Self::unscale_int(ephemeris.tgd, -32);
-        ephdata[17] = COMPOSE_BITS!(int_value, 7, 10);
+        ephdata[17] = (ephdata[17] & 0xfffe0000) | COMPOSE_BITS!(int_value, 7, 10);
 
         // РЕАЛЬНЫЕ TGD ПАРАМЕТРЫ: BGD E5b,E1 (10 bits)
         let int_value = Self::unscale_int(ephemeris.tgd2, -32);

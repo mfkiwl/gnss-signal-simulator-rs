@@ -127,3 +127,30 @@ fn missing_nav_file_leaves_navigation_data_empty() {
     assert!(nav_data.glonass_ephemeris.is_empty());
     assert!(nav_data.leap_seconds.is_none());
 }
+
+/// Regression for GitHub issue #1 ("Incorrect week for E1 signal") / audit H7.
+///
+/// Galileo broadcast-orbit lines are written by some RINEX producers with the
+/// trailing whitespace trimmed, so a line whose last field ends exactly on a
+/// 19-char boundary has length 61 (orbit-5) or 80. The fixed-width field guards
+/// used a strict `>` (`if line.len() > 61`), which dropped the GST week field
+/// (`data[21]`) for those trimmed lines, leaving `eph.week == 0`. The receiver
+/// then saw the GPS week jump between the correct value and a rollover default.
+#[test]
+fn galileo_week_survives_trimmed_orbit_lines() {
+    let nav_data = load_limited(MERGED_RINEX, 50);
+    assert!(
+        !nav_data.galileo_ephemeris.is_empty(),
+        "expected Galileo ephemerides from the merged fixture"
+    );
+    // The fixture is 2025-06-04 → GST/GPS week 2369. Before the fix the trimmed
+    // orbit-5 lines yielded week 0 (or a 1024 rollover default).
+    for eph in &nav_data.galileo_ephemeris {
+        assert!(
+            eph.week > 1024,
+            "Galileo SV{} parsed week={} (GST week field dropped from a trimmed line)",
+            eph.svid,
+            eph.week
+        );
+    }
+}

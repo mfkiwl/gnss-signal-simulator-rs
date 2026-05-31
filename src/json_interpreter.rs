@@ -3199,14 +3199,14 @@ fn read_contents_time(line: &str, data: &mut [f64]) -> Option<u8> {
 
     // ШАГ 3: Парсим clock параметры с правильных позиций (каждое поле 19 символов)
     // af0: позиции 24-42 (19 символов) - clock bias в секундах
-    if line.len() > 42 {
+    if line.len() >= 42 {
         let af0_str = &line[23..42];
         data[0] = af0_str.trim().parse().unwrap_or(0.0);
         // println!("[RINEX-PARSE] 🕐 af0 (24-42): '{}' → {:.6e}", af0_str.trim(), data[0]);
     }
 
     // af1: позиции 43-61 (19 символов) - clock drift в с/с
-    if line.len() > 61 {
+    if line.len() >= 61 {
         let af1_str = &line[42..61];
         data[1] = af1_str.trim().parse().unwrap_or(0.0);
         // println!("[RINEX-PARSE] 🕐 af1 (43-61): '{}' → {:.6e}", af1_str.trim(), data[1]);
@@ -3274,7 +3274,7 @@ fn read_contents_data(line: &str, data: &mut [f64]) {
     // ШАГ 2: Парсим 4 орбитальных параметра с ПРАВИЛЬНЫХ позиций (каждое поле 19 символов)
 
     // Параметр 1: позиции 5-23 (19 символов после отступа 4 пробела)
-    if line.len() > 23 {
+    if line.len() >= 23 {
         let param1_str = &line[4..23];
         data[0] = param1_str.trim().parse().unwrap_or(0.0);
         // println!("[RINEX-DATA] 🔢 Param1 (5-23): '{}' → {:.6e}", param1_str.trim(), data[0]);
@@ -3286,14 +3286,14 @@ fn read_contents_data(line: &str, data: &mut [f64]) {
     }
 
     // Параметр 2: позиции 24-42 (19 символов)
-    if line.len() > 42 {
+    if line.len() >= 42 {
         let param2_str = &line[23..42];
         data[1] = param2_str.trim().parse().unwrap_or(0.0);
         // println!("[RINEX-DATA] 🔢 Param2 (24-42): '{}' → {:.6e}", param2_str.trim(), data[1]);
     }
 
     // Параметр 3: позиции 43-61 (19 символов)
-    if line.len() > 61 {
+    if line.len() >= 61 {
         let param3_str = &line[42..61];
         data[2] = param3_str.trim().parse().unwrap_or(0.0);
         // println!("[RINEX-DATA] 🔢 Param3 (43-61): '{}' → {:.6e}", param3_str.trim(), data[2]);

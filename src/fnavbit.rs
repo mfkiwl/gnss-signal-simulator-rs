@@ -91,14 +91,16 @@ impl FNavBit {
         }
 
         // FEC (Forward Error Correction) Rate 1/2 Convolutional Encoder for F/NAV
-        // G1 = 1110101b (0x75), G2 = 1011011b (0x5B)
+        // Galileo K=7, r=1/2: G1 = 171 oct, G2 = 133 oct (G2 output inverted).
+        // conv_state shifts new bit into LSB (s0=bit0 .. s6=bit6), so the tap masks are
+        // G1 = {s0,s1,s2,s3,s6} = 0x4F, G2 = {s0,s2,s3,s5,s6} = 0x6D (см. inavbit.rs convolution_encode).
         let mut encoded_symbols = [0i32; 544]; // 272 * 2 = 544 after convolutional encoding
         let mut conv_state = 0u8;
 
         for i in 0..272 {
             conv_state = (conv_state << 1) | (uncoded_bits[i] as u8);
-            encoded_symbols[i * 2] = count1(conv_state & 0x75);
-            encoded_symbols[i * 2 + 1] = count1(conv_state & 0x5B);
+            encoded_symbols[i * 2] = count1(conv_state & 0x4F);
+            encoded_symbols[i * 2 + 1] = count1(conv_state & 0x6D) ^ 1;
         }
 
         // Add 12-bit sync pattern

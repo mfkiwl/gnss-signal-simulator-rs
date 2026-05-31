@@ -360,6 +360,8 @@ impl SatIfSignal {
                 match self.signal_index as usize {
                     SIGNAL_INDEX_G1 => FREQ_GLO_G1 + freq_id as f64 * 562500.0,
                     SIGNAL_INDEX_G2 => FREQ_GLO_G2 + freq_id as f64 * 437500.0,
+                    // G3 (L3OC) is CDMA, not FDMA — no per-satellite frequency offset.
+                    SIGNAL_INDEX_G3 => FREQ_GLO_G3,
                     _ => 0.0,
                 }
             }

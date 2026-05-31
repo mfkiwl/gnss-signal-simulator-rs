@@ -2289,7 +2289,10 @@ impl IFDataGen {
 
                 // Update orbital params periodically (Kepler propagation is expensive)
                 let global_ms = block_start_ms + ms_offset;
-                if ms_offset == 0 || global_ms % PARAM_UPDATE_INTERVAL_MS == 0 {
+                // `.max(1)` keeps this a runtime divisor (avoids the modulo-by-1 lint while the
+                // interval is hardcoded to 1) and stays correct if the interval is ever bumped.
+                let update_interval = PARAM_UPDATE_INTERVAL_MS.max(1);
+                if ms_offset == 0 || global_ms % update_interval == 0 {
                     // C++ UpdateSatParamList: GetPowerControlList(1) + CalculateParam + UpdateCN0
                     let (power_slice, power_count) = self.power_control.get_power_control_list(1);
                     let power_list_owned: Vec<SignalPower> = power_slice.to_vec();
