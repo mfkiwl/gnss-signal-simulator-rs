@@ -499,8 +499,10 @@ impl SatIfSignal {
         let frac_phase = self.start_carrier_phase - self.start_carrier_phase.floor();
         let mut cur_phase = 1.0 - frac_phase;
 
-        // Update start_carrier_phase via Doppler accumulation
-        self.start_carrier_phase -= doppler_cycles_per_ms;
+        // Advance the per-ms carrier anchor by the FULL phase (Doppler + IF). Subtracting
+        // only the Doppler part dropped frac(if_freq/1000) cycles every ms, a deterministic
+        // phase step at each boundary (0.5 cycle for a 500.5 kHz IF) — audit H1.
+        self.start_carrier_phase -= doppler_cycles_per_ms + self.if_freq as f64 / 1000.0;
 
         // Генерация сэмплов (GPS L1CA only path)
         for i in 0..self.sample_number as usize {
@@ -659,16 +661,11 @@ impl SatIfSignal {
         let frac_phase = self.start_carrier_phase - self.start_carrier_phase.floor();
         let mut cur_phase = 1.0 - frac_phase;
 
-        // GLONASS half cycle compensation for odd frequency satellites
-        if p_sat_param.system == GnssSystem::GlonassSystem
-            && (p_sat_param.FreqID & 1) != 0
-            && (cur_time.MilliSeconds & 1) != 0
-        {
-            cur_phase += 0.5;
-        }
-
-        // Update start_carrier_phase via Doppler accumulation (no re-anchor)
-        self.start_carrier_phase -= doppler_cycles_per_ms;
+        // Advance the per-ms carrier anchor by the FULL phase (Doppler + IF). The previous
+        // code subtracted only the Doppler part, dropping frac(if_freq/1000) cycles every ms
+        // (audit H1). With the IF term folded in, the phase is continuous across ms boundaries,
+        // so the old GLONASS odd-k half-cycle work-around is no longer needed.
+        self.start_carrier_phase -= doppler_cycles_per_ms + self.if_freq as f64 / 1000.0;
 
         {
             let data_length = self.data_length;
