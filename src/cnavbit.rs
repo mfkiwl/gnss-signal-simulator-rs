@@ -192,20 +192,14 @@ impl CNavBit {
             return 0;
         }
         let svid_idx = (svid - 1) as usize;
-        // Destructure the fields to avoid multiple mutable borrows of self
-        let eph_message_ptr = &mut self.eph_message[svid_idx] as *mut [[u32; 9]; 2];
-        let clock_message_ptr = &mut self.clock_message[svid_idx] as *mut [u32; 4];
-        let delay_message_ptr = &mut self.delay_message[svid_idx] as *mut [u32; 3];
-
-        // SAFETY: We only use these pointers within this function and do not alias them elsewhere.
-        unsafe {
-            self.compose_eph_words(
-                eph,
-                &mut *eph_message_ptr,
-                &mut *clock_message_ptr,
-                &mut *delay_message_ptr,
-            );
-        }
+        // compose_eph_words is an associated fn, so the three disjoint message arrays can
+        // be borrowed directly — no unsafe pointer aliasing needed.
+        Self::compose_eph_words(
+            eph,
+            &mut self.eph_message[svid_idx],
+            &mut self.clock_message[svid_idx],
+            &mut self.delay_message[svid_idx],
+        );
         svid
     }
 
@@ -274,8 +268,10 @@ impl CNavBit {
         0
     }
 
-    fn compose_eph_words(
-        &mut self,
+    /// Composes the CNAV MT10 + MT11 ephemeris words, the clock (MT30) and the delay
+    /// (TGD/ISC) words for one ephemeris. The CNAV message payload is identical on L2C
+    /// and L5, so L5CNavBit reuses this. Pure (no `self` state) — associated fn.
+    pub fn compose_eph_words(
         ephemeris: &GpsEphemeris,
         eph_data: &mut [[u32; 9]; 2],
         clock_data: &mut [u32; 4],
