@@ -250,9 +250,20 @@ fn gps_cnav_and_l5cnav_form_frames() {
     let rc = l5.get_frame_data(t(6_000), 4, 1, &mut bits_l5);
     assert_eq!(rc, 0);
     assert_nav_bits("L5 CNAV frame", &bits_l5, 0.05);
-    assert!(
-        hamming_distance(&bits_cnav, &bits_l5) > 200,
-        "L2C CNAV and L5 CNAV streams should not collapse to the same data"
+    // L5 CNAV reuses the L2C message + FEC (CNavBit with param=1 for the 6 s cadence), so it
+    // must equal CNavBit driven with the L5 param for the same satellite. The old ">200
+    // Hamming distance from L2C" check assumed L5 was a separate (broken) encoder — audit
+    // H9/H10/H11.
+    let mut ref_l5 = CNavBit::new();
+    assert_ne!(ref_l5.set_ephemeris(4, &eph), 0);
+    ref_l5.set_almanac(&alm);
+    ref_l5.set_iono_utc(&iono, &utc);
+    let mut bits_ref = vec![0i32; 600];
+    assert_eq!(ref_l5.get_frame_data(t(6_000), 4, 1, &mut bits_ref), 0);
+    assert_eq!(
+        &bits_l5[..],
+        &bits_ref[..],
+        "L5 CNAV must equal CNavBit param=1 output"
     );
 }
 

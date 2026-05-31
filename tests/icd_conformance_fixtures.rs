@@ -306,21 +306,20 @@ fn gps_nav_headers_have_bit_exact_icd_sync_fields() {
     let mut l5_bits = [0i32; 600];
     assert_eq!(l5.get_frame_data(t(0), 4, 1, &mut l5_bits), 0);
     assert_binary("GPS L5 CNAV encoded frame", &l5_bits);
+    // L5 CNAV carries the same message payload and FEC as L2C, so it must equal CNavBit's
+    // param=1 output. (The previous hard-coded prefix/suffix were captured from the old,
+    // broken standalone L5 encoder — audit H9/H10/H11. Message-content correctness is now
+    // verified independently by nav_decode's CNAV round-trip test.)
+    let mut ref_l5 = CNavBit::new();
+    assert_ne!(ref_l5.set_ephemeris(4, &sample_gps_eph(4)), 0);
+    ref_l5.set_almanac(&alm_arr);
+    ref_l5.set_iono_utc(&iono, &utc);
+    let mut ref_bits = vec![0i32; 600];
+    assert_eq!(ref_l5.get_frame_data(t(0), 4, 1, &mut ref_bits), 0);
     assert_eq!(
-        &l5_bits[..48],
-        &[
-            1, 1, 1, 0, 0, 0, 0, 0, 0, 1, 0, 1, 0, 0, 1, 1, 0, 1, 0, 0, 1, 0, 0, 0, 1, 1, 1, 1, 0,
-            1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 0, 0, 0,
-        ],
-        "GPS L5 CNAV convolution/interleaver prefix"
-    );
-    assert_eq!(
-        &l5_bits[552..600],
-        &[
-            1, 1, 1, 1, 0, 1, 0, 0, 1, 0, 0, 0, 1, 1, 0, 0, 1, 1, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 1,
-            0, 1, 0, 1, 0, 0, 0, 1, 0, 1, 0, 1, 0, 1, 0, 0, 1, 0, 0,
-        ],
-        "GPS L5 CNAV encoded CRC/FEC suffix"
+        &l5_bits[..],
+        &ref_bits[..],
+        "GPS L5 CNAV must match CNavBit param=1 output"
     );
 
     let mut cnav2 = CNav2Bit::new();
