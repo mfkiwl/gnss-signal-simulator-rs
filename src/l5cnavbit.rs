@@ -389,16 +389,16 @@ impl L5CNavBit {
                                       // toc (11 bits, 39-49)
         let temp_uval_ll = (ephemeris.toc as f64 / 300.0) as u64;
         mt30_buf[1] |= ((temp_uval_ll & 0x7FF) << 10) as u32;
-        // af0 (26 bits, 50-75)
-        let temp_val_ll = (ephemeris.af0 * 2.0_f64.powi(34)).round() as i64;
+        // af0 (26 bits, 50-75) — IS-GPS-705 scale 2^-35 (как в cnavbit.rs)
+        let temp_val_ll = (ephemeris.af0 * 2.0_f64.powi(35)).round() as i64;
         mt30_buf[1] |= (((temp_val_ll as u64) >> 16) & 0x3FF) as u32;
         mt30_buf[2] = ((temp_val_ll as u64) << 16) as u32;
-        // af1 (20 bits, 76-95)
-        let temp_val_ll = (ephemeris.af1 * 2.0_f64.powi(46)).round() as i64;
+        // af1 (20 bits, 76-95) — scale 2^-48
+        let temp_val_ll = (ephemeris.af1 * 2.0_f64.powi(48)).round() as i64;
         mt30_buf[2] |= (((temp_val_ll as u64) >> 4) & 0xFFFF) as u32;
         mt30_buf[3] = ((temp_val_ll as u64) << 28) as u32;
-        // af2 (10 bits, 96-105)
-        let temp_val_ll = (ephemeris.af2 * 2.0_f64.powi(59)).round() as i64;
+        // af2 (10 bits, 96-105) — scale 2^-60
+        let temp_val_ll = (ephemeris.af2 * 2.0_f64.powi(60)).round() as i64;
         mt30_buf[3] |= (((temp_val_ll as u64) & 0x3FF) << 18) as u32;
 
         // The original code splits this into ClockData and DelayData.

@@ -116,6 +116,27 @@ fn merged_rinex_header_with_many_bds_iono_lines_does_not_block_records() {
     assert_eq!(nav_data.leap_seconds, Some(18));
 }
 
+/// Regression for audit H8: BeiDou broadcast-orbit 6 carries TGD1 (data[25]) and
+/// TGD2 (data[26]). The shared GPS parser used to read data[26] as IODC, truncating
+/// it to 0 via the f64→u16 cast and never assigning tgd2, so the B2I group delay was
+/// silently lost (every BeiDou record had tgd2 == 0).
+#[test]
+fn beidou_group_delays_are_parsed() {
+    let nav_data = load_limited(MIXED_RINEX, 10);
+    assert!(
+        !nav_data.beidou_ephemeris.is_empty(),
+        "expected BeiDou ephemerides from the mixed fixture"
+    );
+    let any_tgd2 = nav_data.beidou_ephemeris.iter().any(|e| e.tgd2 != 0.0);
+    assert!(
+        any_tgd2,
+        "all BeiDou TGD2 are zero — the B2I group delay (data[26]) was dropped"
+    );
+    for e in &nav_data.beidou_ephemeris {
+        assert!(e.tgd2.is_finite(), "BeiDou SV{} has non-finite TGD2", e.svid);
+    }
+}
+
 #[test]
 fn missing_nav_file_leaves_navigation_data_empty() {
     let mut nav_data = CNavData::new();

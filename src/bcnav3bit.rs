@@ -286,20 +286,25 @@ impl BCNav3Bit {
             return 0;
         }
 
-        // GF(6) multiplication tables
-        const E2V_TABLE: [i32; 64] = [
-            0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23,
-            24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45,
-            46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63,
+        // GF(2^6) tables — identical to the verified BCNavBit encoder (bcnavbit.rs).
+        // E2V is the antilog (powers of the primitive element), doubled to 128 entries so
+        // V2E[a]+V2E[b] (≤126) indexes directly without a modulo. The previous tables were
+        // an identity antilog + a non-bijective log, which produced wrong LDPC parity (H13).
+        const E2V_TABLE: [i32; 128] = [
+            1, 2, 4, 8, 16, 32, 3, 6, 12, 24, 48, 35, 5, 10, 20, 40, 19, 38, 15, 30, 60, 59, 53, 41,
+            17, 34, 7, 14, 28, 56, 51, 37, 9, 18, 36, 11, 22, 44, 27, 54, 47, 29, 58, 55, 45, 25, 50,
+            39, 13, 26, 52, 43, 21, 42, 23, 46, 31, 62, 63, 61, 57, 49, 33, 1, 2, 4, 8, 16, 32, 3, 6,
+            12, 24, 48, 35, 5, 10, 20, 40, 19, 38, 15, 30, 60, 59, 53, 41, 17, 34, 7, 14, 28, 56, 51,
+            37, 9, 18, 36, 11, 22, 44, 27, 54, 47, 29, 58, 55, 45, 25, 50, 39, 13, 26, 52, 43, 21, 42,
+            23, 46, 31, 62, 63, 61, 57, 49, 33, 1, 2,
         ];
         const V2E_TABLE: [i32; 64] = [
-            0, 0, 1, 5, 2, 10, 6, 14, 3, 15, 11, 20, 7, 21, 15, 25, 4, 26, 16, 31, 12, 32, 21, 36,
-            8, 37, 22, 41, 16, 42, 26, 46, 5, 47, 27, 52, 17, 53, 33, 57, 13, 58, 33, 62, 22, 63,
-            37, 4, 9, 5, 38, 10, 23, 11, 42, 15, 17, 16, 43, 20, 27, 21, 47, 25,
+            0, 1, 2, 7, 3, 13, 8, 27, 4, 33, 14, 36, 9, 49, 28, 19, 5, 25, 34, 17, 15, 53, 37, 55,
+            10, 46, 50, 39, 29, 42, 20, 57, 6, 63, 26, 12, 35, 32, 18, 48, 16, 24, 54, 52, 38, 45,
+            56, 41, 11, 62, 47, 31, 51, 23, 40, 44, 30, 61, 43, 22, 21, 60, 58, 59,
         ];
 
-        let e = (V2E_TABLE[a as usize] + V2E_TABLE[b as usize]) % 63;
-        E2V_TABLE[e as usize]
+        E2V_TABLE[(V2E_TABLE[a as usize] + V2E_TABLE[b as usize]) as usize]
     }
 
     // Get frame data for B-CNAV3
@@ -534,5 +539,46 @@ impl BCNav3Bit {
         }
 
         true
+    }
+}
+
+#[cfg(test)]
+mod gf6_tests {
+    use super::BCNav3Bit;
+    use crate::bcnavbit::BCNavBit;
+
+    /// Audit H13: B-CNAV3 LDPC uses GF(2^6) multiplication, which must be identical to
+    /// the verified BCNavBit (B-CNAV1) encoder. Cross-check every operand pair.
+    #[test]
+    fn gf6_int_mul_matches_verified_field() {
+        let b3 = BCNav3Bit::new();
+        let b1 = BCNavBit::new();
+        for a in 0..64 {
+            for b in 0..64 {
+                assert_eq!(
+                    b3.gf6_int_mul(a, b),
+                    b1.gf6_int_mul(a, b),
+                    "gf6_int_mul mismatch at a={a}, b={b}"
+                );
+            }
+        }
+    }
+
+    /// A genuine field has a multiplicative identity and is closed/commutative on the
+    /// 63 non-zero elements (the broken identity-antilog table failed all of these).
+    #[test]
+    fn gf6_int_mul_is_a_field() {
+        let b3 = BCNav3Bit::new();
+        // multiplicative identity exists
+        let id = (1..64)
+            .find(|&e| (1..64).all(|a| b3.gf6_int_mul(a, e) == a))
+            .expect("GF(2^6) must have a multiplicative identity");
+        for a in 1..64 {
+            assert_eq!(b3.gf6_int_mul(a, id), a);
+            for b in 1..64 {
+                assert_eq!(b3.gf6_int_mul(a, b), b3.gf6_int_mul(b, a)); // commutative
+                assert_ne!(b3.gf6_int_mul(a, b), 0); // closed on non-zero
+            }
+        }
     }
 }

@@ -702,7 +702,7 @@ pub fn read_nav_file_limited(nav_data: &mut CNavData, filename: &str, max_per_sy
         match system_char {
             'G' | ' ' => {
                 if gps_count < max_per_system {
-                    if let Some(eph) = parse_gps_ephemeris(&line, &mut lines) {
+                    if let Some(eph) = parse_gps_ephemeris(&line, &mut lines, false) {
                         nav_data.add_gps_ephemeris(eph);
                         gps_count += 1;
                     }
@@ -925,7 +925,7 @@ pub fn read_nav_file_filtered(
                         // *** КРИТИЧЕСКИЙ БЛОК: GPS ЭФЕМЕРИДЫ ПАРСИНГ ***
                         // GPS эфемериды (только если GPS включена в enabled_systems)
                         // Формат строки: "G## YYYY MM DD HH MM SS ..." где ## - SVID спутника
-                        if let Some(eph) = parse_gps_ephemeris(&line, &mut lines) {
+                        if let Some(eph) = parse_gps_ephemeris(&line, &mut lines, false) {
                             gps_parsed += 1;
                             // Parsed GPS ephemeris
 
@@ -2614,7 +2614,7 @@ fn parse_leap_seconds(line: &str) -> Option<i32> {
 /// # Возвращает
 /// - `Some(GpsEphemeris)` при успешном парсинге
 /// - `None` при ошибке или неполных данных
-fn parse_gps_ephemeris<I>(line: &str, lines: &mut I) -> Option<GpsEphemeris>
+fn parse_gps_ephemeris<I>(line: &str, lines: &mut I, is_beidou: bool) -> Option<GpsEphemeris>
 where
     I: Iterator<Item = Result<String, std::io::Error>>,
 {
@@ -2668,7 +2668,17 @@ where
 
     // GPS RINEX: data[3]=IODE, data[26]=IODC
     eph.iode = data[3] as u8;
-    if data.len() > 26 {
+    if is_beidou {
+        // BeiDou orbit-6 = [SV accuracy, SatH1, TGD1, TGD2] and orbit-7 field 2 = AODC,
+        // so the shared GPS layout would otherwise read TGD2 (data[26]) as IODC — losing
+        // the B2I group delay (TGD2) and corrupting IODC via the f64→u16 cast.
+        eph.tgd2 = if data.len() > 26 { data[26] } else { 0.0 }; // BGD/TGD2 (B2I)
+        eph.iodc = if data.len() > 28 {
+            data[28] as u16 // AODC (Age of Data, Clock)
+        } else {
+            eph.iode as u16
+        };
+    } else if data.len() > 26 {
         eph.iodc = data[26] as u16;
     } else {
         eph.iodc = eph.iode as u16;
@@ -2947,7 +2957,7 @@ where
     I: Iterator<Item = Result<String, std::io::Error>>,
 {
     // Парсим базовую структуру GPS для совместимости с RINEX форматом
-    let gps_eph = parse_gps_ephemeris(line, lines)?;
+    let gps_eph = parse_gps_ephemeris(line, lines, true)?;
 
     // Преобразуем GpsEphemeris в BeiDouEphemeris с добавлением BeiDou-специфических полей
     let mut bds_eph = BeiDouEphemeris {
