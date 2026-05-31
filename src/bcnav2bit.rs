@@ -319,38 +319,42 @@ impl BCNav2Bit {
     }
 
     fn append_word(data: &mut [u32], start_bit: usize, source: &[u32], bit_count: usize) {
-        // Word appending logic - simplified implementation
-        // This would need proper bit manipulation according to the protocol
-        let word_index = start_bit / 24;
-        let bit_offset = start_bit % 24;
+        // Ported from the verified BCNavBit::append_word (bcnavbit.rs). B-CNAV words hold
+        // 24-bit payloads, so each source word's significant bits are its low 24. The old
+        // version read from bit 32 (dropping the low 8 bits of every chunk) and only advanced
+        // the source index on full-24-bit chunks, desyncing across word boundaries (H14).
+        let mut remain_bits: i32 = 24; // bits left in the current source word
+        // callers pass an absolute bit position; split into a dest-word index + in-word offset
+        let mut dest_idx = start_bit / 24;
+        let mut start_bit = (start_bit % 24) as i32; // bit offset inside the current dest word
+        let mut src_idx = 0usize;
+        let mut length = bit_count as i32;
 
-        // For now, just copy some data to avoid unused parameter warnings
-        if word_index < data.len() && !source.is_empty() {
-            // Simplified bit appending - actual implementation would need proper bit packing
-            let mut remaining_bits = bit_count;
-            let mut src_index = 0;
-            let mut current_word = word_index;
-            let mut current_bit = bit_offset;
-
-            while remaining_bits > 0 && src_index < source.len() && current_word < data.len() {
-                let bits_to_copy = remaining_bits.min(24 - current_bit);
-                let mask = (1u32 << bits_to_copy) - 1;
-                let value = (source[src_index] >> (32 - bits_to_copy)) & mask;
-
-                data[current_word] |= value << (24 - current_bit - bits_to_copy);
-
-                remaining_bits -= bits_to_copy;
-                current_bit += bits_to_copy;
-
-                if current_bit >= 24 {
-                    current_word += 1;
-                    current_bit = 0;
-                }
-
-                if bits_to_copy >= 24 {
-                    src_index += 1;
-                }
+        while length > 0 && dest_idx < data.len() && src_idx < source.len() {
+            let mut fill_bits = 24 - start_bit;
+            if fill_bits > remain_bits {
+                fill_bits = remain_bits;
             }
+            if fill_bits > length {
+                fill_bits = length;
+            }
+            data[dest_idx] = if start_bit == 0 { 0 } else { data[dest_idx] }
+                | COMPOSE_BITS!(
+                    source[src_idx] >> (remain_bits - fill_bits),
+                    (24 - start_bit - fill_bits) as u32,
+                    fill_bits as u32
+                );
+            start_bit += fill_bits;
+            if start_bit >= 24 {
+                start_bit = 0;
+                dest_idx += 1;
+            }
+            remain_bits -= fill_bits;
+            if remain_bits <= 0 {
+                remain_bits = 24;
+                src_idx += 1;
+            }
+            length -= fill_bits;
         }
     }
 
@@ -424,3 +428,26 @@ impl Default for BCNav2Bit {
     }
 }
 // (moved module-level allow to file head)
+
+#[cfg(test)]
+mod append_word_tests {
+    use super::BCNav2Bit;
+    use crate::bcnavbit::BCNavBit;
+
+    /// Audit H14: B-CNAV2 bit packing must match the verified BCNavBit::append_word for
+    /// every start offset / length, across source-word boundaries (24-bit payload words).
+    #[test]
+    fn append_word_matches_verified_reference() {
+        let reference = BCNavBit::new();
+        let source = [0x00AB_CDEFu32, 0x0012_3456, 0x00FE_DCBA, 0x0000_FFFF];
+        for &start in &[0usize, 1, 5, 12, 23] {
+            for &len in &[1usize, 8, 17, 24, 30, 48, 60] {
+                let mut got = [0u32; 8];
+                let mut want = [0u32; 8];
+                BCNav2Bit::append_word(&mut got, start, &source, len);
+                reference.append_word(&mut want, start as i32, &source, len as i32);
+                assert_eq!(got, want, "append_word mismatch at start={start}, len={len}");
+            }
+        }
+    }
+}
