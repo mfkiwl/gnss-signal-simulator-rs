@@ -230,17 +230,20 @@ impl GnssTimeConverter {
         let week = (total_seconds / 604800) as i32; // Номер GPS недели
         let seconds_in_week = total_seconds - (week as u32) * 604800; // Секунды с начала недели
 
-        // Преобразование в миллисекунды с сохранением дробной части
-        // MilliSeconds содержит полные миллисекунды недели
-        // SubMilliSeconds содержит дробную часть секунды (< 1.0)
-        let milli_seconds =
-            (seconds_in_week * 1000 + ((utc_time.Second % 1.0) * 1000.0) as u32) as i32;
+        // Преобразование в миллисекунды с сохранением дробной части.
+        // MilliSeconds — целые миллисекунды недели; SubMilliSeconds — остаток в долях
+        // ОДНОЙ миллисекунды [0,1). Раньше SubMilliSeconds = Second%1.0 хранил долю
+        // СЕКУНДЫ, дублируя под-секундную часть, уже учтённую в MilliSeconds (двойной
+        // счёт ~0.5 мс ⇒ ~150 км ошибки псевдодальности при дробной стартовой секунде).
+        let frac_ms = (utc_time.Second % 1.0) * 1000.0;
+        let frac_ms_int = frac_ms as u32;
+        let milli_seconds = (seconds_in_week * 1000 + frac_ms_int) as i32;
 
         // Финальная GPS временная структура
         GnssTime {
-            Week: week,                             // Номер недели от GPS эпохи
-            MilliSeconds: milli_seconds,            // Миллисекунды с начала недели
-            SubMilliSeconds: utc_time.Second % 1.0, // Дробная часть секунды [0.0, 1.0)
+            Week: week,                                    // Номер недели от GPS эпохи
+            MilliSeconds: milli_seconds,                   // Миллисекунды с начала недели
+            SubMilliSeconds: frac_ms - frac_ms_int as f64, // Остаток в долях мс [0.0, 1.0)
         }
     }
 

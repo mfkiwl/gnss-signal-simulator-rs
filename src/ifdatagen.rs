@@ -4777,21 +4777,25 @@ impl IFDataGen {
 
     fn glonass_sat_pos_speed_eph(
         &self,
-        _transmit_time: f64,
+        transmit_time: f64,
         eph: &GlonassEphemeris,
     ) -> Option<KinematicInfo> {
-        // Simplified GLONASS position calculation
-        // In a real implementation, this would use Runge-Kutta integration
-        // For now, use a simplified approach based on the orbital elements
-
-        Some(KinematicInfo {
-            x: eph.x * 1000.0, // Convert from km to m
-            y: eph.y * 1000.0,
-            z: eph.z * 1000.0,
-            vx: eph.vx * 1000.0,
-            vy: eph.vy * 1000.0,
-            vz: eph.vz * 1000.0,
-        })
+        // Propagate the orbit to transmit_time with the SAME PZ-90 RK4 integrator
+        // used by the generation path, so the visible set and the generated set
+        // agree. eph.{x,y,z,v} are already in SI metres (parser * 1e3); the old
+        // stub ignored transmit_time and re-scaled by ×1000 (double bug).
+        let mut eph_copy = *eph;
+        let mut pos_vel = KinematicInfo::default();
+        if crate::coordinate::glonass_sat_pos_speed_eph(
+            transmit_time,
+            &mut eph_copy,
+            &mut pos_vel,
+            None,
+        ) {
+            Some(pos_vel)
+        } else {
+            None
+        }
     }
 
     // Простой парсер для извлечения времени траектории из JSON

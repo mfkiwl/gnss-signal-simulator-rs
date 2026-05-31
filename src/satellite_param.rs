@@ -845,17 +845,19 @@ fn glonass_sat_pos_speed_eph(
         delta_t += 86400.0;
     }
 
-    // Начальные условия из эфемерид ГЛОНАСС (в системе ПЗ-90)
+    // Начальные условия из эфемерид ГЛОНАСС (в системе ПЗ-90).
+    // eph.{x,y,z,v,a} уже в СИ (метры, м/с, м/с²) — парсер конвертирует км→м (* 1e3).
+    // PZ90_GM / PZ90_AE тоже в метрах, поэтому НИКАКОГО доп. масштабирования (баг ×1000).
     let mut state = [
-        eph.x * 1000.0,
-        eph.y * 1000.0,
-        eph.z * 1000.0, // позиция в метрах
-        eph.vx * 1000.0,
-        eph.vy * 1000.0,
-        eph.vz * 1000.0, // скорость в м/с
-        eph.ax * 1000.0,
-        eph.ay * 1000.0,
-        eph.az * 1000.0, // ускорение в м/с²
+        eph.x,
+        eph.y,
+        eph.z, // позиция, м
+        eph.vx,
+        eph.vy,
+        eph.vz, // скорость, м/с
+        eph.ax,
+        eph.ay,
+        eph.az, // ускорение, м/с²
     ];
 
     // Интегрирование методом Рунге-Кутта с фиксированным шагом
@@ -876,19 +878,19 @@ fn glonass_sat_pos_speed_eph(
         glonass_runge_kutta(remainder_time, &mut state);
     }
 
-    // Заполнение результирующих значений (переводим обратно в км и км/с)
-    pos_vel.x = state[0] / 1000.0;
-    pos_vel.y = state[1] / 1000.0;
-    pos_vel.z = state[2] / 1000.0;
-    pos_vel.vx = state[3] / 1000.0;
-    pos_vel.vy = state[4] / 1000.0;
-    pos_vel.vz = state[5] / 1000.0;
+    // Результат в СИ (метры, м/с) — как у coordinate::glonass_sat_pos_speed_eph и потребителей.
+    pos_vel.x = state[0];
+    pos_vel.y = state[1];
+    pos_vel.z = state[2];
+    pos_vel.vx = state[3];
+    pos_vel.vy = state[4];
+    pos_vel.vz = state[5];
 
     // Возвращаем ускорение если требуется
     if let Some(acceleration) = acc {
-        acceleration[0] = state[6] / 1000.0;
-        acceleration[1] = state[7] / 1000.0;
-        acceleration[2] = state[8] / 1000.0;
+        acceleration[0] = state[6];
+        acceleration[1] = state[7];
+        acceleration[2] = state[8];
     }
 
     true
