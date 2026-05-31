@@ -2,6 +2,10 @@
 /target/
 Cargo.lock
 
+# Claude Code / agent local files (not for the public repo)
+/CLAUDE.md
+/AGENTS.md
+
 # IDE files
 .vscode/
 .idea/
@@ -39,6 +43,7 @@ Thumbs.db
 /telemetry*.dat
 /telemetry*.mat
 *.pdf
+!/rinex304.pdf
 /photo_*.jpg
 
 # Generated ephemeris/export files

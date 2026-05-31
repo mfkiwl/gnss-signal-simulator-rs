@@ -1,6 +1,8 @@
 # gnss-signal-simulator-rs
 [![Boosty](https://img.shields.io/badge/Boosty-Buy_me_a_coffee-FF7143?logo=boosty&logoColor=white&style=for-the-badge)](https://boosty.to/danusha/donate)
 
+🌐 **English** · [Русский](README.ru.md)
+
 **Multi-constellation GNSS IF signal simulator written in Rust**
 
 Generate realistic IQ baseband samples for GPS, Galileo, BeiDou, and GLONASS from RINEX 3.04 navigation data. The only GNSS signal simulator written in Rust — zero-copy, memory-safe, with AVX-512 and optional CUDA acceleration.
