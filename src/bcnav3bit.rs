@@ -185,32 +185,41 @@ impl BCNav3Bit {
 
     // Append word to FrameData array
     fn append_word(&self, frame_data: &mut [u32], start_bit: u32, data: &[u32], bit_count: u32) {
-        let bit_index = start_bit;
-        let mut word_index = (bit_index >> 5) as usize;
-        let mut bit_offset = bit_index & 0x1f;
-        let mut data_index = 0;
-        let mut bits_left = bit_count;
+        // Ported from the verified BCNavBit::append_word (bcnavbit.rs). B-CNAV frames are packed
+        // as 24-bit words MSB-first — the same convention used by the symbol extraction and CRC
+        // in get_frame_data. The previous version addressed 32-bit words from the LSB (>> 5,
+        // & 0x1f), which is incompatible with that 24-bit layout and corrupted every field.
+        let mut remain_bits: i32 = 24; // bits left in the current source word
+        let mut dest_idx = (start_bit / 24) as usize;
+        let mut start_bit = (start_bit % 24) as i32; // bit offset inside the current dest word
+        let mut src_idx = 0usize;
+        let mut length = bit_count as i32;
 
-        while bits_left > 0 {
-            let bits_to_copy = if bit_offset + bits_left > 32 {
-                32 - bit_offset
-            } else {
-                bits_left
-            };
-
-            let mask = ((1 << bits_to_copy) - 1) << bit_offset;
-            frame_data[word_index] &= !mask;
-            frame_data[word_index] |= ((data[data_index] >> (bits_left - bits_to_copy))
-                & ((1 << bits_to_copy) - 1))
-                << bit_offset;
-
-            bits_left -= bits_to_copy;
-            bit_offset = 0;
-            word_index += 1;
-
-            if bits_left > 0 && bits_left <= 32 && data_index < data.len() - 1 {
-                data_index += 1;
+        while length > 0 && dest_idx < frame_data.len() && src_idx < data.len() {
+            let mut fill_bits = 24 - start_bit;
+            if fill_bits > remain_bits {
+                fill_bits = remain_bits;
             }
+            if fill_bits > length {
+                fill_bits = length;
+            }
+            frame_data[dest_idx] = if start_bit == 0 { 0 } else { frame_data[dest_idx] }
+                | COMPOSE_BITS!(
+                    data[src_idx] >> (remain_bits - fill_bits),
+                    (24 - start_bit - fill_bits) as u32,
+                    fill_bits as u32
+                );
+            start_bit += fill_bits;
+            if start_bit >= 24 {
+                start_bit = 0;
+                dest_idx += 1;
+            }
+            remain_bits -= fill_bits;
+            if remain_bits <= 0 {
+                remain_bits = 24;
+                src_idx += 1;
+            }
+            length -= fill_bits;
         }
     }
 
@@ -226,27 +235,33 @@ impl BCNav3Bit {
     }
 
     // Append CRC to FrameData array
-    fn append_crc(&self, frame_data: &mut [u32], word_count: usize) {
+    fn append_crc(&self, frame_data: &mut [u32], _word_count: usize) {
+        // CRC24 (poly 0x864cfb) over the 486-bit message stream EXACTLY as the symbol extraction
+        // builds it: symbol 0 is the 6-bit MesType in frame_data[0]'s low bits, symbols 1..80 are
+        // frame_data[1..21] as 24-bit MSB-first words. The previous version read frame_data[0] as
+        // a full 24-bit word, prepending 18 spurious zero bits and misaligning the entire CRC.
+        // frame_data[20] (the 24-bit CRC field) is still zero here, serving as the trailing zeros.
         let mut crc = 0u32;
-        let mut data_bits = [0u32; 21];
-
-        // Copy data bits to temporary array
-        data_bits[..word_count].copy_from_slice(&frame_data[..word_count]);
-
-        // Calculate CRC
-        for i in 0..486 {
-            let bit_index = i / 24;
-            let bit_offset = i % 24;
-            let data_bit = (data_bits[bit_index] >> (23 - bit_offset)) & 1;
-
+        let mut push = |bit: u32| {
             let msb = (crc >> 23) & 1;
-            crc = ((crc << 1) | data_bit) & 0xffffff;
+            crc = ((crc << 1) | (bit & 1)) & 0xffffff;
             if msb != 0 {
                 crc ^= 0x864cfb;
             }
+        };
+
+        // Symbol 0: MesType, 6 bits MSB-first.
+        for k in (0..6).rev() {
+            push(frame_data[0] >> k);
+        }
+        // Symbols 1..80: frame_data[1..21], 24 bits MSB-first each (the last word is the
+        // still-zero CRC field, which supplies the 24 trailing zeros of the CRC computation).
+        for word in frame_data.iter().take(21).skip(1) {
+            for k in (0..24).rev() {
+                push(word >> k);
+            }
         }
 
-        // Append CRC to last word
         frame_data[20] = crc;
     }
 
@@ -306,6 +321,19 @@ impl BCNav3Bit {
         ];
 
         E2V_TABLE[(V2E_TABLE[a as usize] + V2E_TABLE[b as usize]) as usize]
+    }
+
+    /// Drops the leading 8-bit IODE from a B1C-style "IODE + Ephemeris I" block (packed
+    /// MSB-first, 24 bits per word) by shifting the bit stream left 8 bits. Yields the
+    /// 203-bit B2b Ephemeris I, which carries no IODE (BDS-SIS-ICD-B2b Figure 6-3).
+    fn drop_iode(src: &[u32; 32]) -> [u32; 9] {
+        let mut out = [0u32; 9];
+        for i in 0..9 {
+            let cur = src[i] & 0xFF_FFFF;
+            let next = src[i + 1] & 0xFF_FFFF;
+            out[i] = ((cur << 8) | (next >> 16)) & 0xFF_FFFF;
+        }
+        out
     }
 
     // Get frame data for B-CNAV3
@@ -385,20 +413,20 @@ impl BCNav3Bit {
                     .for_each(|w| *w = 0x5a5a5a5a);
             }
             10 => {
-                // Ephemeris message
-                frame_data[1] = COMPOSE_BITS!(sow as u32, 4, 20);
-                self.append_word(frame_data, 16, &self.ephemeris1[(svid - 1) as usize], 211);
-                self.append_word(
-                    frame_data,
-                    10 * 24,
-                    &self.ephemeris2[(svid - 1) as usize],
-                    222,
-                );
-                frame_data[19] |=
-                    COMPOSE_BITS!(self.integrity_flags[(svid - 1) as usize] >> 8, 3, 4); // B2a DIF/SIF/AIF
-                frame_data[19] |=
-                    COMPOSE_BITS!(self.integrity_flags[(svid - 1) as usize] >> 11, 0, 4);
-                // SISMAI
+                // B-CNAV3 Message Type 10 (BDS-SIS-ICD-B2b Figure 6-3): the 480-bit body after
+                // the 6-bit MesType is SOW(20) Rev(4) EphemerisI(203) EphemerisII(222)
+                // DIF/SIF/AIF(3) SISMAI(4) CRC(24). The body lives in frame_data[1..21]
+                // (frame_data[0] holds only the 6-bit MesType), so absolute append_word bits =
+                // 24 + body-bit. Unlike B1C/B2a, B2b MT10 has NO IODE: Ephemeris I is 203 bits.
+                frame_data[1] = COMPOSE_BITS!(sow as u32, 4, 20); // SOW at body bits 0..19
+                // Ephemeris I (203 bits, no IODE) at body bit 24 -> absolute 48.
+                let eph_i = Self::drop_iode(&self.ephemeris1[(svid - 1) as usize]);
+                self.append_word(frame_data, 48, &eph_i, 203);
+                // Ephemeris II (222 bits) at body bit 227 -> absolute 251.
+                self.append_word(frame_data, 251, &self.ephemeris2[(svid - 1) as usize], 222);
+                // DIF/SIF/AIF(3) + SISMAI(4) at body bits 449..455 -> absolute 473..479.
+                let integ = self.integrity_flags[(svid - 1) as usize] & 0x7f;
+                self.append_word(frame_data, 473, &[integ], 7);
             }
             30 => {
                 // Clock, ionosphere, UTC, EOP message
@@ -617,5 +645,81 @@ mod gf6_tests {
             .map(|d| format!("{}: orig={:.6e} dec={:.6e}", d.name, d.original, d.decoded))
             .collect();
         assert!(bad.is_empty(), "B-CNAV3 round-trip mismatches:\n  {}", bad.join("\n  "));
+    }
+
+    /// Frame-level round-trip: assemble a real B2b MT10 frame (compose_message + CRC) and recover
+    /// Ephemeris I/II straight out of frame_data. This exercises the framing layer — drop_iode,
+    /// the 24-bit append_word, and the EphI(203, no IODE)/EphII(222) body offsets — not just the
+    /// stored arrays. Catches the old 32-bit append_word and the IODE-inside-EphI framing bug.
+    #[test]
+    fn bcnav3_mt10_frame_round_trips() {
+        use crate::nav_decode::decode_bcnav_ephemeris;
+        let mut eph = crate::types::GpsEphemeris::default();
+        eph.valid = 1;
+        eph.flag = 3; // MEO -> A_ref 27906100 m
+        eph.axis = 27906100.0 + 512.0;
+        eph.axis_dot = -0.0625;
+        eph.delta_n = 4.2e-9;
+        eph.delta_n_dot = 1.0e-14;
+        eph.M0 = 0.5;
+        eph.ecc = 0.0007;
+        eph.w = -1.1;
+        eph.omega0 = 2.3;
+        eph.i0 = 0.96;
+        eph.omega_dot = -7.0e-9;
+        eph.idot = 3.0e-10;
+        eph.cuc = 1.5e-6;
+        eph.cus = 6.0e-6;
+        eph.crc = 180.0;
+        eph.crs = -40.0;
+        eph.cic = -2.0e-8;
+        eph.cis = 9.0e-8;
+        eph.af0 = -3.0e-4;
+        eph.af1 = 1.5e-12;
+        eph.toe = 345600;
+        eph.toc = 345600;
+
+        let svid = 5i32;
+        let mut b2b = BCNav3Bit::new();
+        assert!(b2b.set_ephemeris(svid, &eph));
+
+        // Assemble the real MT10 frame the way get_frame_data does.
+        let mut frame = [0u32; 21];
+        b2b.compose_message(10, 2369 - 1356, 100, svid, &mut frame);
+        b2b.append_crc(&mut frame, 21);
+
+        assert_eq!(frame[0] & 0x3f, 10, "symbol 0 must be MesType 10");
+        assert_ne!(frame[20], 0, "CRC field must be computed");
+
+        // Body bit b lives in frame[1 + b/24] at MSB-offset (23 - b%24).
+        let body_bit = |b: usize| -> u32 { (frame[1 + b / 24] >> (23 - (b % 24))) & 1 };
+
+        // Ephemeris I: body bits 24..226 (203 bits, NO IODE). Re-prepend a dummy 8-bit IODE so the
+        // B1C decoder (which expects IODE(8) + EphI(203) = 211 bits) can read it.
+        let mut eph1 = [0u32; 9];
+        for i in 0..203 {
+            let pos = 8 + i;
+            eph1[pos / 24] |= body_bit(24 + i) << (23 - (pos % 24));
+        }
+        // Ephemeris II: body bits 227..448 (222 bits).
+        let mut eph2 = [0u32; 10];
+        for i in 0..222 {
+            eph2[i / 24] |= body_bit(227 + i) << (23 - (i % 24));
+        }
+
+        // Clock params come from MT30, not MT10 — feed the encoder's so the decoder is satisfied;
+        // we only assert the orbital fields carried by EphI/EphII.
+        let dec = decode_bcnav_ephemeris(&eph1, &eph2, &b2b.clock_param[(svid - 1) as usize]);
+        let bad: Vec<_> = dec
+            .compare_with_original(&eph)
+            .into_iter()
+            .filter(|d| !d.ok)
+            .map(|d| format!("{}: orig={:.6e} dec={:.6e}", d.name, d.original, d.decoded))
+            .collect();
+        assert!(
+            bad.is_empty(),
+            "B2b MT10 frame round-trip mismatches:\n  {}",
+            bad.join("\n  ")
+        );
     }
 }
