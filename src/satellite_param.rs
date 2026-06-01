@@ -481,6 +481,9 @@ pub fn get_wave_length(system: GnssSystem, signal_index: usize, freq_id: i32) ->
             SIGNAL_INDEX_B3I => LIGHT_SPEED / FREQ_BDS_B3I,
             SIGNAL_INDEX_B2A => LIGHT_SPEED / FREQ_BDS_B2A,
             SIGNAL_INDEX_B2B => LIGHT_SPEED / FREQ_BDS_B2B,
+            // B2AB (AltBOC) carrier is at 1191.795 MHz, NOT B1C. Without this branch the Doppler
+            // is scaled by the B1C wavelength (~1575 MHz), ~32% too large, breaking acquisition.
+            SIGNAL_INDEX_B2AB => LIGHT_SPEED / FREQ_BDS_B2AB,
             _ => LIGHT_SPEED / FREQ_BDS_B1C,
         },
         GnssSystem::GalileoSystem => match signal_index {
@@ -1814,5 +1817,36 @@ impl SatelliteParamCalculator {
                 return;
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod wave_length_tests {
+    use super::*;
+
+    /// Each BeiDou signal's wavelength must derive from its OWN carrier. B2AB regressed to the
+    /// B1C wavelength (default arm), inflating Doppler ~32%. Pin every BDS arm to its frequency.
+    #[test]
+    fn bds_wavelengths_match_carriers() {
+        let cases = [
+            (SIGNAL_INDEX_B1C, FREQ_BDS_B1C),
+            (SIGNAL_INDEX_B1I, FREQ_BDS_B1I),
+            (SIGNAL_INDEX_B2I, FREQ_BDS_B2I),
+            (SIGNAL_INDEX_B3I, FREQ_BDS_B3I),
+            (SIGNAL_INDEX_B2A, FREQ_BDS_B2A),
+            (SIGNAL_INDEX_B2B, FREQ_BDS_B2B),
+            (SIGNAL_INDEX_B2AB, FREQ_BDS_B2AB),
+        ];
+        for (idx, freq) in cases {
+            let wl = get_wave_length(GnssSystem::BdsSystem, idx, 0);
+            assert!(
+                (wl - LIGHT_SPEED / freq).abs() < 1e-12,
+                "wavelength for signal {idx} should use {freq} Hz, got {wl}"
+            );
+        }
+        // B2AB must be distinct from B1C (the regression aliased them together).
+        let b2ab = get_wave_length(GnssSystem::BdsSystem, SIGNAL_INDEX_B2AB, 0);
+        let b1c = get_wave_length(GnssSystem::BdsSystem, SIGNAL_INDEX_B1C, 0);
+        assert!((b2ab - b1c).abs() > 1e-3, "B2AB wavelength must differ from B1C");
     }
 }

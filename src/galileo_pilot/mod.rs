@@ -21,7 +21,6 @@ const CODE_LEN: usize = 4092; // Chips per code period (4ms)
 const NAV_BIT_PERIOD_MS: i32 = 4; // 4ms per I-NAV symbol
 const FRAME_MS: i32 = 2000; // 2-second I-NAV frame
 const NAV_BITS_PER_FRAME: usize = 500; // bits per frame
-const SECONDARY_CODE: u32 = 0x0E64C2E0; // CS25 reversed for bit extraction
 const SECONDARY_CODE_RAW: u32 = 0x9b501c; // CS25 as stored in pilotbit.rs
 const SECONDARY_CODE_LEN: i32 = 25;
 const AMPLITUDE_HALF: f64 = std::f64::consts::FRAC_1_SQRT_2; // 1/sqrt(2)
@@ -81,11 +80,15 @@ fn find_best_galileo_ephemeris(
         .copied()
 }
 
-/// Extract CS25 secondary code bit (0x9b501c, 25 bits, MSB first)
+/// Extract CS25 secondary code bit (0x9b501c, 25 bits, LSB first).
+///
+/// The Galileo OS SIS ICD v2.1 documents CS25 as `0011100000001010110110010`, which is
+/// reproduced by LSB-first extraction of 0x9b501c — identical to the extraction in
+/// `gnss_pilot.rs` and `pilotbit.rs`. The previous MSB-first form (`>> (24 - idx)`) emitted
+/// the time-reversed sequence, a completely different (and unacquirable) pilot code.
 fn get_secondary_code_bit(code_period_index: i32) -> f64 {
     let idx = code_period_index.rem_euclid(SECONDARY_CODE_LEN) as u32;
-    // CS25: bit 0 is MSB (bit 24 of u32)
-    if (SECONDARY_CODE_RAW >> (24 - idx)) & 1 != 0 {
+    if (SECONDARY_CODE_RAW >> idx) & 1 != 0 {
         -1.0
     } else {
         1.0
@@ -407,4 +410,30 @@ pub fn generate(
         satellites: sat_infos,
         total_samples,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The emitted CS25 sequence must equal the Galileo OS SIS ICD v2.1 string, bit-for-bit, in
+    /// the same orientation as gnss_pilot.rs / pilotbit.rs. A '1' bit maps to -1.0 (bipolar).
+    #[test]
+    fn cs25_secondary_code_matches_icd() {
+        const ICD_CS25: &str = "0011100000001010110110010";
+        let emitted: String = (0..SECONDARY_CODE_LEN)
+            .map(|i| if get_secondary_code_bit(i) < 0.0 { '1' } else { '0' })
+            .collect();
+        assert_eq!(emitted, ICD_CS25, "CS25 sequence does not match the ICD");
+
+        // Must also agree with the sibling LSB-first extraction used elsewhere in the codebase.
+        for i in 0..SECONDARY_CODE_LEN {
+            let sibling = if (0x9b501c_u32 >> (i.rem_euclid(SECONDARY_CODE_LEN) as u32)) & 1 != 0 {
+                -1.0
+            } else {
+                1.0
+            };
+            assert_eq!(get_secondary_code_bit(i), sibling, "mismatch at idx {i}");
+        }
+    }
 }

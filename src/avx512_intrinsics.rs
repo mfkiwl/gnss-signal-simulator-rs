@@ -156,9 +156,12 @@ impl Avx512Accelerator {
         let masked_indices = _mm512_and_epi32(indices, mask);
 
         // К сожалению, AVX-512 не имеет прямой gather инструкции для float lookup
-        // Используем альтернативный подход с обработкой каждого элемента
-        let indices_array = [0i32; 16];
-        _mm512_storeu_si512(indices_array.as_ptr() as *mut __m512i, masked_indices);
+        // Используем альтернативный подход с обработкой каждого элемента.
+        // indices_array MUST be `mut` and stored via as_mut_ptr(): writing through a *mut derived
+        // from an immutable binding is UB — the optimizer may assume it stays all-zeros and make
+        // every lookup return lut[0].
+        let mut indices_array = [0i32; 16];
+        _mm512_storeu_si512(indices_array.as_mut_ptr() as *mut __m512i, masked_indices);
 
         for i in 0..16 {
             let idx = indices_array[i] as usize;
@@ -328,5 +331,65 @@ impl SafeAvx512Processor {
         }
 
         result
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// fast_sin_cos_avx512 must agree with scalar sin/cos within the LUT quantization error.
+    /// This catches the UB regression where the indices were stored through an immutable pointer
+    /// (the optimizer could keep the index array all-zeros, making every output == lut[0]).
+    #[test]
+    #[cfg(target_arch = "x86_64")]
+    fn fast_sin_cos_avx512_matches_scalar() {
+        if !is_x86_feature_detected!("avx512f") {
+            eprintln!("avx512f not available — skipping");
+            return;
+        }
+        const N: usize = 65536;
+        let two_pi = 2.0 * std::f32::consts::PI;
+        let mut sin_lut = vec![0.0f32; N];
+        let mut cos_lut = vec![0.0f32; N];
+        for i in 0..N {
+            let a = (i as f32) * two_pi / (N as f32);
+            sin_lut[i] = a.sin();
+            cos_lut[i] = a.cos();
+        }
+        let sin_lut: &[f32; N] = sin_lut.as_slice().try_into().unwrap();
+        let cos_lut: &[f32; N] = cos_lut.as_slice().try_into().unwrap();
+
+        // 16 distinct angles spread across the circle (not all mapping to index 0).
+        let angles: Vec<f32> = (0..16).map(|i| two_pi * (i as f32) / 16.0 + 0.013).collect();
+        let mut sin_out = [0.0f32; 16];
+        let mut cos_out = [0.0f32; 16];
+        unsafe {
+            Avx512Accelerator::fast_sin_cos_avx512(
+                &angles, sin_lut, cos_lut, &mut sin_out, &mut cos_out,
+            );
+        }
+
+        // If the UB struck, every output would equal lut[0] = (0.0, 1.0); assert real variation.
+        let distinct = sin_out.iter().filter(|&&v| (v - sin_out[0]).abs() > 1e-3).count();
+        assert!(distinct > 0, "all sin outputs identical — index store was optimized away (UB)");
+
+        for i in 0..16 {
+            let expected_sin = angles[i].sin();
+            let expected_cos = angles[i].cos();
+            // LUT step is 2π/65536 ≈ 1e-4 rad → tolerance a few ×1e-3 covers quantization.
+            assert!(
+                (sin_out[i] - expected_sin).abs() < 5e-3,
+                "sin[{i}]: avx={} scalar={}",
+                sin_out[i],
+                expected_sin
+            );
+            assert!(
+                (cos_out[i] - expected_cos).abs() < 5e-3,
+                "cos[{i}]: avx={} scalar={}",
+                cos_out[i],
+                expected_cos
+            );
+        }
     }
 }
