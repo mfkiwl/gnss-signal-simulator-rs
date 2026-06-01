@@ -25,6 +25,7 @@
 //
 //----------------------------------------------------------------------
 
+use crate::bcnavbit::BCNavBit;
 use crate::types::*;
 use crate::COMPOSE_BITS;
 
@@ -474,26 +475,19 @@ impl BCNav3Bit {
         // Store in Ephemeris1 (primary) and Ephemeris2 (backup)
         // BDS B2b can store dual ephemeris sets for redundancy
         if index < 63 {
-            // Convert GPS ephemeris to BDS B2b navigation message format
-            // These arrays store raw navigation message data, not ephemeris structures
-
-            // Convert ephemeris parameters to BDS message format (32-bit words)
-            // This is a simplified conversion - real implementation would encode
-            // all ephemeris parameters according to BDS ICD specification
-            let mut eph1_data = [0u32; 32];
-            let mut _eph2_data = [0u32; 32];
-
-            // Example encoding of key ephemeris parameters
-            eph1_data[0] = (svid as u32) << 24; // SVID in message header
-            eph1_data[1] = eph.toe as u32 - 14; // Adjust for BDT
-            eph1_data[2] = eph.sqrtA.to_bits() as u32;
-            eph1_data[3] = eph.ecc.to_bits() as u32;
-
-            // Copy to backup
-            _eph2_data = eph1_data;
-
-            self.ephemeris1[index] = eph1_data;
-            self.ephemeris2[index] = _eph2_data;
+            // B-CNAV3 (B2b) Ephemeris I/II and clock data blocks are the same BDS-3 CNAV
+            // definitions as B-CNAV1 (B1C), so reuse the verified BCNavBit packing (correct
+            // ICD scale factors, semicircle conversion, two's-complement, ΔA = A − A_ref).
+            // The previous body was a stub (it stored sqrtA.to_bits()/ecc.to_bits() raw and
+            // dropped every other parameter). The Eph-I block is 211 bits → first 9 of the
+            // 32 source words; Eph-II is 222 bits → first 10 words.
+            let mut b1c = BCNavBit::new();
+            b1c.set_ephemeris(svid, eph);
+            self.ephemeris1[index] = [0u32; 32];
+            self.ephemeris2[index] = [0u32; 32];
+            self.ephemeris1[index][..9].copy_from_slice(&b1c.ephemeris1[index]);
+            self.ephemeris2[index][..10].copy_from_slice(&b1c.ephemeris2[index]);
+            self.clock_param[index] = b1c.clock_param[index];
 
             true
         } else {
@@ -580,5 +574,48 @@ mod gf6_tests {
                 assert_ne!(b3.gf6_int_mul(a, b), 0); // closed on non-zero
             }
         }
+    }
+
+    /// B-CNAV3 (B2b) Ephemeris I/II are the same BDS-3 CNAV block as B-CNAV1, so the B1C
+    /// decoder must round-trip the B2b encoder. Catches the old stub (sqrtA.to_bits() etc.).
+    #[test]
+    fn bcnav3_ephemeris_round_trips_via_b1c_decoder() {
+        use crate::nav_decode::decode_bcnav_ephemeris;
+        let mut eph = crate::types::GpsEphemeris::default();
+        eph.valid = 1;
+        eph.flag = 3; // MEO -> A_ref 27906100 m
+        eph.axis = 27906100.0 + 512.0;
+        eph.axis_dot = -0.0625;
+        eph.delta_n = 4.2e-9;
+        eph.delta_n_dot = 1.0e-14;
+        eph.M0 = 0.5;
+        eph.ecc = 0.0007;
+        eph.w = -1.1;
+        eph.omega0 = 2.3;
+        eph.i0 = 0.96;
+        eph.omega_dot = -7.0e-9;
+        eph.idot = 3.0e-10;
+        eph.cuc = 1.5e-6;
+        eph.cus = 6.0e-6;
+        eph.crc = 180.0;
+        eph.crs = -40.0;
+        eph.cic = -2.0e-8;
+        eph.cis = 9.0e-8;
+        eph.af0 = -3.0e-4;
+        eph.af1 = 1.5e-12;
+        eph.toe = 345600;
+        eph.toc = 345600;
+        let mut b2b = BCNav3Bit::new();
+        assert!(b2b.set_ephemeris(5, &eph));
+        let eph1: [u32; 9] = b2b.ephemeris1[4][..9].try_into().unwrap();
+        let eph2: [u32; 10] = b2b.ephemeris2[4][..10].try_into().unwrap();
+        let dec = decode_bcnav_ephemeris(&eph1, &eph2, &b2b.clock_param[4]);
+        let bad: Vec<_> = dec
+            .compare_with_original(&eph)
+            .into_iter()
+            .filter(|d| !d.ok)
+            .map(|d| format!("{}: orig={:.6e} dec={:.6e}", d.name, d.original, d.decoded))
+            .collect();
+        assert!(bad.is_empty(), "B-CNAV3 round-trip mismatches:\n  {}", bad.join("\n  "));
     }
 }
