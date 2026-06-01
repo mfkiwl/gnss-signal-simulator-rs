@@ -392,7 +392,7 @@ impl PrnGenerate {
         }
     }
 
-    fn generate_glonass_prn(&mut self, signal_index: i32, _svid: i32) {
+    fn generate_glonass_prn(&mut self, signal_index: i32, svid: i32) {
         const G1: i32 = SIGNAL_INDEX_G1 as i32;
         const G2: i32 = SIGNAL_INDEX_G2 as i32;
         const G3: i32 = SIGNAL_INDEX_G3 as i32;
@@ -404,11 +404,11 @@ impl PrnGenerate {
                 self.attribute = Some(PRN_ATTRIBUTES[10]);
             }
             G3 => {
-                // G3/L3OC uses Gold code with length 10230
-                self.data_prn =
-                    Some(self.get_gold_code(0x3ff, 0x224, 0x3ff, 0x387, 10230, 10, 10230));
-                self.pilot_prn =
-                    Some(self.get_gold_code(0x3ff, 0x224, 0x3ff, 0x387, 10230, 10, 10230));
+                // L3OC: per-SV truncated Kasami codes (ICD GLONASS CDMA L3 §2.2). Data = DC1^DC2,
+                // pilot = DC1^DC3, length 10230. j is the 0-based SV code index (0..63).
+                let j = (svid - 1).clamp(0, 63);
+                self.data_prn = Some(Self::get_l3oc_code(j, false));
+                self.pilot_prn = Some(Self::get_l3oc_code(j, true));
                 self.attribute = Some(PRN_ATTRIBUTES[12]);
             }
             _ => {
@@ -443,6 +443,40 @@ impl PrnGenerate {
         }
 
         prn_sequence
+    }
+
+    /// GLONASS L3OC ranging code (ICD GLONASS CDMA L3, Edition 1.0 2016, §2.2): a truncated
+    /// Kasami sequence of length 10230. DC1 is a 14-bit LFSR with feedback taps {4,8,13,14} and a
+    /// constant initial state 00110100111000; DC2 (data) / DC3 (pilot) are 7-bit LFSRs with
+    /// feedback taps {6,7} and initial state j (data) or j+64 (pilot). PRN = DC1 XOR DC2 (data) or
+    /// DC1 XOR DC3 (pilot). Trigger 1 holds the MSB of the initial state, the output is the last
+    /// trigger read before each low→high shift, left-most chip first. Verified bit-exact against
+    /// ICD Tables 2.1/2.2. Replaces the old get_gold_code (10-bit regs → degenerate period 341).
+    fn get_l3oc_code(j: i32, pilot: bool) -> Vec<i32> {
+        const N: usize = 10230;
+        // dc1[i] == trigger (i+1). IS1 = 00110100111000 mapped trigger 1..14 left to right.
+        let mut dc1: [u8; 14] = [0, 0, 1, 1, 0, 1, 0, 0, 1, 1, 1, 0, 0, 0];
+        // DC2/DC3 7-bit initial state: MSB → trigger 1, LSB → trigger 7.
+        let is = (if pilot { j + 64 } else { j }) as u32 & 0x7f;
+        let mut dc2 = [0u8; 7];
+        for (i, t) in dc2.iter_mut().enumerate() {
+            *t = ((is >> (6 - i)) & 1) as u8;
+        }
+        let mut code = Vec::with_capacity(N);
+        for _ in 0..N {
+            code.push((dc1[13] ^ dc2[6]) as i32); // output = trigger 14 XOR trigger 7
+            let fb1 = dc1[3] ^ dc1[7] ^ dc1[12] ^ dc1[13]; // DC1 taps 4,8,13,14
+            for k in (1..14).rev() {
+                dc1[k] = dc1[k - 1];
+            }
+            dc1[0] = fb1;
+            let fb2 = dc2[5] ^ dc2[6]; // DC2/DC3 taps 6,7
+            for k in (1..7).rev() {
+                dc2[k] = dc2[k - 1];
+            }
+            dc2[0] = fb2;
+        }
+        code
     }
 
     fn legendre_sequence(&self, data: &mut [i32], length: usize) {
@@ -859,3 +893,32 @@ const E5B_Q_PRN_INIT: [u32; 50] = [
 ];
 
 // Galileo memory codes are now loaded from external files
+
+#[cfg(test)]
+mod l3oc_tests {
+    use super::PrnGenerate;
+
+    /// Bit-exact verification against ICD GLONASS CDMA L3 (Ed. 1.0 2016) Tables 2.1 (L3OCd) and
+    /// 2.2 (L3OCp): the first and last 32 chips of the 10230-chip truncated Kasami code per SV.
+    /// The old generator produced a degenerate period-341 sequence that matched none of these.
+    #[test]
+    fn glonass_l3oc_matches_icd_kasami_tables() {
+        // Pack 32 chips MSB-first (chip 0 = bit 31), left-most chip first.
+        let pack = |c: &[i32], s: usize| (0..32).fold(0u32, |v, i| (v << 1) | (c[s + i] as u32 & 1));
+        // (j, pilot, first 32, last 32)
+        let cases: [(i32, bool, u32, u32); 6] = [
+            (0, false, 0x1CB31510, 0x213B0657),
+            (1, false, 0x9DB50169, 0xBC74A793),
+            (2, false, 0x5D360B55, 0x72D37771),
+            (63, false, 0xE0BB25B3, 0x0DD17B59),
+            (0, true, 0x1EBF3DE2, 0x1BA445DE),
+            (1, true, 0x9FB9299B, 0x86EBE41A),
+        ];
+        for (j, pilot, first, last) in cases {
+            let c = PrnGenerate::get_l3oc_code(j, pilot);
+            assert_eq!(c.len(), 10230, "L3OC code length");
+            assert_eq!(pack(&c, 0), first, "j={j} pilot={pilot}: first 32 chips");
+            assert_eq!(pack(&c, 10230 - 32), last, "j={j} pilot={pilot}: last 32 chips");
+        }
+    }
+}
