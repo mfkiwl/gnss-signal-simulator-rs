@@ -1629,3 +1629,179 @@ mod fnav_roundtrip_tests {
         assert!(bad.is_empty(), "F/NAV round-trip mismatches:\n  {}", bad.join("\n  "));
     }
 }
+
+// ===========================================================================
+// 9. BeiDou D1 (B1I/B2I/B3I legacy, MEO/IGSO) ephemeris decoder — inverse of
+//    D1D2NavBit::compose_bds_stream123 (BDS-SIS-ICD-B1I). Each of the 27 words
+//    holds 22 information bits (bits 0..21).
+// ===========================================================================
+
+#[derive(Debug, Default, Clone)]
+pub struct DecodedD1Eph {
+    pub toc: i32,
+    pub toe: i32,
+    pub sqrtA: f64,
+    pub ecc: f64,
+    pub M0: f64,
+    pub w: f64,
+    pub omega0: f64,
+    pub i0: f64,
+    pub omega_dot: f64,
+    pub idot: f64,
+    pub delta_n: f64,
+    pub cuc: f64,
+    pub cus: f64,
+    pub crc: f64,
+    pub crs: f64,
+    pub cic: f64,
+    pub cis: f64,
+    pub af0: f64,
+    pub af1: f64,
+    pub af2: f64,
+    pub tgd: f64,
+    pub tgd2: f64,
+}
+
+/// Decodes BeiDou D1 ephemeris from the 27-word subframe-1..3 stream. TGD1/TGD2 are 10-bit in
+/// units of 0.1 ns (×1e-10 s); toe/toc are 17-bit at 2^3 s; angles are semicircles × 2^scale.
+pub fn decode_d1_ephemeris(s: &[u32; 27]) -> DecodedD1Eph {
+    let mut d = DecodedD1Eph::default();
+
+    // --- Subframe 1: toc, TGD1/2, af0/af1/af2 ---
+    let toc_div8 = (extract_bits(s[1], 0, 9) << 8) | extract_bits(s[2], 14, 8);
+    d.toc = (toc_div8 as i32) << 3;
+    d.tgd = sign_extend(extract_bits(s[2], 4, 10), 10) as f64 * 1e-10;
+    let tgd2 = (extract_bits(s[2], 0, 4) << 6) | extract_bits(s[3], 16, 6);
+    d.tgd2 = sign_extend(tgd2, 10) as f64 * 1e-10;
+    d.af2 = rescale_int(sign_extend(extract_bits(s[6], 7, 11), 11), -66);
+    let af0 = (extract_bits(s[6], 0, 7) << 17) | extract_bits(s[7], 5, 17);
+    d.af0 = rescale_int(sign_extend(af0, 24), -33);
+    let af1 = (extract_bits(s[7], 0, 5) << 17) | extract_bits(s[8], 5, 17);
+    d.af1 = rescale_int(sign_extend(af1, 22), -50);
+
+    // --- Subframe 2: delta_n, Cuc, M0, ecc, Cus, Crc, Crs, sqrtA, toe[19:18] ---
+    let dn = (extract_bits(s[9], 0, 10) << 6) | extract_bits(s[10], 16, 6);
+    d.delta_n = rescale_int(sign_extend(dn, 16), -43) * PI;
+    let cuc = (extract_bits(s[10], 0, 16) << 2) | extract_bits(s[11], 20, 2);
+    d.cuc = rescale_int(sign_extend(cuc, 18), -31);
+    let m0 = (extract_bits(s[11], 0, 20) << 12) | extract_bits(s[12], 10, 12);
+    d.M0 = rescale_int(sign_extend(m0, 32), -31) * PI;
+    let ecc = (extract_bits(s[12], 0, 10) << 22) | extract_bits(s[13], 0, 22);
+    d.ecc = rescale_uint(ecc, -33);
+    d.cus = rescale_int(sign_extend(extract_bits(s[14], 4, 18), 18), -31);
+    let crc = (extract_bits(s[14], 0, 4) << 14) | extract_bits(s[15], 8, 14);
+    d.crc = rescale_int(sign_extend(crc, 18), -6);
+    let crs = (extract_bits(s[15], 0, 8) << 10) | extract_bits(s[16], 12, 10);
+    d.crs = rescale_int(sign_extend(crs, 18), -6);
+    let sqrta = (extract_bits(s[16], 0, 12) << 20) | extract_bits(s[17], 2, 20);
+    d.sqrtA = rescale_uint(sqrta, -19);
+
+    // --- toe (17 significant bits at 2^3 s) split across SF2/SF3 ---
+    let toe_hi = extract_bits(s[17], 0, 2); // toe[19:18]
+    let toe_mid = extract_bits(s[18], 0, 10); // toe[17:8]
+    let toe_lo = extract_bits(s[19], 17, 5); // toe[7:3]
+    d.toe = ((toe_hi << 18) | (toe_mid << 8) | (toe_lo << 3)) as i32;
+
+    // --- Subframe 3: i0, Cic, omega_dot, Cis, idot, omega0, w ---
+    let i0 = (extract_bits(s[19], 0, 17) << 15) | extract_bits(s[20], 7, 15);
+    d.i0 = rescale_int(sign_extend(i0, 32), -31) * PI;
+    let cic = (extract_bits(s[20], 0, 7) << 11) | extract_bits(s[21], 11, 11);
+    d.cic = rescale_int(sign_extend(cic, 18), -31);
+    let od = (extract_bits(s[21], 0, 11) << 13) | extract_bits(s[22], 9, 13);
+    d.omega_dot = rescale_int(sign_extend(od, 24), -43) * PI;
+    let cis = (extract_bits(s[22], 0, 9) << 9) | extract_bits(s[23], 13, 9);
+    d.cis = rescale_int(sign_extend(cis, 18), -31);
+    let idot = (extract_bits(s[23], 0, 13) << 1) | extract_bits(s[24], 21, 1);
+    d.idot = rescale_int(sign_extend(idot, 14), -43) * PI;
+    let om0 = (extract_bits(s[24], 0, 21) << 11) | extract_bits(s[25], 11, 11);
+    d.omega0 = rescale_int(sign_extend(om0, 32), -31) * PI;
+    let w = (extract_bits(s[25], 0, 11) << 21) | extract_bits(s[26], 1, 21);
+    d.w = rescale_int(sign_extend(w, 32), -31) * PI;
+
+    d
+}
+
+impl DecodedD1Eph {
+    /// Compares decoded BeiDou D1 ephemeris against the original `GpsEphemeris` (tolerance = LSB).
+    pub fn compare_with_original(&self, eph: &GpsEphemeris) -> Vec<ParamDiff> {
+        let two = |e: i32| 2.0_f64.powi(e);
+        vec![
+            ParamDiff::new("sqrtA", eph.sqrtA, self.sqrtA, two(-19)),
+            ParamDiff::new("ecc", eph.ecc, self.ecc, two(-33)),
+            ParamDiff::new("M0", eph.M0, self.M0, PI * two(-31)),
+            ParamDiff::new("w", eph.w, self.w, PI * two(-31)),
+            ParamDiff::new("omega0", eph.omega0, self.omega0, PI * two(-31)),
+            ParamDiff::new("i0", eph.i0, self.i0, PI * two(-31)),
+            ParamDiff::new("omega_dot", eph.omega_dot, self.omega_dot, PI * two(-43)),
+            ParamDiff::new("idot", eph.idot, self.idot, PI * two(-43)),
+            ParamDiff::new("delta_n", eph.delta_n, self.delta_n, PI * two(-43)),
+            ParamDiff::new("cuc", eph.cuc, self.cuc, two(-31)),
+            ParamDiff::new("cus", eph.cus, self.cus, two(-31)),
+            ParamDiff::new("crc", eph.crc, self.crc, two(-6)),
+            ParamDiff::new("crs", eph.crs, self.crs, two(-6)),
+            ParamDiff::new("cic", eph.cic, self.cic, two(-31)),
+            ParamDiff::new("cis", eph.cis, self.cis, two(-31)),
+            ParamDiff::new("af0", eph.af0, self.af0, two(-33)),
+            ParamDiff::new("af1", eph.af1, self.af1, two(-50)),
+            ParamDiff::new("af2", eph.af2, self.af2, two(-66)),
+            ParamDiff::new("tgd", eph.tgd, self.tgd, 1e-10),
+            ParamDiff::new("tgd2", eph.tgd2, self.tgd2, 1e-10),
+            ParamDiff::new("toe", eph.toe as f64, self.toe as f64, 8.0),
+            ParamDiff::new("toc", eph.toc as f64, self.toc as f64, 8.0),
+        ]
+    }
+}
+
+#[cfg(test)]
+mod d1d2_roundtrip_tests {
+    use super::decode_d1_ephemeris;
+    use crate::d1d2navbit::D1D2NavBit;
+    use crate::types::GpsEphemeris;
+
+    /// BeiDou D1 (MEO/IGSO) ephemeris must round-trip through the subframe encoder. First
+    /// content-level check of d1d2navbit — it caught the unscale_double inverted-exponent bug.
+    #[test]
+    fn d1_eph_round_trips_via_decoder() {
+        let mut eph = GpsEphemeris::default();
+        eph.valid = 1;
+        eph.week = 800;
+        eph.iodc = 3;
+        eph.ura = 2;
+        eph.iode = 7;
+        eph.sqrtA = 5282.6; // BDS MEO A ≈ 27,906,100 m
+        eph.ecc = 0.003;
+        eph.M0 = 0.6;
+        eph.w = -1.5;
+        eph.omega0 = 2.0;
+        eph.i0 = 0.95;
+        eph.omega_dot = -6.5e-9;
+        eph.idot = 1.5e-10;
+        eph.delta_n = 4.0e-9;
+        eph.cuc = -2.0e-6;
+        eph.cus = 8.0e-6;
+        eph.crc = 200.0;
+        eph.crs = -60.0;
+        eph.cic = -4.0e-8;
+        eph.cis = 9.0e-8;
+        eph.af0 = -1.5e-4;
+        eph.af1 = 2.0e-12;
+        eph.af2 = 0.0;
+        eph.tgd = 3.0e-9;
+        eph.tgd2 = -2.0e-9;
+        eph.toe = 345600; // multiple of 8
+        eph.toc = 345600;
+
+        let svid = 10; // MEO/IGSO range (6..58) -> D1
+        let mut d1 = D1D2NavBit::new();
+        assert_ne!(d1.set_ephemeris(svid, &eph), 0, "set_ephemeris failed");
+        let stream = &d1.bds_stream123[(svid - 6) as usize];
+        let dec = decode_d1_ephemeris(stream);
+        let bad: Vec<_> = dec
+            .compare_with_original(&eph)
+            .into_iter()
+            .filter(|d| !d.ok)
+            .map(|d| format!("{}: orig={:.6e} dec={:.6e}", d.name, d.original, d.decoded))
+            .collect();
+        assert!(bad.is_empty(), "D1 round-trip mismatches:\n  {}", bad.join("\n  "));
+    }
+}

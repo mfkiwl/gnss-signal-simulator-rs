@@ -792,7 +792,12 @@ impl D1D2NavBit {
 
     // Helper functions
     fn unscale_double(value: f64, scale: i32) -> f64 {
-        value * (2.0_f64).powi(scale)
+        // `scale` is the ICD power-of-two EXPONENT (e.g. af0 is 2^-33, so callers pass -33; the
+        // β iono terms are 2^11, passed as +11). The raw integer is value / 2^scale = value *
+        // 2^-scale. The old `value * 2^scale` inverted the exponent, so every unscaled D1/D2
+        // field (af0/af1/af2, Δn, M0, ecc, sqrtA, i0, Ω0, ω, Ω̇, i̇, Cuc..Cis, iono) rounded to 0
+        // — the entire BeiDou legacy ephemeris/clock was silently zero (matches bcnavbit/inavbit).
+        value * (2.0_f64).powi(-scale)
     }
 
     fn roundi(value: f64) -> i32 {
