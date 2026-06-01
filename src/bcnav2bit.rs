@@ -25,6 +25,7 @@
 //
 //----------------------------------------------------------------------
 
+use crate::bcnavbit::BCNavBit;
 use crate::types::*;
 // use crate::constants::*;
 use crate::COMPOSE_BITS;
@@ -366,38 +367,17 @@ impl BCNav2Bit {
 
         let svid_idx = (svid - 1) as usize;
 
-        // Convert ephemeris data to the required format
-        // This is a simplified conversion - actual implementation would need
-        // proper scaling and bit packing according to BDS specifications
-
-        // Ephemeris1 (IODE + ephemeris I - 211 bits)
-        self.ephemeris1[svid_idx][0] = eph.iode as u32;
-        self.ephemeris1[svid_idx][1] = (eph.M0 * 1e10) as u32;
-        self.ephemeris1[svid_idx][2] = (eph.delta_n * 1e15) as u32;
-        self.ephemeris1[svid_idx][3] = (eph.ecc * 1e10) as u32;
-        self.ephemeris1[svid_idx][4] = (eph.sqrtA * 1e6) as u32;
-        self.ephemeris1[svid_idx][5] = (eph.omega0 * 1e10) as u32;
-        self.ephemeris1[svid_idx][6] = (eph.i0 * 1e10) as u32;
-        self.ephemeris1[svid_idx][7] = (eph.w * 1e10) as u32;
-        self.ephemeris1[svid_idx][8] = (eph.omega_dot * 1e15) as u32;
-
-        // Ephemeris2 (ephemeris II - 222 bits)
-        self.ephemeris2[svid_idx][0] = (eph.idot * 1e15) as u32;
-        self.ephemeris2[svid_idx][1] = (eph.cuc * 1e10) as u32;
-        self.ephemeris2[svid_idx][2] = (eph.cus * 1e10) as u32;
-        self.ephemeris2[svid_idx][3] = (eph.crc * 1e6) as u32;
-        self.ephemeris2[svid_idx][4] = (eph.crs * 1e6) as u32;
-        self.ephemeris2[svid_idx][5] = (eph.cic * 1e10) as u32;
-        self.ephemeris2[svid_idx][6] = (eph.cis * 1e10) as u32;
-        self.ephemeris2[svid_idx][7] = eph.toe as u32;
-        self.ephemeris2[svid_idx][8] = eph.week as u32;
-        self.ephemeris2[svid_idx][9] = eph.health as u32;
-
-        // Clock parameters
-        self.clock_param[svid_idx][0] = (eph.af0 * 1e15) as u32;
-        self.clock_param[svid_idx][1] = (eph.af1 * 1e15) as u32;
-        self.clock_param[svid_idx][2] = (eph.af2 * 1e15) as u32;
-        self.clock_param[svid_idx][3] = eph.iodc as u32;
+        // The B-CNAV2 (B2a) Ephemeris I, Ephemeris II and clock data blocks are bit-identical
+        // to B-CNAV1 (B1C) — same BDS-3 CNAV definitions (BDS-SIS-ICD-B2a Table 7-8 == B1C
+        // Table 7-8). Reuse the verified BCNavBit packing: correct ICD power-of-two scale
+        // factors, semicircle conversion (÷π), two's-complement, and ΔA = A − A_ref with the
+        // sat_type-dependent reference axis. The previous code stored one raw decimal-scaled
+        // field per word, which append_word then mis-packed against the ICD bit layout.
+        let mut b1c = BCNavBit::new();
+        b1c.set_ephemeris(svid, eph);
+        self.ephemeris1[svid_idx] = b1c.ephemeris1[svid_idx];
+        self.ephemeris2[svid_idx] = b1c.ephemeris2[svid_idx];
+        self.clock_param[svid_idx] = b1c.clock_param[svid_idx];
 
         // Integrity flags (simplified)
         self.integrity_flags[svid_idx] = eph.health as u32;
@@ -449,5 +429,48 @@ mod append_word_tests {
                 assert_eq!(got, want, "append_word mismatch at start={start}, len={len}");
             }
         }
+    }
+
+    /// ICD verification: B-CNAV2 (B2a) Ephemeris I/II and clock blocks are bit-identical to
+    /// B-CNAV1 (B1C), so the B1C decoder (decode_bcnav_ephemeris) must round-trip the B2a
+    /// encoder. Catches the old decimal-multiplier / missing-ΔA encoding (BDS-SIS-ICD-B2a).
+    #[test]
+    fn bcnav2_ephemeris_round_trips_via_b1c_decoder() {
+        use crate::nav_decode::decode_bcnav_ephemeris;
+        let mut eph = crate::types::GpsEphemeris::default();
+        eph.valid = 1;
+        eph.flag = 3; // MEO -> A_ref 27906100 m
+        eph.axis = 27906100.0 + 512.0;
+        eph.axis_dot = -0.0625;
+        eph.delta_n = 4.2e-9;
+        eph.delta_n_dot = 1.0e-14;
+        eph.M0 = 0.5;
+        eph.ecc = 0.0007;
+        eph.w = -1.1;
+        eph.omega0 = 2.3;
+        eph.i0 = 0.96;
+        eph.omega_dot = -7.0e-9;
+        eph.idot = 3.0e-10;
+        eph.cuc = 1.5e-6;
+        eph.cus = 6.0e-6;
+        eph.crc = 180.0;
+        eph.crs = -40.0;
+        eph.cic = -2.0e-8;
+        eph.cis = 9.0e-8;
+        eph.af0 = -3.0e-4;
+        eph.af1 = 1.5e-12;
+        eph.af2 = 0.0;
+        eph.toe = 345600;
+        eph.toc = 345600;
+        let mut b2a = BCNav2Bit::new();
+        assert_eq!(b2a.set_ephemeris(5, &eph), 0);
+        let dec = decode_bcnav_ephemeris(&b2a.ephemeris1[4], &b2a.ephemeris2[4], &b2a.clock_param[4]);
+        let bad: Vec<_> = dec
+            .compare_with_original(&eph)
+            .into_iter()
+            .filter(|d| !d.ok)
+            .map(|d| format!("{}: orig={:.6e} dec={:.6e}", d.name, d.original, d.decoded))
+            .collect();
+        assert!(bad.is_empty(), "B-CNAV2 round-trip mismatches:\n  {}", bad.join("\n  "));
     }
 }

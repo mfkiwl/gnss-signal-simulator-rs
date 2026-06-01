@@ -843,7 +843,7 @@ impl DecodedBcnavEph {
         vec![
             ParamDiff::new("M0", eph.M0, self.M0, PI * 2.0_f64.powi(-32) / 2.0),
             ParamDiff::new("delta_n", eph.delta_n, self.delta_n, PI * 2.0_f64.powi(-44) / 2.0),
-            ParamDiff::new("delta_n_dot", eph.delta_n_dot, self.delta_n_dot, 2.0_f64.powi(-57) / 2.0),
+            ParamDiff::new("delta_n_dot", eph.delta_n_dot, self.delta_n_dot, PI * 2.0_f64.powi(-57) / 2.0),
             ParamDiff::new("ecc", eph.ecc, self.ecc, 2.0_f64.powi(-34) / 2.0),
             ParamDiff::new("axis", eph.axis, decoded_axis, 2.0_f64.powi(-9) / 2.0),
             ParamDiff::new("axis_dot", eph.axis_dot, self.axis_dot, 2.0_f64.powi(-21) / 2.0),
