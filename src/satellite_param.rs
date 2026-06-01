@@ -245,8 +245,8 @@ pub fn get_satellite_param(
             adjusted_time.MilliSeconds -= 14000;
         }
         GnssSystem::GlonassSystem => {
-            // GLONASS time handling
-            let seconds = (time.Week * 604800 + time.MilliSeconds / 1000) as u32;
+            // GLONASS time handling. Compute in i64: Week*604800 overflows i32 for weeks > 3550.
+            let seconds = ((time.Week as i64) * 604800 + (time.MilliSeconds as i64) / 1000) as u32;
             let leap_second = get_leap_second(seconds);
             adjusted_time.MilliSeconds -= leap_second * 1000;
         }
@@ -1243,8 +1243,8 @@ pub fn get_satellite_param_with_prediction(
             adjusted_time.MilliSeconds -= 14000;
         }
         GnssSystem::GlonassSystem => {
-            // GLONASS time handling
-            let seconds = (time.Week * 604800 + time.MilliSeconds / 1000) as u32;
+            // GLONASS time handling. Compute in i64: Week*604800 overflows i32 for weeks > 3550.
+            let seconds = ((time.Week as i64) * 604800 + (time.MilliSeconds as i64) / 1000) as u32;
             let leap_second = get_leap_second(seconds);
             adjusted_time.MilliSeconds -= leap_second * 1000;
         }

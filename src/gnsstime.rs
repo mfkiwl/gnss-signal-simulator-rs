@@ -101,8 +101,10 @@ impl GnssTimeConverter {
         };
 
         if use_leap_second {
+            // Compute in i64: Week*604800 overflows i32 for weeks > 3550 (panic in debug, silent
+            // wraparound in release), corrupting the leap-second lookup near GPS week rollover.
             let (ls, at_ls) = Self::get_leap_second(
-                (gnss_time.Week * 604800 + gnss_time.MilliSeconds / 1000) as u32,
+                ((gnss_time.Week as i64) * 604800 + (gnss_time.MilliSeconds as i64) / 1000) as u32,
             );
             leap_second = ls;
             at_leap_second = at_ls;
@@ -531,6 +533,20 @@ mod tests {
         let (leap_sec, at_leap) = GnssTimeConverter::get_leap_second(46828800);
         assert_eq!(leap_sec, 0);
         assert!(at_leap);
+    }
+
+    /// Week*604800 must not overflow i32 near GPS week rollover (weeks > 3550 exceed i32::MAX).
+    /// The old i32 arithmetic panics here in debug builds; this guards the i64 computation.
+    #[test]
+    fn gps_time_to_utc_high_week_no_overflow() {
+        let t = GnssTime {
+            Week: 5000, // 5000*604800 = 3.024e9 > i32::MAX (2.147e9)
+            MilliSeconds: 0,
+            SubMilliSeconds: 0.0,
+        };
+        let utc = GnssTimeConverter::gps_time_to_utc(t, true);
+        // ~5000 weeks past 1980-01-06 lands in the mid-2070s — assert a plausible, populated year.
+        assert!((2070..2082).contains(&utc.Year), "unexpected year {}", utc.Year);
     }
 
     #[test]

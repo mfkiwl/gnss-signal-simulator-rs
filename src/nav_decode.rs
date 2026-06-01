@@ -109,7 +109,14 @@ pub fn rescale_uint(value: u32, scale: i32) -> f64 {
 /// `compose_bits(value, position, length)` places the lowest `length` bits of `value`
 /// at bit offset `position`. This function reverses that operation.
 pub fn extract_bits(word: u32, position: i32, length: i32) -> u32 {
-    (word >> position) & ((1u32 << length) - 1)
+    // Width-safe mask: `1u32 << 32` is undefined (panics in debug, wraps in release). Mirror the
+    // guard in sign_extend so a full-width extract works even though current callers stay <= 24.
+    let mask = if length >= 32 {
+        u32::MAX
+    } else {
+        (1u32 << length) - 1
+    };
+    (word >> position) & mask
 }
 
 /// Sign-extends a `bits`-wide two's-complement value to i32.
@@ -1367,5 +1374,20 @@ mod gnav_roundtrip_tests {
             .map(|d| format!("{}: orig={:.6e} dec={:.6e} (>{:.1e})", d.name, d.original, d.decoded, d.tolerance))
             .collect();
         assert!(bad.is_empty(), "GLONASS round-trip mismatches:\n  {}", bad.join("\n  "));
+    }
+}
+
+#[cfg(test)]
+mod extract_bits_tests {
+    use super::extract_bits;
+
+    #[test]
+    fn extract_bits_handles_full_width() {
+        // length == 32 must not trigger `1u32 << 32` (UB: debug panic / release wraparound).
+        assert_eq!(extract_bits(0xFFFF_FFFF, 0, 32), 0xFFFF_FFFF);
+        assert_eq!(extract_bits(0xDEAD_BEEF, 0, 32), 0xDEAD_BEEF);
+        // Narrow extracts still behave.
+        assert_eq!(extract_bits(0b1011_0000, 4, 4), 0b1011);
+        assert_eq!(extract_bits(0xFF, 0, 8), 0xFF);
     }
 }

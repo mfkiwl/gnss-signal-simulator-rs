@@ -403,6 +403,9 @@ impl NavBit {
     // Length is number of bits in BitStream to do CRC24Q encode
     // Input BitStream filled with MSB first and start from index 0
     pub fn crc24q_encode(bit_stream: &[u32], length: i32) -> u32 {
+        if bit_stream.is_empty() {
+            return 0; // match crate::crc24q::crc24q_encode, which guards the empty input
+        }
         let byte_num = ((length + 31) / 32) * 4;
         let mut crc_result = 0u32;
         let mut data = bit_stream[0];
@@ -447,5 +450,17 @@ impl NavBit {
         new_eph.omega_t = new_eph.omega0 - WGS_OMEGDOTE * new_eph.toe as f64;
 
         new_eph
+    }
+}
+
+#[cfg(test)]
+mod crc_tests {
+    use super::NavBit;
+
+    #[test]
+    fn crc24q_encode_empty_returns_zero() {
+        // Must not panic on an empty bit stream (previously indexed bit_stream[0]),
+        // matching the guarded crate::crc24q::crc24q_encode.
+        assert_eq!(NavBit::crc24q_encode(&[], 0), 0);
     }
 }
