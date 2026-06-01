@@ -488,7 +488,11 @@ impl FNavBit {
 
     // Helper functions
     fn unscale_int(value: f64, scale: i32) -> i32 {
-        let scaled = value * (2.0_f64).powi(scale);
+        // Scales are the ICD power-of-two EXPONENTS (negative, e.g. 2^-31), so the raw integer is
+        // value / 2^scale = value * 2^-scale. The old `value * 2^scale` inverted the exponent,
+        // making every unscaled field (M0, af0/1/2, BGD, angles, corrections) round to 0 — the
+        // entire F/NAV ephemeris/almanac was silently zero (matches bcnavbit/inavbit convention).
+        let scaled = value / (2.0_f64).powi(scale);
         if scaled >= 0.0 {
             (scaled + 0.5) as i32
         } else {
@@ -497,7 +501,7 @@ impl FNavBit {
     }
 
     fn unscale_uint(value: f64, scale: i32) -> u32 {
-        let scaled = value * (2.0_f64).powi(scale);
+        let scaled = value / (2.0_f64).powi(scale);
         (scaled + 0.5) as u32
     }
 

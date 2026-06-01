@@ -625,6 +625,95 @@ impl DecodedInavEph {
 }
 
 // ===========================================================================
+// 4b. Galileo F/NAV (E5a) decoder
+// ===========================================================================
+
+/// Decodes Galileo F/NAV (E5a) ephemeris from the 4 page-type × 7-word array produced by
+/// `FNavBit::compose_eph_words`. F/NAV carries the same ephemeris/clock parameters and scales as
+/// I/NAV (Galileo OS SIS ICD), but in a different page/word bit layout, and broadcasts only the
+/// E5a BGD (no E5b BGD). Returns a `DecodedInavEph` so the I/NAV tolerances/compare apply.
+pub fn decode_fnav_ephemeris(pages: &[[u32; 7]; 4]) -> DecodedInavEph {
+    let mut d = DecodedInavEph::default();
+    let (p1, p2, p3, p4) = (&pages[0], &pages[1], &pages[2], &pages[3]);
+
+    // --- Page type 1: IODnav, toc, af2, af1, af0, BGD E5a/E1 ---
+    d.iod_nav = extract_bits(p1[1], 16, 10) as u16;
+    d.toc = (extract_bits(p1[1], 2, 14) as i32) * 60;
+
+    let af2_hi = extract_bits(p1[1], 0, 2);
+    let af2_lo = extract_bits(p1[2], 28, 4);
+    d.af2 = rescale_int(sign_extend((af2_hi << 4) | af2_lo, 6), -59);
+
+    d.af1 = rescale_int(sign_extend(extract_bits(p1[2], 7, 21), 21), -46);
+
+    let af0_hi = extract_bits(p1[3], 0, 29);
+    let af0_lo = extract_bits(p1[4], 30, 2);
+    d.af0 = rescale_int(sign_extend((af0_hi << 2) | af0_lo, 31), -34);
+
+    d.bgd_e5a_e1 = rescale_int(sign_extend(extract_bits(p1[5], 11, 10), 10), -32);
+    // F/NAV broadcasts no E5b BGD; d.bgd_e5b_e1 stays 0.
+
+    // --- Page type 2: M0, omega_dot, ecc, sqrtA, omega0, idot ---
+    let m0_hi = extract_bits(p2[0], 0, 6);
+    let m0_lo = extract_bits(p2[1], 6, 26);
+    d.M0 = rescale_int(sign_extend((m0_hi << 26) | m0_lo, 32), -31) * PI;
+
+    let odot_hi = extract_bits(p2[1], 0, 6);
+    let odot_lo = extract_bits(p2[2], 14, 18);
+    d.omega_dot = rescale_int(sign_extend((odot_hi << 18) | odot_lo, 24), -43) * PI;
+
+    let ecc_hi = extract_bits(p2[2], 0, 14);
+    let ecc_lo = extract_bits(p2[3], 14, 18);
+    d.ecc = rescale_uint((ecc_hi << 18) | ecc_lo, -33);
+
+    let sqrta_hi = extract_bits(p2[3], 0, 14);
+    let sqrta_lo = extract_bits(p2[4], 14, 18);
+    d.sqrtA = rescale_uint((sqrta_hi << 18) | sqrta_lo, -19);
+
+    let omega0_hi = extract_bits(p2[4], 0, 14);
+    let omega0_lo = extract_bits(p2[5], 14, 18);
+    d.omega0 = rescale_int(sign_extend((omega0_hi << 18) | omega0_lo, 32), -31) * PI;
+
+    d.idot = rescale_int(sign_extend(extract_bits(p2[5], 0, 14), 14), -43) * PI;
+
+    // --- Page type 3: i0, w, delta_n, Cuc, Cus, Crc, Crs, toe ---
+    let i0_hi = extract_bits(p3[0], 0, 6);
+    let i0_lo = extract_bits(p3[1], 6, 26);
+    d.i0 = rescale_int(sign_extend((i0_hi << 26) | i0_lo, 32), -31) * PI;
+
+    let w_hi = extract_bits(p3[1], 0, 6);
+    let w_lo = extract_bits(p3[2], 6, 26);
+    d.w = rescale_int(sign_extend((w_hi << 26) | w_lo, 32), -31) * PI;
+
+    let dn_hi = extract_bits(p3[2], 0, 6);
+    let dn_lo = extract_bits(p3[3], 22, 10);
+    d.delta_n = rescale_int(sign_extend((dn_hi << 10) | dn_lo, 16), -43) * PI;
+
+    d.cuc = rescale_int(sign_extend(extract_bits(p3[3], 6, 16), 16), -29);
+
+    let cus_hi = extract_bits(p3[3], 0, 6);
+    let cus_lo = extract_bits(p3[4], 22, 10);
+    d.cus = rescale_int(sign_extend((cus_hi << 10) | cus_lo, 16), -29);
+
+    d.crc = rescale_int(sign_extend(extract_bits(p3[4], 6, 16), 16), -5);
+
+    let crs_hi = extract_bits(p3[4], 0, 6);
+    let crs_lo = extract_bits(p3[5], 22, 10);
+    d.crs = rescale_int(sign_extend((crs_hi << 10) | crs_lo, 16), -5);
+
+    d.toe = (extract_bits(p3[5], 8, 14) as i32) * 60;
+
+    // --- Page type 4: Cic, Cis ---
+    let cic_hi = extract_bits(p4[0], 0, 6);
+    let cic_lo = extract_bits(p4[1], 22, 10);
+    d.cic = rescale_int(sign_extend((cic_hi << 10) | cic_lo, 16), -29);
+
+    d.cis = rescale_int(sign_extend(extract_bits(p4[1], 6, 16), 16), -29);
+
+    d
+}
+
+// ===========================================================================
 // 5. BeiDou B-CNAV decoder
 // ===========================================================================
 
@@ -1389,5 +1478,58 @@ mod extract_bits_tests {
         // Narrow extracts still behave.
         assert_eq!(extract_bits(0b1011_0000, 4, 4), 0b1011);
         assert_eq!(extract_bits(0xFF, 0, 8), 0xFF);
+    }
+}
+
+#[cfg(test)]
+mod fnav_roundtrip_tests {
+    use super::decode_fnav_ephemeris;
+    use crate::fnavbit::FNavBit;
+    use crate::types::GpsEphemeris;
+
+    /// Galileo F/NAV (E5a) ephemeris must round-trip through the page/word encoder. This is the
+    /// first content-level check of fnavbit beyond frame-assembly smoke tests — it confirms the
+    /// bit packing AND the convolutional-encoder-adjacent scales after the C1 G1/G2 fix.
+    #[test]
+    fn fnav_eph_round_trips_via_decoder() {
+        let mut eph = GpsEphemeris::default();
+        eph.valid = 1;
+        eph.iodc = 42;
+        eph.sqrtA = 5440.6;
+        eph.ecc = 1.3e-4;
+        eph.M0 = -0.85;
+        eph.omega0 = 1.7;
+        eph.i0 = 0.96;
+        eph.w = -2.1;
+        eph.omega_dot = -5.3e-9;
+        eph.idot = 1.1e-10;
+        eph.delta_n = 2.9e-9;
+        eph.cuc = -1.0e-6;
+        eph.cus = 5.0e-6;
+        eph.crc = 150.0;
+        eph.crs = -30.0;
+        eph.cic = -1.5e-8;
+        eph.cis = 8.0e-8;
+        eph.af0 = 1.2e-4;
+        eph.af1 = -3.0e-12;
+        eph.af2 = 0.0;
+        eph.tgd = 2.5e-9; // BGD E5a/E1
+        eph.tgd2 = 0.0; // F/NAV (E5a) carries no E5b BGD
+        eph.toe = 345600; // multiple of 60 (F/NAV stores toe/60)
+        eph.toc = 345600;
+
+        let svid = 7;
+        let mut fnav = FNavBit::new();
+        assert_ne!(fnav.set_ephemeris(svid, &eph), 0, "set_ephemeris failed");
+        let pages = &fnav.gal_eph_data[(svid - 1) as usize];
+        let dec = decode_fnav_ephemeris(pages);
+
+        let bad: Vec<_> = dec
+            .compare_with_original(&eph)
+            .into_iter()
+            .filter(|d| !d.ok)
+            .map(|d| format!("{}: orig={:.6e} dec={:.6e}", d.name, d.original, d.decoded))
+            .collect();
+        assert!(bad.is_empty(), "F/NAV round-trip mismatches:\n  {}", bad.join("\n  "));
     }
 }
