@@ -223,7 +223,12 @@ impl SatIfSignal {
             }
             if sat_system == GnssSystem::GpsSystem && sat_signal_index == SIGNAL_INDEX_L2P as i32 {
                 dl = 10230 * 2;
-                pl = 1;
+                // Wrap the code-phase anchor by the full P-code buffer period, NOT 1. With pl=1
+                // start_code_phase.rem_euclid(1.0) collapsed to [0,1) every ms, so the P-code
+                // restarted at chip 0 each ms and the upper half of the 20460-chip buffer was
+                // never played (audit H3). L2P has no pilot channel (pilot_prn is None), so this
+                // value only governs the code-phase wrap.
+                pl = dl;
             }
             (if dl <= 0 { 1 } else { dl }, if pl <= 0 { 1 } else { pl })
         } else {
@@ -814,5 +819,41 @@ impl SatIfSignal {
                 imag: existing_magnitude * rotate_value.imag,
             };
         }
+    }
+}
+
+#[cfg(test)]
+mod l2p_tests {
+    use super::*;
+
+    /// GPS L2P must wrap its code phase by the full 20460-chip P-code buffer, not by 1.
+    /// With pilot_length=1 the anchor collapsed to [0,1) every ms (audit H3), so the P-code
+    /// restarted at chip 0 each ms and the upper half of the buffer was dead.
+    #[test]
+    fn l2p_code_phase_wraps_by_full_buffer() {
+        let s = SatIfSignal::new(5000, 0, GnssSystem::GpsSystem, SIGNAL_INDEX_L2P as i32, 1);
+        assert_eq!(s.data_length, 20460, "L2P data buffer must be 20460 chips");
+        assert_eq!(
+            s.pilot_length, s.data_length,
+            "L2P code-phase wrap must span the whole P-code buffer, not {}",
+            s.pilot_length
+        );
+
+        // Replicate the exact wrap from get_if_sample_cached (advance ~10230 chips/ms, then
+        // rem_euclid(pilot_length)). The base offset MUST reach the upper half of the buffer.
+        let advance = 10230.0_f64; // one ms of P-code chips at 10.23 Mcps
+        let mut phase = 0.0_f64;
+        let mut reached_upper_half = false;
+        for _ in 0..4 {
+            if phase > 10000.0 {
+                reached_upper_half = true;
+            }
+            phase += advance;
+            phase = phase.rem_euclid(s.pilot_length as f64);
+        }
+        assert!(
+            reached_upper_half,
+            "code phase never reaches the upper half of the 20460-chip P-code buffer"
+        );
     }
 }
