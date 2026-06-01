@@ -759,7 +759,12 @@ use crate::fastmath::FastMath;
 use rayon::prelude::*;
 
 // Constants for quantization and time conversion
-const QUANT_SCALE_IQ4: f64 = 3.0;
+// IQ4 packs 3 magnitude bits (8 levels, 0..7) + 1 sign bit per component. The AGC holds the
+// signal at RMS 0.25, so a sample at the target RMS must land on a real magnitude level — with
+// the old scale 3.0 it became 0.25*3 = 0.75 -> 0, collapsing IQ4 to ~1-bit. Scale 8.0 maps the
+// RMS to magnitude 2, 3.5σ (0.875) to full scale 7 — a near-optimal loading for a 3-bit
+// Gaussian quantizer, consistent with the IQ8 path (full scale near a few σ).
+const QUANT_SCALE_IQ4: f64 = 8.0;
 const QUANT_SCALE_IQ8: f64 = 127.0;
 
 const TOTAL_GPS_SAT: usize = 32;
@@ -4879,16 +4884,30 @@ mod tests {
 
     #[test]
     fn quantize_samples_iq4_packs_sign_and_magnitude_nibbles() {
+        // Scale 8.0: 0.25 -> mag 2, 0.5 -> mag 4, |v|>=1.0 clips to 7. Sign bit is bit 3.
         let samples = [
-            ComplexNumber::from_parts(1.0, -0.5),
-            ComplexNumber::from_parts(-3.0, 3.0),
+            ComplexNumber::from_parts(0.25, -0.5),
+            ComplexNumber::from_parts(-1.0, 0.5),
         ];
         let mut quant_data = [0u8; 2];
 
         let clipped = IFDataGen::quantize_samples_iq4(&samples, &mut quant_data);
 
-        assert_eq!(quant_data, [0x39, 0xf7]);
-        assert_eq!(clipped, 1);
+        // (mag2 | +) , (mag4 | -) -> 0x2C ; (mag7 clip | -), (mag4 | +) -> 0xF4
+        assert_eq!(quant_data, [0x2C, 0xF4]);
+        assert_eq!(clipped, 1); // only the -1.0 component clips
+    }
+
+    /// Regression guard for the IQ4 dynamic-range bug: with the old scale 3.0 a sample at the
+    /// AGC target RMS (0.25) quantized to magnitude 0, collapsing IQ4 to ~1-bit. Scale 8.0 must
+    /// place the RMS on a real level and reach full scale only near a few σ.
+    #[test]
+    fn quantize_iq4_loads_dynamic_range() {
+        assert_eq!(IFDataGen::quantize_iq4_component(0.25).0 & 0x7, 2, "target RMS must not be 0");
+        assert_eq!(IFDataGen::quantize_iq4_component(0.5).0 & 0x7, 4);
+        assert_eq!(IFDataGen::quantize_iq4_component(0.75).0 & 0x7, 6); // ~3σ
+        assert!(!IFDataGen::quantize_iq4_component(0.8).1, "0.8 must not clip");
+        assert!(IFDataGen::quantize_iq4_component(1.0).1, "1.0 must clip");
     }
 
     #[test]
