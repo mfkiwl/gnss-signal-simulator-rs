@@ -24,7 +24,7 @@ const PI: f64 = std::f64::consts::PI;
 #[derive(Clone)]
 pub struct CNav2Bit {
     // 576-bit subframe 2 information, 32-bit words, MSB first.
-    subframe2: [[u32; 18]; 32],
+    pub subframe2: [[u32; 18]; 32],
     // 250-bit subframe 3 pages with zero-filled PRN prefix before transmit PRN insertion.
     subframe3: [[u32; 8]; 64],
     // ISC_L1C/A, ISC_L2C, ISC_L5I5, ISC_L5Q5 packed as in SignalSim CNav2Bit.

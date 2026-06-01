@@ -1103,7 +1103,7 @@ pub fn verify_inav_crc24q(data: &[u32], data_len: usize, expected_crc: u32) -> b
 const CNAV_A_REF: f64 = 26559710.0;
 const CNAV_OMEGA_DOT_REF: f64 = -2.6e-9;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct DecodedCnavEph {
     pub svid: u32,
     pub week: i32,
@@ -1266,6 +1266,82 @@ impl DecodedCnavEph {
     }
 }
 
+/// Decodes GPS L1C CNAV-2 ephemeris from subframe 2 (18 × 32-bit words), the inverse of
+/// `CNav2Bit::compose_subframe2`. CNAV-2 carries the same parameters/scales as L2C CNAV
+/// (IS-GPS-800), so it returns `DecodedCnavEph` to reuse the tolerances/compare. The 33-bit
+/// angle/ecc fields use the same sign-bit + 32-bit packing as L2C (via `sign_magnitude_33`),
+/// ΔA references A_REF = 26,559,710 m, and Ω̇ is offset by OMEGA_DOT_REF = -2.6e-9 sc/s.
+pub fn decode_cnav2_ephemeris(sf2: &[u32; 18]) -> DecodedCnavEph {
+    let mut d = DecodedCnavEph::default();
+
+    d.toe = (extract_bits(sf2[1], 15, 11) as i32) * 300;
+    d.toc = d.toe; // CNAV-2 uses a single reference time (t_oc = t_oe)
+
+    // delta_A (26-bit, 2^-9): axis = A_REF + dA
+    let da = (extract_bits(sf2[1], 0, 15) << 11) | extract_bits(sf2[2], 21, 11);
+    d.axis = CNAV_A_REF + rescale_int(sign_extend(da, 26), -9);
+
+    // axis_dot (25-bit, 2^-21)
+    let adot = (extract_bits(sf2[2], 0, 21) << 4) | extract_bits(sf2[3], 28, 4);
+    d.axis_dot = rescale_int(sign_extend(adot, 25), -21);
+
+    // delta_n (17-bit, 2^-44 sc) and delta_n_dot (23-bit, 2^-57 sc)
+    d.delta_n = rescale_int(sign_extend(extract_bits(sf2[3], 11, 17), 17), -44) * PI;
+    let dnd = (extract_bits(sf2[3], 0, 11) << 12) | extract_bits(sf2[4], 20, 12);
+    d.delta_n_dot = rescale_int(sign_extend(dnd, 23), -57) * PI;
+
+    // M0 (33-bit, 2^-32 sc)
+    let m0_u = (extract_bits(sf2[4], 0, 19) << 13) | extract_bits(sf2[5], 19, 13);
+    d.M0 = sign_magnitude_33(extract_bits(sf2[4], 19, 1), m0_u) * 2.0_f64.powi(-32) * PI;
+
+    // ecc (33-bit, 2^-34)
+    let ecc_u = (extract_bits(sf2[5], 0, 18) << 14) | extract_bits(sf2[6], 18, 14);
+    d.ecc = sign_magnitude_33(extract_bits(sf2[5], 18, 1), ecc_u) * 2.0_f64.powi(-34);
+
+    // w (33-bit, 2^-32 sc)
+    let w_u = (extract_bits(sf2[6], 0, 17) << 15) | extract_bits(sf2[7], 17, 15);
+    d.w = sign_magnitude_33(extract_bits(sf2[6], 17, 1), w_u) * 2.0_f64.powi(-32) * PI;
+
+    // omega0 (33-bit, 2^-32 sc)
+    let om_u = (extract_bits(sf2[7], 0, 16) << 16) | extract_bits(sf2[8], 16, 16);
+    d.omega0 = sign_magnitude_33(extract_bits(sf2[7], 16, 1), om_u) * 2.0_f64.powi(-32) * PI;
+
+    // i0 (33-bit, 2^-32 sc)
+    let i0_u = (extract_bits(sf2[8], 0, 15) << 17) | extract_bits(sf2[9], 15, 17);
+    d.i0 = sign_magnitude_33(extract_bits(sf2[8], 15, 1), i0_u) * 2.0_f64.powi(-32) * PI;
+
+    // omega_dot (17-bit, 2^-44 sc, offset OMEGA_DOT_REF)
+    let od = (extract_bits(sf2[9], 0, 15) << 2) | extract_bits(sf2[10], 30, 2);
+    d.omega_dot = (rescale_int(sign_extend(od, 17), -44) + CNAV_OMEGA_DOT_REF) * PI;
+
+    // idot (15-bit, 2^-44 sc)
+    d.idot = rescale_int(sign_extend(extract_bits(sf2[10], 15, 15), 15), -44) * PI;
+
+    // Harmonic corrections
+    let cis = (extract_bits(sf2[10], 0, 15) << 1) | extract_bits(sf2[11], 31, 1);
+    d.cis = rescale_int(sign_extend(cis, 16), -30);
+    d.cic = rescale_int(sign_extend(extract_bits(sf2[11], 15, 16), 16), -30);
+    let crs = (extract_bits(sf2[11], 0, 15) << 9) | extract_bits(sf2[12], 23, 9);
+    d.crs = rescale_int(sign_extend(crs, 24), -8);
+    let crc = (extract_bits(sf2[12], 0, 23) << 1) | extract_bits(sf2[13], 31, 1);
+    d.crc = rescale_int(sign_extend(crc, 24), -8);
+    d.cus = rescale_int(sign_extend(extract_bits(sf2[13], 10, 21), 21), -30);
+    let cuc = (extract_bits(sf2[13], 0, 10) << 11) | extract_bits(sf2[14], 21, 11);
+    d.cuc = rescale_int(sign_extend(cuc, 21), -30);
+
+    // Clock (af0 26-bit 2^-35, af1 20-bit 2^-48, af2 10-bit 2^-60) and TGD (13-bit 2^-35)
+    let af0 = (extract_bits(sf2[14], 0, 10) << 16) | extract_bits(sf2[15], 16, 16);
+    d.af0 = rescale_int(sign_extend(af0, 26), -35);
+    let af1 = (extract_bits(sf2[15], 0, 16) << 4) | extract_bits(sf2[16], 28, 4);
+    d.af1 = rescale_int(sign_extend(af1, 20), -48);
+    d.af2 = rescale_int(sign_extend(extract_bits(sf2[16], 18, 10), 10), -60);
+    d.tgd = rescale_int(sign_extend(extract_bits(sf2[16], 5, 13), 13), -35);
+
+    d.week = extract_bits(sf2[17], 2, 8) as i32;
+
+    d
+}
+
 #[cfg(test)]
 mod cnav_roundtrip_tests {
     use super::*;
@@ -1323,6 +1399,26 @@ mod cnav_roundtrip_tests {
             .map(|d| format!("{}: orig={:.6e} dec={:.6e} (>{:.1e})", d.name, d.original, d.decoded, d.tolerance))
             .collect();
         assert!(bad.is_empty(), "CNAV round-trip mismatches:\n  {}", bad.join("\n  "));
+    }
+
+    /// Round-trips the GPS L1C CNAV-2 encoder: GpsEphemeris -> CNav2Bit subframe 2 -> decode ->
+    /// GpsEphemeris. L1C and L2C share parameters/scales, so the same sample/compare apply.
+    #[test]
+    fn cnav2_eph_round_trips_via_subframe2_decoder() {
+        use crate::cnav2bit::CNav2Bit;
+        let eph = sample_eph(); // svid 7
+        let svid: i32 = 7;
+        let mut cnav2 = CNav2Bit::new();
+        assert_ne!(cnav2.set_ephemeris(svid, &eph), 0, "set_ephemeris failed");
+        let sf2 = &cnav2.subframe2[(svid - 1) as usize];
+        let dec = decode_cnav2_ephemeris(sf2);
+        let bad: Vec<_> = dec
+            .compare_with_original(&eph)
+            .into_iter()
+            .filter(|d| !d.ok)
+            .map(|d| format!("{}: orig={:.6e} dec={:.6e} (>{:.1e})", d.name, d.original, d.decoded, d.tolerance))
+            .collect();
+        assert!(bad.is_empty(), "CNAV-2 round-trip mismatches:\n  {}", bad.join("\n  "));
     }
 }
 
