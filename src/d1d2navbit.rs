@@ -563,7 +563,9 @@ impl D1D2NavBit {
 
         let value = Self::unscale_double(ephemeris.af2, -66);
         let int_value = Self::roundi(value);
-        stream[3 * 4 + 1] |= COMPOSE_BITS!(int_value >> 1, 0, 11);
+        // BDS-SIS-ICD-B1I Fig 5-14-4: D2 a2 is 11 bits (10 MSB here + 1 LSB). The old 11-bit
+        // mask here added a 12th bit that collided with the a1 LSB chunk.
+        stream[3 * 4 + 1] |= COMPOSE_BITS!(int_value >> 1, 0, 10);
         stream[3 * 4 + 2] = COMPOSE_BITS!(int_value, 21, 1);
         stream[3 * 4 + 2] |= COMPOSE_BITS!(ephemeris.iode, 16, 5);
 

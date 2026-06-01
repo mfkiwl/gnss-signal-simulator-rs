@@ -693,7 +693,8 @@ pub fn decode_bcnav_ephemeris(eph1: &[u32; 9], eph2: &[u32; 10], clock: &[u32; 4
     // delta_n_dot: 23 total bits (7+16), scale -57, signed
     let dn_dot_lsb = extract_bits(eph1[4], 8, 16);
     let dn_dot_combined = (dn_dot_msb << 16) | dn_dot_lsb;
-    d.delta_n_dot = rescale_int(sign_extend(dn_dot_combined, 23), -57);
+    // Δn0-dot is in semicircles/s² (π/s²) per BDS-SIS-ICD-B1C Table 7-8 → ×PI for rad.
+    d.delta_n_dot = rescale_int(sign_extend(dn_dot_combined, 23), -57) * PI;
 
     let m0_sign = extract_bits(eph1[4], 7, 1);
     let m0_bits_6_0 = extract_bits(eph1[4], 0, 7); // upper 7 bits of 32-bit value

@@ -191,7 +191,8 @@ impl BCNavBit {
         );
         let axis_dot_scaled = Self::unscale_int(eph.axis_dot, -21);
         let delta_n_scaled = Self::unscale_int(eph.delta_n / std::f64::consts::PI, -44);
-        let delta_n_dot_scaled = Self::unscale_int(eph.delta_n_dot, -57);
+        // BDS-SIS-ICD-B1C Table 7-8: Δn0-dot unit is π/s² (semicircles), so convert rad→semicircles.
+        let delta_n_dot_scaled = Self::unscale_int(eph.delta_n_dot / std::f64::consts::PI, -57);
         let m0_scaled = Self::unscale_long(eph.M0 / std::f64::consts::PI, -32);
         let ecc_scaled = Self::unscale_ulong(eph.ecc, -34);
         let w_scaled = Self::unscale_long(eph.w / std::f64::consts::PI, -32);
@@ -264,7 +265,7 @@ impl BCNavBit {
 
         // Вычисляем значения для TGD и ISC
         let isc_b1c_scaled = Self::unscale_int(eph.tgd_ext[0] - eph.tgd_ext[1], -34);
-        let tgd_b1c_scaled = Self::unscale_int(eph.tgd_ext[1], -34);
+        let tgd_b1c_scaled = Self::unscale_int(eph.tgd_ext[0], -34); // TGD_B1Cp = tgd_ext[0] (was [1]=B2ap)
         let isc_b2a_scaled = Self::unscale_int(eph.tgd_ext[2] - eph.tgd_ext[3], -34);
         let tgd_b2a_scaled = Self::unscale_int(eph.tgd_ext[1], -34);
         let tgd_b2b_scaled = Self::unscale_int(eph.tgd_ext[4], -34);

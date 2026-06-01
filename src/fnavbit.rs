@@ -316,7 +316,7 @@ impl FNavBit {
             | COMPOSE_BITS!((toa / 600), 0, 10);
         alm_data[0][1] = COMPOSE_BITS!(almanac[0].svid, 26, 6); // SVID1 starts here
 
-        let int_value = Self::unscale_int(almanac[0].sqrtA - SQRT_A0, -11);
+        let int_value = Self::unscale_int(almanac[0].sqrtA - SQRT_A0, -9);
         alm_data[0][1] |= COMPOSE_BITS!(int_value, 13, 13);
 
         let uint_value = Self::unscale_uint(almanac[0].ecc, -16);
@@ -351,7 +351,7 @@ impl FNavBit {
             alm_data[0][5] |= COMPOSE_BITS!(if (almanac[1].valid & 1) != 0 { 0 } else { 1 }, 29, 2);
             alm_data[0][5] |= COMPOSE_BITS!(almanac[1].svid, 23, 6); // SVID2 starts here
 
-            let int_value = Self::unscale_int(almanac[1].sqrtA - SQRT_A0, -11);
+            let int_value = Self::unscale_int(almanac[1].sqrtA - SQRT_A0, -9);
             alm_data[0][5] |= COMPOSE_BITS!(int_value, 10, 13);
 
             let uint_value = Self::unscale_uint(almanac[1].ecc, -16);
@@ -389,7 +389,7 @@ impl FNavBit {
             if almanac.len() > 2 {
                 alm_data[1][2] |= COMPOSE_BITS!(almanac[2].svid, 0, 6); // SVID3 starts here
 
-                let int_value = Self::unscale_int(almanac[2].sqrtA - SQRT_A0, -11);
+                let int_value = Self::unscale_int(almanac[2].sqrtA - SQRT_A0, -9);
                 alm_data[1][3] = COMPOSE_BITS!(int_value, 19, 13);
 
                 let uint_value = Self::unscale_uint(almanac[2].ecc, -16);
