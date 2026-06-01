@@ -229,83 +229,74 @@ impl GNavBit {
         0
     }
 
-    fn ComposeStringEph(ephemeris: &GlonassEphemeris, string: &mut [[u32; 3]; 4]) -> i32 {
-        // Initialize all strings to zero
-        for i in 0..4 {
-            for j in 0..3 {
-                string[i][j] = 0;
+    /// Places `value` into a GLONASS string at ICD bit positions `icd_lo..=icd_hi` (the
+    /// positions of Table 4.6, where bit 85 is transmitted first). value bit 0 goes to
+    /// `icd_lo`, value bit (width-1) to `icd_hi`. Transmission index = 85 - position, so the
+    /// 85 string bits occupy data_bits[0..85] in order (bit 85 first) — the convention the
+    /// `get_frame_data` extractor reads. The previous code used a 95-position offset, which
+    /// shifted every field by 10 bits and put coordinates into the velocity field's slot.
+    fn glo_set_field(string: &mut [u32; 3], icd_lo: u32, icd_hi: u32, value: u32) {
+        for k in 0..=(icd_hi - icd_lo) {
+            if (value >> k) & 1 != 0 {
+                let j = 85 - (icd_lo + k); // transmission bit index (ICD 85 -> 0)
+                string[(j / 32) as usize] |= 1u32 << (31 - (j % 32));
             }
         }
+    }
 
-        // String 1
-        string[0][0] = COMPOSE_BITS!(1, 17, 4); // m (positions 81-84)
-        string[0][0] |= COMPOSE_BITS!(ephemeris.Bn, 16, 1); // Bn (position 80)
-        string[0][0] |= COMPOSE_BITS!(ephemeris.P & 0x3, 14, 2); // P1 (positions 77-78)
-        string[0][0] |= COMPOSE_BITS!(ephemeris.tk / 30, 2, 12);
+    /// GLONASS sign-magnitude field (ICD Table 4.5 remark 2: the high bit is the sign,
+    /// '0' = '+', '1' = '-'). `value` is in the field's units; `scale_pow2` is the LSB as a
+    /// power of two; `width` is the total field width (1 sign + magnitude).
+    fn glo_sign_mag(value: f64, scale_pow2: i32, width: u32) -> u32 {
+        let mag =
+            (value.abs() / 2.0_f64.powi(scale_pow2)).round() as u32 & ((1u32 << (width - 1)) - 1);
+        mag | if value < 0.0 { 1u32 << (width - 1) } else { 0 }
+    }
 
-        let uint_value = (ephemeris.x.abs() / 2.0_f64.powi(-11)).round() as u32;
-        string[0][0] |= COMPOSE_BITS!(uint_value >> 25, 0, 2);
-        string[0][1] = COMPOSE_BITS!(uint_value, 7, 25);
+    fn ComposeStringEph(ephemeris: &GlonassEphemeris, string: &mut [[u32; 3]; 4]) -> i32 {
+        for s in string.iter_mut() {
+            *s = [0; 3];
+        }
 
-        let int_value = (ephemeris.vx / 2.0_f64.powi(-20)).round() as i32;
-        string[0][1] |= COMPOSE_BITS!(int_value >> 18, 0, 7);
-        string[0][2] = COMPOSE_BITS!(int_value, 14, 18);
+        // String number 'm' (ICD positions 81-84) is present in every string.
+        for (i, s) in string.iter_mut().enumerate() {
+            Self::glo_set_field(s, 81, 84, (i as u32) + 1);
+        }
 
-        let int_value = (ephemeris.ax / 2.0_f64.powi(-30)).round() as i32;
-        string[0][2] |= COMPOSE_BITS!(int_value, 9, 5);
+        // GLONASS coordinates/velocities/accelerations are in km; eph holds SI metres.
+        // --- String 1: P1, tk, x, vx, ax ---
+        Self::glo_set_field(&mut string[0], 77, 78, (ephemeris.P & 0x3) as u32); // P1
+        Self::glo_set_field(&mut string[0], 65, 76, ephemeris.tk as u32); // tk = (h<<7)|(m<<1)|s30
+        Self::glo_set_field(&mut string[0], 9, 35, Self::glo_sign_mag(ephemeris.x / 1000.0, -11, 27));
+        Self::glo_set_field(&mut string[0], 41, 64, Self::glo_sign_mag(ephemeris.vx / 1000.0, -20, 24));
+        Self::glo_set_field(&mut string[0], 36, 40, Self::glo_sign_mag(ephemeris.ax / 1000.0, -30, 5));
 
-        // String 2
-        string[1][0] = COMPOSE_BITS!(2, 17, 4); // m (positions 81-84)
-        string[1][0] |= COMPOSE_BITS!(ephemeris.Bn >> 1, 14, 3); // Bn (positions 78-80, upper 3 bits)
-        string[1][0] |= COMPOSE_BITS!((ephemeris.P >> 2) & 0x1, 13, 1); // P2 (position 77)
-        string[1][0] |= COMPOSE_BITS!(ephemeris.tb / 900, 7, 7);
+        // --- String 2: Bn, P2, tb, y, vy, ay ---
+        Self::glo_set_field(&mut string[1], 78, 80, ephemeris.Bn as u32);
+        Self::glo_set_field(&mut string[1], 77, 77, ((ephemeris.P >> 2) & 0x1) as u32); // P2
+        Self::glo_set_field(&mut string[1], 70, 76, (ephemeris.tb / 900) as u32); // tb: sec -> 15-min units
+        Self::glo_set_field(&mut string[1], 9, 35, Self::glo_sign_mag(ephemeris.y / 1000.0, -11, 27));
+        Self::glo_set_field(&mut string[1], 41, 64, Self::glo_sign_mag(ephemeris.vy / 1000.0, -20, 24));
+        Self::glo_set_field(&mut string[1], 36, 40, Self::glo_sign_mag(ephemeris.ay / 1000.0, -30, 5));
 
-        let uint_value = (ephemeris.y.abs() / 2.0_f64.powi(-11)).round() as u32;
-        string[1][0] |= COMPOSE_BITS!(uint_value >> 21, 0, 7);
-        string[1][1] = COMPOSE_BITS!(uint_value, 12, 20);
+        // --- String 3: P3, gamma, P, ln, z, vz, az ---
+        Self::glo_set_field(&mut string[2], 80, 80, ((ephemeris.P >> 3) & 0x1) as u32); // P3
+        Self::glo_set_field(&mut string[2], 69, 79, Self::glo_sign_mag(ephemeris.gamma, -40, 11));
+        Self::glo_set_field(&mut string[2], 66, 67, ((ephemeris.P >> 4) & 0x3) as u32); // P
+        Self::glo_set_field(&mut string[2], 65, 65, 0); // ln
+        Self::glo_set_field(&mut string[2], 9, 35, Self::glo_sign_mag(ephemeris.z / 1000.0, -11, 27));
+        Self::glo_set_field(&mut string[2], 41, 64, Self::glo_sign_mag(ephemeris.vz / 1000.0, -20, 24));
+        Self::glo_set_field(&mut string[2], 36, 40, Self::glo_sign_mag(ephemeris.az / 1000.0, -30, 5));
 
-        let int_value = (ephemeris.vy / 2.0_f64.powi(-20)).round() as i32;
-        string[1][1] |= COMPOSE_BITS!(int_value, 0, 12);
-        string[1][2] = COMPOSE_BITS!(int_value >> 12, 20, 12);
-
-        let int_value = (ephemeris.ay / 2.0_f64.powi(-30)).round() as i32;
-        string[1][2] |= COMPOSE_BITS!(int_value, 15, 5);
-
-        // String 3
-        string[2][0] = COMPOSE_BITS!(3, 17, 4); // m (positions 81-84)
-        string[2][0] |= COMPOSE_BITS!((ephemeris.P >> 3) & 0x1, 16, 1); // P3 (position 80)
-
-        let int_value = (ephemeris.gamma / 2.0_f64.powi(-40)).round() as i32;
-        string[2][0] |= COMPOSE_BITS!(int_value, 5, 11); // γn(tb) (positions 69-79)
-        string[2][0] |= COMPOSE_BITS!(0, 4, 1); // ln (position 65) - currently 0
-        string[2][0] |= COMPOSE_BITS!((ephemeris.P >> 4) & 0x3, 2, 2); // P (positions 66-67)
-
-        let uint_value = (ephemeris.z.abs() / 2.0_f64.powi(-11)).round() as u32;
-        string[2][0] |= COMPOSE_BITS!(uint_value >> 23, 0, 5);
-        string[2][1] = COMPOSE_BITS!(uint_value, 10, 22);
-
-        let int_value = (ephemeris.vz / 2.0_f64.powi(-20)).round() as i32;
-        string[2][1] |= COMPOSE_BITS!(int_value, 0, 10);
-        string[2][2] = COMPOSE_BITS!(int_value >> 10, 22, 14);
-
-        let int_value = (ephemeris.az / 2.0_f64.powi(-30)).round() as i32;
-        string[2][2] |= COMPOSE_BITS!(int_value, 17, 5);
-
-        // String 4
-        string[3][0] = COMPOSE_BITS!(4, 17, 4);
-
-        let int_value = (ephemeris.tn / 2.0_f64.powi(-30)).round() as i32;
-        string[3][0] |= COMPOSE_BITS!(int_value >> 5, 0, 17);
-        string[3][1] = COMPOSE_BITS!(int_value, 27, 5);
-
-        let int_value = (ephemeris.dtn / 2.0_f64.powi(-30)).round() as i32;
-        string[3][1] |= COMPOSE_BITS!(int_value, 22, 5);
-        string[3][1] |= COMPOSE_BITS!(ephemeris.En, 17, 5);
-        string[3][1] |= COMPOSE_BITS!((ephemeris.P >> 6) & 0x1, 1, 1); // P4 (position 34)
-        string[3][2] = COMPOSE_BITS!(ephemeris.Ft, 28, 4);
-        string[3][2] |= COMPOSE_BITS!(ephemeris.day, 17, 11);
-        string[3][2] |= COMPOSE_BITS!(ephemeris.n, 12, 5);
-        string[3][2] |= COMPOSE_BITS!(ephemeris.M, 10, 2);
+        // --- String 4: tau_n, dtau_n, En, P4, FT, NT, n, M ---
+        Self::glo_set_field(&mut string[3], 59, 80, Self::glo_sign_mag(ephemeris.tn, -30, 22));
+        Self::glo_set_field(&mut string[3], 54, 58, Self::glo_sign_mag(ephemeris.dtn, -30, 5));
+        Self::glo_set_field(&mut string[3], 49, 53, ephemeris.En as u32);
+        Self::glo_set_field(&mut string[3], 34, 34, ((ephemeris.P >> 6) & 0x1) as u32); // P4
+        Self::glo_set_field(&mut string[3], 30, 33, ephemeris.Ft as u32);
+        Self::glo_set_field(&mut string[3], 16, 26, ephemeris.day as u32); // NT
+        Self::glo_set_field(&mut string[3], 11, 15, ephemeris.n as u32);
+        Self::glo_set_field(&mut string[3], 9, 10, ephemeris.M as u32);
 
         0
     }

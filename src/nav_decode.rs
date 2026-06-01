@@ -1228,3 +1228,143 @@ mod cnav_roundtrip_tests {
         assert!(bad.is_empty(), "CNAV round-trip mismatches:\n  {}", bad.join("\n  "));
     }
 }
+
+// ===========================================================================
+// 8. GLONASS G-NAV ephemeris decoder (strings 1-4) — inverse of
+//    GNavBit::ComposeStringEph, using the official ICD (Edition 5.1) bit layout
+//    (Table 4.6) and sign-magnitude convention (Table 4.5, remark 2).
+// ===========================================================================
+
+/// Extracts the field at ICD bit positions `icd_lo..=icd_hi` (Table 4.6, bit 85 first) from
+/// one 3-word GLONASS string. Transmission index = 85 - position.
+pub fn glo_get_field(string: &[u32; 3], icd_lo: u32, icd_hi: u32) -> u32 {
+    let mut value = 0u32;
+    for k in 0..=(icd_hi - icd_lo) {
+        let j = 85 - (icd_lo + k);
+        let bit = (string[(j / 32) as usize] >> (31 - (j % 32))) & 1;
+        value |= bit << k;
+    }
+    value
+}
+
+/// Decodes a GLONASS sign-magnitude field (sign in bit `width-1`) to its physical value.
+pub fn glo_sign_mag_decode(field: u32, width: u32, scale_pow2: i32) -> f64 {
+    let sign = (field >> (width - 1)) & 1;
+    let mag = field & ((1u32 << (width - 1)) - 1);
+    let v = mag as f64 * 2.0_f64.powi(scale_pow2);
+    if sign != 0 {
+        -v
+    } else {
+        v
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct DecodedGnavEph {
+    pub x: f64,
+    pub y: f64,
+    pub z: f64,
+    pub vx: f64,
+    pub vy: f64,
+    pub vz: f64,
+    pub ax: f64,
+    pub ay: f64,
+    pub az: f64,
+    pub gamma: f64,
+    pub tn: f64,
+    pub dtn: f64,
+    pub tk: u32,
+    pub tb_seconds: u32,
+}
+
+/// Reverses `GNavBit::ComposeStringEph`. `strings` are strings 1-4 ([[u32;3];4]).
+/// Coordinates/velocities/accelerations are returned in SI (metres) — the ICD encodes km.
+pub fn decode_gnav_eph(strings: &[[u32; 3]; 4]) -> DecodedGnavEph {
+    let (s1, s2, s3, s4) = (&strings[0], &strings[1], &strings[2], &strings[3]);
+    // coordinates: 27-bit sign-magnitude, 2^-11 km LSB -> *1000 for metres
+    let x = glo_sign_mag_decode(glo_get_field(s1, 9, 35), 27, -11) * 1000.0;
+    let y = glo_sign_mag_decode(glo_get_field(s2, 9, 35), 27, -11) * 1000.0;
+    let z = glo_sign_mag_decode(glo_get_field(s3, 9, 35), 27, -11) * 1000.0;
+    // velocities: 24-bit, 2^-20 km/s
+    let vx = glo_sign_mag_decode(glo_get_field(s1, 41, 64), 24, -20) * 1000.0;
+    let vy = glo_sign_mag_decode(glo_get_field(s2, 41, 64), 24, -20) * 1000.0;
+    let vz = glo_sign_mag_decode(glo_get_field(s3, 41, 64), 24, -20) * 1000.0;
+    // accelerations: 5-bit, 2^-30 km/s^2
+    let ax = glo_sign_mag_decode(glo_get_field(s1, 36, 40), 5, -30) * 1000.0;
+    let ay = glo_sign_mag_decode(glo_get_field(s2, 36, 40), 5, -30) * 1000.0;
+    let az = glo_sign_mag_decode(glo_get_field(s3, 36, 40), 5, -30) * 1000.0;
+    let gamma = glo_sign_mag_decode(glo_get_field(s3, 69, 79), 11, -40);
+    let tn = glo_sign_mag_decode(glo_get_field(s4, 59, 80), 22, -30);
+    let dtn = glo_sign_mag_decode(glo_get_field(s4, 54, 58), 5, -30);
+    let tk = glo_get_field(s1, 65, 76);
+    let tb_seconds = glo_get_field(s2, 70, 76) * 900;
+    DecodedGnavEph { x, y, z, vx, vy, vz, ax, ay, az, gamma, tn, dtn, tk, tb_seconds }
+}
+
+impl DecodedGnavEph {
+    pub fn compare_with_original(&self, eph: &crate::types::GlonassEphemeris) -> Vec<ParamDiff> {
+        let two = |p: i32| 2.0_f64.powi(p);
+        vec![
+            // tolerances are half an LSB in metres (km LSB * 1000)
+            ParamDiff::new("x", eph.x, self.x, two(-11) * 1000.0),
+            ParamDiff::new("y", eph.y, self.y, two(-11) * 1000.0),
+            ParamDiff::new("z", eph.z, self.z, two(-11) * 1000.0),
+            ParamDiff::new("vx", eph.vx, self.vx, two(-20) * 1000.0),
+            ParamDiff::new("vy", eph.vy, self.vy, two(-20) * 1000.0),
+            ParamDiff::new("vz", eph.vz, self.vz, two(-20) * 1000.0),
+            ParamDiff::new("ax", eph.ax, self.ax, two(-30) * 1000.0),
+            ParamDiff::new("ay", eph.ay, self.ay, two(-30) * 1000.0),
+            ParamDiff::new("az", eph.az, self.az, two(-30) * 1000.0),
+            ParamDiff::new("gamma", eph.gamma, self.gamma, two(-40)),
+            ParamDiff::new("tn", eph.tn, self.tn, two(-30)),
+            ParamDiff::new("dtn", eph.dtn, self.dtn, two(-30)),
+            ParamDiff::new("tk", eph.tk as f64, self.tk as f64, 0.5),
+            ParamDiff::new("tb", eph.tb as f64, self.tb_seconds as f64, 450.0),
+        ]
+    }
+}
+
+#[cfg(test)]
+mod gnav_roundtrip_tests {
+    use super::*;
+    use crate::gnavbit::GNavBit;
+    use crate::types::GlonassEphemeris;
+
+    fn sample_glo_eph() -> GlonassEphemeris {
+        let mut e = GlonassEphemeris::new();
+        e.flag = 1;
+        e.x = 2.5e7;
+        e.y = -1.2e7;
+        e.z = 8.0e6;
+        e.vx = 1503.125;
+        e.vy = -3201.5;
+        e.vz = 2800.0;
+        e.ax = 2.8e-6;
+        e.ay = -1.9e-6;
+        e.az = 0.0;
+        e.gamma = 1.5e-11;
+        e.tn = -2.5e-4;
+        e.dtn = 1.86e-9;
+        e.tk = (3 << 7) | (15 << 1); // 03:15:00
+        e.tb = 5400; // seconds (90 min)
+        e
+    }
+
+    /// Audit H15/H16/H17 + units: round-trips the GLONASS ephemeris encoder against the
+    /// official ICD (Edition 5.1) bit layout. Catches the old magnitude-only coordinates,
+    /// two's-complement velocity/accel, m/km unit error and the tk/30 corruption.
+    #[test]
+    fn gnav_eph_round_trip_matches_icd() {
+        let eph = sample_glo_eph();
+        let mut gnav = GNavBit::new();
+        assert_ne!(gnav.set_glonass_ephemeris(1, &eph), 0);
+        let dec = decode_gnav_eph(&gnav.StringEph[0]);
+        let bad: Vec<_> = dec
+            .compare_with_original(&eph)
+            .into_iter()
+            .filter(|d| !d.ok)
+            .map(|d| format!("{}: orig={:.6e} dec={:.6e} (>{:.1e})", d.name, d.original, d.decoded, d.tolerance))
+            .collect();
+        assert!(bad.is_empty(), "GLONASS round-trip mismatches:\n  {}", bad.join("\n  "));
+    }
+}
